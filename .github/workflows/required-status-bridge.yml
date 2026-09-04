@@ -1,0 +1,69 @@
+name: PaxofiCloud Required Status Bridge
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/catalogue-pricing-contracts-v2]
+
+permissions:
+  checks: read
+  statuses: write
+
+jobs:
+  bridge:
+    name: Required status bridge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror required check results into commit statuses
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request?.head.sha || context.sha;
+            const required = [
+              'Repository governance checks',
+              'Engineering baseline validation',
+              'Quality baseline',
+              'Analyze (actions)',
+              'Dependency Review',
+            ];
+
+            const deadline = Date.now() + 15 * 60 * 1000;
+            let finalStates;
+
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: sha,
+                per_page: 100,
+              });
+
+              finalStates = required.map((name) => {
+                const runs = data.check_runs
+                  .filter((run) => run.head_sha === sha && run.name === name)
+                  .sort((a, b) => new Date(b.started_at || b.created_at) - new Date(a.started_at || a.created_at));
+                return { name, run: runs[0] };
+              });
+
+              if (finalStates.every(({ run }) => run && run.status === 'completed')) break;
+              await new Promise((resolve) => setTimeout(resolve, 15000));
+            }
+
+            if (!finalStates || finalStates.some(({ run }) => !run || run.status !== 'completed')) {
+              core.setFailed('Required checks did not all complete within the bridge timeout.');
+              return;
+            }
+
+            for (const { name, run } of finalStates) {
+              const state = run.conclusion === 'success' || run.conclusion === 'skipped' ? 'success' : 'failure';
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha,
+                state,
+                context: name,
+                description: `Mirrored from check run ${run.id}: ${run.conclusion}`,
+                target_url: run.html_url,
+              });
+            }
