@@ -20,15 +20,27 @@ This document defines the repository-level evidence required before production i
 
 ## GitHub operating baseline
 
-PaxofiCloud is currently a public GitHub repository and therefore can use GitHub Free branch protection/rulesets. The repository must use the active `PaxofiCloud Main Branch Protection` ruleset for `main` once its required status checks and review requirements have been configured.
+PaxofiCloud is currently a public GitHub repository and operates on the current GitHub Free baseline. The active `PaxofiCloud Main Branch Protection` ruleset targets the default `main` branch and is actively enforced.
 
-The repository also uses application-layer and supply-chain controls that are independent of paid GitHub plans:
+The active main-branch ruleset requires exactly these five executable status checks:
+
+- `Repository governance checks`
+- `Engineering baseline validation`
+- `Quality baseline`
+- `Analyze (actions)`
+- `Dependency Review`
+
+The generic `strict` status-check entry was deliberately removed. Branch currency is still enforced through the ruleset's strict required-status-check policy (`Require branches to be up to date before merging`).
+
+The repository uses application-layer and supply-chain controls that are independent of paid GitHub plans:
 
 - Pull requests are the required engineering workflow.
 - `PaxofiCloud CI` provides repository governance and engineering baseline checks.
-- `PaxofiCloud Quality Baseline` provides PHP syntax, Composer, Node/npm, and repository-quality validation as applicable.
+- `PaxofiCloud Quality Baseline` provides PHP syntax, PHPStan static analysis, Composer, Node/npm, and repository-quality validation as applicable.
+- PHPStan is pinned to an exact tool version in CI and governed by `phpstan.neon.dist` at analysis level 8 with PHP 8.4 as the analysis baseline.
+- PHPStan execution is intentionally deferred when no PHP source exists yet; this repository is still pre-production-implementation. Once PCF/PHP source is introduced under `src`, the same required quality gate executes static analysis automatically.
 - Dependency Review is enabled for pull requests.
-- CodeQL is enabled for supported repository content: JavaScript/TypeScript and GitHub Actions. CodeQL does not analyze PHP; PHP security analysis must therefore use the dedicated PHP/static-analysis strategy established by the programme.
+- CodeQL is enabled for supported repository content: JavaScript/TypeScript and GitHub Actions. CodeQL does not analyze PHP; PHP security analysis therefore uses the dedicated PHP/static-analysis strategy.
 - OpenSSF Scorecard is enabled for public-repository supply-chain posture monitoring.
 - Dependabot is configured for Composer, npm, and GitHub Actions dependencies.
 - PR templates require product, ClickUp, Notion, testing, security, observability, rollback and documentation evidence.
