@@ -21,25 +21,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
+  analyze-actions:
+    name: Analyze (actions)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - language: javascript-typescript
-          - language: actions
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
-          languages: ${{ matrix.language }}
+          languages: actions
       - name: Analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
-          category: /language:${{ matrix.language }}
+          category: /language:actions
+
+# JavaScript/TypeScript CodeQL coverage will be enabled when the React/Next.js
+# application source is introduced. CodeQL does not support PHP/PCF; PHP
+# security analysis is provided by the dedicated PHP/PCF tooling baseline.
