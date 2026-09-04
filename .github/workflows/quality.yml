@@ -1,0 +1,69 @@
+name: PaxofiCloud Quality Baseline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - chore/paxoficloud-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate repository whitespace
+        run: git diff --check
+
+      - name: Validate PHP files when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find . -type f -name '*.php' -not -path './.git/*' -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No PHP source files present; PHP syntax validation skipped."
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            php -l "$file"
+          done
+
+      - name: Validate Composer manifest when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f composer.json ]; then
+            echo "No composer.json present; Composer validation skipped."
+            exit 0
+          fi
+          composer validate --no-check-publish --strict
+
+      - name: Validate Node package when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package.json ]; then
+            echo "No package.json present; Node validation skipped."
+            exit 0
+          fi
+          node --version
+          npm --version
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts
+          else
+            npm install --package-lock=false --ignore-scripts
+          fi
+          if npm run | grep -qE '^  (lint|test)$'; then
+            npm run lint --if-present
+            npm test --if-present
+          else
+            echo "No lint/test scripts declared; application-level quality checks will be added with implementation."
+          fi
