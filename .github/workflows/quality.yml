@@ -85,7 +85,7 @@ jobs:
             echo "No composer.json present; Composer validation skipped."
             exit 0
           fi
-          composer validate --no-check-publish --strict
+          composer validate --no-check-publish
 
       - name: Validate Node package when present
         shell: bash

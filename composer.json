@@ -4,8 +4,15 @@
   "type": "project",
   "license": "proprietary",
   "require": {
-    "php": ">=8.4"
+    "php": ">=8.4",
+    "paxofi-technologies/paxofi-core-framework": "1.0.0"
   },
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/Paxofi-Technologies/paxofi-core-framework.git"
+    }
+  ],
   "autoload": {
     "psr-4": {
       "PaxofiCloud\\": "src/"
