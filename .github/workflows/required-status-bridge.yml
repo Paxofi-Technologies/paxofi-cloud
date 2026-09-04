@@ -3,6 +3,8 @@ name: PaxofiCloud Required Status Bridge
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [feat/catalogue-pricing-contracts-v2]
 
 permissions:
   checks: read
@@ -17,7 +19,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const sha = context.payload.pull_request.head.sha;
+            const sha = context.payload.pull_request?.head.sha || context.sha;
             const required = [
               'Repository governance checks',
               'Engineering baseline validation',
