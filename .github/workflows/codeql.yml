@@ -1,0 +1,43 @@
+name: PaxofiCloud CodeQL
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '27 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: paxoficloud-codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-actions:
+    name: Analyze (actions)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: actions
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:actions
+
+# JavaScript/TypeScript CodeQL coverage will be enabled when the React/Next.js
+# application source is introduced. CodeQL does not support PHP/PCF; PHP
+# security analysis is provided by the dedicated PHP/PCF tooling baseline.

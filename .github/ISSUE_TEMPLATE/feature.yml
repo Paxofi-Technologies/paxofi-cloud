@@ -1,0 +1,36 @@
+name: Feature / Product Change
+description: Propose a governed PaxofiCloud product change
+title: "feat: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Product changes must have an authoritative Notion requirement/specification and a ClickUp execution record before implementation.
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What outcome should this change achieve?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Define observable conditions for acceptance.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: Governance references
+      description: Provide Notion and ClickUp references.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Security, operational and commercial impact
+      description: Identify material risks and affected controls.
+    validations:
+      required: true
