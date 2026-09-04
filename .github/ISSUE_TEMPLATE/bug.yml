@@ -1,0 +1,32 @@
+name: Bug / Defect
+description: Report a PaxofiCloud defect for controlled triage
+title: "fix: "
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction / evidence
+      description: Steps, environment, logs or other evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Customer, security, financial, availability or operational impact.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: ClickUp / Notion references
+      description: Link the execution task and authoritative requirement/specification where applicable.
+    validations:
+      required: true
