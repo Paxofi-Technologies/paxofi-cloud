@@ -1,0 +1,43 @@
+name: PaxofiCloud CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paxoficloud-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  governance:
+    name: Repository governance checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify required governance files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f README.md
+          test -f docs/README.md
+          test -f docs/architecture/IMPLEMENTATION-BOUNDARY.md
+          test -f .github/pull_request_template.md
+          test -f .github/dependabot.yml
+          test -f .github/ISSUE_TEMPLATE/feature.yml
+          test -f .github/ISSUE_TEMPLATE/bug.yml
+
+  baseline:
+    name: Engineering baseline validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repository state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short
+          git diff --check
