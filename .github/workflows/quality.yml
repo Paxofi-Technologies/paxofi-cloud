@@ -31,8 +31,10 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          tools: composer
+          tools: composer, phpstan:2.2.8
           coverage: none
+        env:
+          fail-fast: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -45,18 +47,35 @@ jobs:
       - name: Validate repository whitespace
         run: git diff --check
 
+      - name: Validate PHP analysis configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f phpstan.neon.dist
+          phpstan --version
+
       - name: Validate PHP files when present
         shell: bash
         run: |
           set -euo pipefail
           mapfile -d '' files < <(find . -type f -name '*.php' -not -path './.git/*' -print0)
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "No PHP source files present; PHP syntax validation skipped."
+            echo "No PHP source files present; PHP syntax and static analysis execution deferred until PHP implementation exists."
             exit 0
           fi
           for file in "${files[@]}"; do
             php -l "$file"
           done
+
+      - name: Run PHPStan when PHP source is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f -name '*.php' -not -path './.git/*' -print -quit | grep -q .; then
+            phpstan analyse --configuration=phpstan.neon.dist --error-format=github --no-progress
+          else
+            echo "PHPStan configuration validated; no PHP source exists yet."
+          fi
 
       - name: Validate Composer manifest when present
         shell: bash
