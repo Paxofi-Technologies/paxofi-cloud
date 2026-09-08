@@ -38,6 +38,7 @@ final class CartReaderFake implements CartReader
 final class CatalogueReaderFake implements CatalogueReader
 {
     public function __construct(private ?Product $product) {}
+    /** @return list<Product> */
     public function listAvailable(): array { return $this->product === null ? [] : [$this->product]; }
     public function find(ProductId $productId): ?Product { return $this->product; }
 }
@@ -67,6 +68,7 @@ final class OrderWriterFake implements OrderWriter
 
 final class AuditRecorderFake implements AuditRecorder
 {
+    /** @var list<array{string, string, string, array<string, scalar|null>}> */
     public array $records = [];
     public function record(string $action, string $subjectType, string $subjectId, array $attributes = []): void
     { $this->records[] = [$action, $subjectType, $subjectId, $attributes]; }
