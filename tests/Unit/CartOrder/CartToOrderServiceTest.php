@@ -18,18 +18,15 @@ use PaxofiCloud\Domain\Catalogue\Money;
 use PaxofiCloud\Domain\Catalogue\Product;
 use PaxofiCloud\Domain\Catalogue\ProductId;
 use PaxofiCloud\Domain\Identity\IdentityId;
+use PaxofiCloud\Domain\Order\CommercialSnapshotLine;
 use PaxofiCloud\Domain\Order\Order;
 use PaxofiCloud\Domain\Tenant\TenantId;
 
 spl_autoload_register(static function (string $class): void {
     $prefix = 'PaxofiCloud\\';
-    if (!str_starts_with($class, $prefix)) {
-        return;
-    }
+    if (!str_starts_with($class, $prefix)) return;
     $path = __DIR__ . '/../../../src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
-    if (is_file($path)) {
-        require_once $path;
-    }
+    if (is_file($path)) require_once $path;
 });
 
 final class CartReaderFake implements CartReader
@@ -54,7 +51,12 @@ final class PricingReaderFake implements PricingReader
 final class TenantAuthorizerFake implements TenantAuthorizer
 {
     public int $calls = 0;
-    public function assertCanAccess(TenantId $tenantId, RequestContext $context): void { $this->calls++; }
+    public function __construct(private bool $allowed = true) {}
+    public function assertCanAccess(TenantId $tenantId, RequestContext $context): void
+    {
+        $this->calls++;
+        if (!$this->allowed) throw new \RuntimeException('Access denied.');
+    }
 }
 
 final class OrderWriterFake implements OrderWriter
@@ -67,23 +69,15 @@ final class AuditRecorderFake implements AuditRecorder
 {
     public array $records = [];
     public function record(string $action, string $subjectType, string $subjectId, array $attributes = []): void
-    {
-        $this->records[] = [$action, $subjectType, $subjectId, $attributes];
-    }
+    { $this->records[] = [$action, $subjectType, $subjectId, $attributes]; }
 }
 
 function makeContext(TenantId $tenant): RequestContext
-{
-    return new RequestContext(new IdentityId('identity-1'), $tenant, 'correlation-1');
-}
+{ return new RequestContext(new IdentityId('identity-1'), $tenant, 'correlation-1'); }
 
 function expectFailure(callable $operation): void
 {
-    try {
-        $operation();
-    } catch (\Throwable) {
-        return;
-    }
+    try { $operation(); } catch (\Throwable) { return; }
     throw new \RuntimeException('Expected operation to fail.');
 }
 
@@ -95,12 +89,8 @@ $authorizer = new TenantAuthorizerFake();
 $writer = new OrderWriterFake();
 $audit = new AuditRecorderFake();
 $service = new CartToOrderService(
-    new CartReaderFake($cart),
-    new CatalogueReaderFake($product),
-    new PricingReaderFake(new Money(1500, 'USD')),
-    $authorizer,
-    $writer,
-    $audit,
+    new CartReaderFake($cart), new CatalogueReaderFake($product), new PricingReaderFake(new Money(1500, 'USD')),
+    $authorizer, $writer, $audit,
 );
 
 $order = $service->convert('cart-1', makeContext($tenant), 'idem-1');
@@ -121,6 +111,15 @@ expectFailure(fn() => (new CartToOrderService(
     new CartReaderFake($cart), new CatalogueReaderFake($product), new PricingReaderFake(null),
     new TenantAuthorizerFake(), new OrderWriterFake(), new AuditRecorderFake(),
 ))->convert('cart-1', makeContext($tenant), 'idem-3'));
+
+expectFailure(fn() => (new CartToOrderService(
+    new CartReaderFake($cart), new CatalogueReaderFake($product), new PricingReaderFake(new Money(1500, 'USD')),
+    new TenantAuthorizerFake(false), new OrderWriterFake(), new AuditRecorderFake(),
+))->convert('cart-1', makeContext($tenant), 'idem-4'));
+
+$usdLine = new CommercialSnapshotLine($productId, 'Compute Instance', 1, new Money(1000, 'USD'));
+$eurLine = new CommercialSnapshotLine(new ProductId('product-2'), 'Storage', 1, new Money(1000, 'EUR'));
+expectFailure(fn() => new Order('order-1', $tenant, [$usdLine, $eurLine]));
 
 assert($order->lines[0]->productName === 'Compute Instance');
 assert($order->lines[0]->unitPrice->minorUnits === 1500);
