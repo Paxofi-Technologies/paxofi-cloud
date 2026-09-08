@@ -21,7 +21,16 @@ use PaxofiCloud\Domain\Identity\IdentityId;
 use PaxofiCloud\Domain\Order\Order;
 use PaxofiCloud\Domain\Tenant\TenantId;
 
-require_once __DIR__ . '/../../../vendor/autoload.php';
+spl_autoload_register(static function (string $class): void {
+    $prefix = 'PaxofiCloud\\';
+    if (!str_starts_with($class, $prefix)) {
+        return;
+    }
+    $path = __DIR__ . '/../../../src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+    if (is_file($path)) {
+        require_once $path;
+    }
+});
 
 final class CartReaderFake implements CartReader
 {
@@ -113,8 +122,7 @@ expectFailure(fn() => (new CartToOrderService(
     new TenantAuthorizerFake(), new OrderWriterFake(), new AuditRecorderFake(),
 ))->convert('cart-1', makeContext($tenant), 'idem-3'));
 
-$immutable = $order->lines[0];
-assert($immutable->productName === 'Compute Instance');
-assert($immutable->unitPrice->minorUnits === 1500);
+assert($order->lines[0]->productName === 'Compute Instance');
+assert($order->lines[0]->unitPrice->minorUnits === 1500);
 
 echo "Cart-to-order invariants passed.\n";
