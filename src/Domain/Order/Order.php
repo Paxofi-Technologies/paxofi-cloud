@@ -24,15 +24,16 @@ final readonly class Order
             throw new \InvalidArgumentException('Order must contain at least one line.');
         }
 
-        $currency = null;
+        $currency = '';
         $minorUnits = 0;
         foreach ($lines as $line) {
             if (!$line instanceof CommercialSnapshotLine) {
                 throw new \InvalidArgumentException('Order lines must be commercial snapshot lines.');
             }
             $lineCurrency = $line->unitPrice->currency;
-            $currency ??= $lineCurrency;
-            if ($currency !== $lineCurrency) {
+            if ($currency === '') {
+                $currency = $lineCurrency;
+            } elseif ($currency !== $lineCurrency) {
                 throw new \InvalidArgumentException('Order lines must use one currency.');
             }
             if ($line->lineTotal->minorUnits > PHP_INT_MAX - $minorUnits) {
