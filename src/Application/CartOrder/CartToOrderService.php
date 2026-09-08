@@ -42,6 +42,7 @@ final class CartToOrderService
 
         $this->authorizer->assertCanAccess($cart->tenantId, $context);
 
+        /** @var list<CommercialSnapshotLine> $snapshotLines */
         $snapshotLines = [];
         foreach ($cart->lines as $line) {
             $product = $this->catalogue->find($line->productId);
