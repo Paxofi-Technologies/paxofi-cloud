@@ -83,6 +83,20 @@ function expectFailure(callable $operation): void
     throw new \RuntimeException('Expected operation to fail.');
 }
 
+function expectSameInt(int $actual, int $expected, string $label): void
+{
+    if ($actual !== $expected) {
+        throw new \RuntimeException($label . ' mismatch.');
+    }
+}
+
+function expectSameString(string $actual, string $expected, string $label): void
+{
+    if ($actual !== $expected) {
+        throw new \RuntimeException($label . ' mismatch.');
+    }
+}
+
 $tenant = new TenantId('tenant-1');
 $productId = new ProductId('product-1');
 $cart = new Cart($tenant, [new CartLine($productId, 2)]);
@@ -96,13 +110,13 @@ $service = new CartToOrderService(
 );
 
 $order = $service->convert('cart-1', makeContext($tenant), 'idem-1');
-assert($order->total->minorUnits === 3000);
-assert($order->total->currency === 'USD');
-assert($order->lines[0]->unitPrice->minorUnits === 1500);
-assert($order->lines[0]->lineTotal->minorUnits === 3000);
-assert($writer->order === $order);
-assert(count($audit->records) === 1);
-assert($authorizer->calls === 1);
+expectSameInt($order->total->minorUnits, 3000, 'order total');
+expectSameString($order->total->currency, 'USD', 'order currency');
+expectSameInt($order->lines[0]->unitPrice->minorUnits, 1500, 'snapshot unit price');
+expectSameInt($order->lines[0]->lineTotal->minorUnits, 3000, 'snapshot line total');
+if ($writer->order !== $order) throw new \RuntimeException('Order writer did not receive the created order.');
+expectSameInt(count($audit->records), 1, 'audit record count');
+expectSameInt($authorizer->calls, 1, 'tenant authorization call count');
 
 expectFailure(fn() => (new CartToOrderService(
     new CartReaderFake($cart), new CatalogueReaderFake(new Product($productId, 'Unavailable', false)),
@@ -123,7 +137,7 @@ $usdLine = new CommercialSnapshotLine($productId, 'Compute Instance', 1, new Mon
 $eurLine = new CommercialSnapshotLine(new ProductId('product-2'), 'Storage', 1, new Money(1000, 'EUR'));
 expectFailure(fn() => new Order('order-1', $tenant, [$usdLine, $eurLine]));
 
-assert($order->lines[0]->productName === 'Compute Instance');
-assert($order->lines[0]->unitPrice->minorUnits === 1500);
+expectSameString($order->lines[0]->productName, 'Compute Instance', 'snapshot product name');
+expectSameInt($order->lines[0]->unitPrice->minorUnits, 1500, 'snapshot unit price recheck');
 
 echo "Cart-to-order invariants passed.\n";
