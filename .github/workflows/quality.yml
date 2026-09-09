@@ -77,6 +77,15 @@ jobs:
             echo "PHPStan configuration validated; no PHP source exists yet."
           fi
 
+      - name: Run executable PHP unit invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' tests < <(find tests/Unit -type f -name '*Test.php' -print0 2>/dev/null || true)
+          for test in "${tests[@]}"; do
+            php -d assert.exception=1 "$test"
+          done
+
       - name: Validate Composer manifest when present
         shell: bash
         run: |
