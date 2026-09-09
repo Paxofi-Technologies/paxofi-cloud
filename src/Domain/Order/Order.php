@@ -27,9 +27,6 @@ final readonly class Order
         $currency = '';
         $minorUnits = 0;
         foreach ($lines as $line) {
-            if (!$line instanceof CommercialSnapshotLine) {
-                throw new \InvalidArgumentException('Order lines must be commercial snapshot lines.');
-            }
             $lineCurrency = $line->unitPrice->currency;
             if ($currency === '') {
                 $currency = $lineCurrency;
