@@ -19,9 +19,6 @@ final readonly class Cart
 
         $productIds = [];
         foreach ($lines as $line) {
-            if (!$line instanceof CartLine) {
-                throw new \InvalidArgumentException('Cart lines must be CartLine instances.');
-            }
             $key = (string) $line->productId;
             if (isset($productIds[$key])) {
                 throw new \InvalidArgumentException('A product may appear only once in a cart.');
