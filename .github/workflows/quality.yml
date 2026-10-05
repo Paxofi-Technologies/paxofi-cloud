@@ -64,7 +64,7 @@ jobs:
             # everything else so unit tests and static analysis still run; any code
             # that already depends on PCF will fail analysis loudly here.
             echo "::warning title=PCF not resolved::Secret PCF_READ_TOKEN is not configured; dependencies installed without paxofi-core-framework."
-            composer remove --no-interaction --no-update paxofi-technologies/paxofi-core-framework
+            php -r '$j = json_decode(file_get_contents("composer.json"), true, 512, JSON_THROW_ON_ERROR); unset($j["require"]["paxofi-technologies/paxofi-core-framework"], $j["repositories"]); file_put_contents("composer.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
             composer update --no-interaction --no-progress --prefer-dist
             echo "PCF_MODE=standalone" >> "$GITHUB_ENV"
           fi
@@ -110,7 +110,7 @@ jobs:
             composer config --global github-oauth.github.com "${PCF_READ_TOKEN}"
             composer install --no-interaction --no-progress --prefer-dist
           else
-            composer remove --no-interaction --no-update paxofi-technologies/paxofi-core-framework
+            php -r '$j = json_decode(file_get_contents("composer.json"), true, 512, JSON_THROW_ON_ERROR); unset($j["require"]["paxofi-technologies/paxofi-core-framework"], $j["repositories"]); file_put_contents("composer.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
             composer update --no-interaction --no-progress --prefer-dist
           fi
 
