@@ -90,14 +90,16 @@ jobs:
           semgrep scan --metrics=off --error \
             --config .semgrep/paxoficloud.yaml \
             --config "$RUNNER_TEMP/semgrep-rules/php" \
-            . 2> "$RUNNER_TEMP/semgrep.log"
+            --sarif-output="$RUNNER_TEMP/semgrep.sarif" \
+            .
           status=$?
-          cat "$RUNNER_TEMP/semgrep.log" >&2
-          # Guard against a silent pass: a scan that loaded no rules is a failure.
-          rules=$(grep -oP 'Ran \K[0-9]+(?= rules)' "$RUNNER_TEMP/semgrep.log" | tail -1 || true)
-          if [ -z "${rules}" ] || [ "${rules}" -lt 50 ]; then
-            echo "::error title=Semgrep rules not loaded::Expected at least 50 rules, got '${rules:-none}'."
+          # Guard against a silent pass: count the rules Semgrep actually loaded,
+          # from its machine-readable report (text output differs between CI and
+          # local runs, so it is not parsed).
+          rules=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["runs"][0]["tool"]["driver"]["rules"]))' "$RUNNER_TEMP/semgrep.sarif" 2>/dev/null || echo 0)
+          if [ "${rules}" -lt 50 ]; then
+            echo "::error title=Semgrep rules not loaded::Expected at least 50 rules, got ${rules}."
             exit 1
           fi
-          echo "Semgrep ran ${rules} rules." >> "$GITHUB_STEP_SUMMARY"
+          echo "Semgrep loaded ${rules} rules." >> "$GITHUB_STEP_SUMMARY"
           exit "${status}"
