@@ -1,0 +1,102 @@
+name: PaxofiCloud Docker
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'compose.yaml'
+      - 'docker/**'
+      - 'public/**'
+      - 'src/**'
+      - 'config/**'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.env.example'
+      - '.github/workflows/docker.yml'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paxoficloud-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack:
+    name: Docker dev stack smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Create throwaway .env
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # Random per-run passwords; nothing reusable is ever written to the repo.
+          sed -i "s/change-me-local-only/ci-$(openssl rand -hex 12)/" .env
+
+      - name: Install dependencies (requires PCF)
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PCF_READ_TOKEN}" ]; then
+            echo "::error title=PCF not resolved::The Docker smoke test needs PCF; configure the PCF_READ_TOKEN secret."
+            exit 1
+          fi
+          export COMPOSER_AUTH="{\"github-oauth\":{\"github.com\":\"${PCF_READ_TOKEN}\"}}"
+          HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm -T composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Start stack
+        run: HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose up -d --wait --wait-timeout 180
+
+      - name: Migrate
+        run: docker compose exec -T php bin/paxoficloud migrate
+
+      - name: Tests and static analysis inside the stack
+        run: |
+          docker compose exec -T -e PAXOFICLOUD_INTEGRATION=1 php vendor/bin/phpunit
+          docker compose exec -T php php -d memory_limit=1G vendor/bin/phpstan analyse --no-progress
+
+      - name: Smoke test through Nginx
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:8080
+          test "$(curl -s -o /dev/null -w '%{http_code}' $base/health/live)" = 200
+          test "$(curl -s $base/health/ready)" = '{"status":"healthy"}'
+          headers=$(curl -s -D - -o /dev/null $base/health/live | tr -d '\r')
+          echo "$headers"
+          echo "$headers" | grep -qi '^content-security-policy:'
+          echo "$headers" | grep -qi '^strict-transport-security:'
+          if echo "$headers" | grep -qi '^x-powered-by:'; then echo '::error::X-Powered-By leaked'; exit 1; fi
+          echo "$headers" | grep -qi '^server: nginx$'
+          test "$(curl -s -o /dev/null -w '%{http_code}' $base/.env)" = 404
+          test "$(head -c 2000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' --data-binary @- $base/health/live)" = 413
+          docker compose exec -T php sh -c 'test "$(id -u)" != 0 && php -r "exit(ini_get(\"expose_php\") ? 1 : 0);"'
+
+      - name: Readiness reports dependency failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose stop redis
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health/ready)" = 503
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health/live)" = 200
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

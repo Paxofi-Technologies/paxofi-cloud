@@ -10,6 +10,7 @@ Do not copy uncontrolled product requirements into this repository.
 
 - [PCF developer reference](engineering/PCF-DEVELOPER-REFERENCE.md) — the Paxofi Core Framework v1.1.0 API surface as implemented, and the capabilities PaxofiCloud must build on top of it.
 
+- [Local development](engineering/LOCAL-DEVELOPMENT.md) — the Docker stack (PHP-FPM, Nginx, MySQL, Redis), first-run steps and everyday commands.
 - [Database migrations](engineering/MIGRATIONS.md) — writing migrations and the rules `bin/paxoficloud migrate` enforces.
 
 ## Security

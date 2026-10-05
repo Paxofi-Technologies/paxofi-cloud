@@ -12,6 +12,10 @@ PaxofiCloud is Paxofi's cloud commerce, control-plane, orchestration and digital
 
 PaxofiCloud application and domain logic is built on the Paxofi Core Framework (PCF). External provider APIs are accessed only through governed provider contracts and adapters.
 
+## Getting started
+
+See [docs/engineering/LOCAL-DEVELOPMENT.md](docs/engineering/LOCAL-DEVELOPMENT.md): `cp .env.example .env`, `docker compose up -d --build --wait`, then `curl http://127.0.0.1:8080/health/ready`.
+
 ## Initial provider domains
 
 - Hetzner: compute/cloud infrastructure
