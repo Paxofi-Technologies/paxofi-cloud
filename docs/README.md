@@ -15,6 +15,8 @@ Do not copy uncontrolled product requirements into this repository.
 
 ## Security
 
+- [CI security gates](engineering/SECURITY-GATES.md) — gitleaks, Semgrep (with PaxofiCloud rules) and the architecture layering test; what each blocks and how to respond.
+
 - [Identity threat model](security/THREAT-MODEL-IDENTITY.md) — STRIDE threat model for identity, sessions, tenant isolation and audit (Sprint 1). Identity PRs cite its threat IDs and add its tests.
 
 ## Frontend
