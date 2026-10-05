@@ -13,3 +13,7 @@ Do not copy uncontrolled product requirements into this repository.
 ## Security
 
 - [Identity threat model](security/THREAT-MODEL-IDENTITY.md) — STRIDE threat model for identity, sessions, tenant isolation and audit (Sprint 1). Identity PRs cite its threat IDs and add its tests.
+
+## Frontend
+
+- [Design system v1 and portal prototype](../frontend/README.md) — design tokens (Figma-importable), components and the sign-in, dashboard and domain-search screens.
