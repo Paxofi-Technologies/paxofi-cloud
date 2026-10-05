@@ -116,3 +116,79 @@ jobs:
 
       - name: PHPUnit
         run: vendor/bin/phpunit
+
+  integration:
+    name: Integration (MySQL 8.4, Redis 7)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-only
+          MYSQL_DATABASE: paxoficloud
+          MYSQL_USER: paxoficloud
+          MYSQL_PASSWORD: ci-only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -pci-root-only --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      PAXOFICLOUD_INTEGRATION: '1'
+      APP_ENV: testing
+      DB_DSN: 'mysql:host=127.0.0.1;port=3306;dbname=paxoficloud;charset=utf8mb4'
+      DB_USERNAME: paxoficloud
+      DB_PASSWORD: ci-only
+      REDIS_HOST: 127.0.0.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: sodium, pdo_mysql, mbstring
+          tools: composer
+          coverage: none
+
+      - name: Install dependencies (requires PCF)
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PCF_READ_TOKEN}" ]; then
+            echo "::error title=PCF not resolved::Integration tests need PCF; configure the PCF_READ_TOKEN secret."
+            exit 1
+          fi
+          composer config --global github-oauth.github.com "${PCF_READ_TOKEN}"
+          composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Integration tests
+        run: vendor/bin/phpunit --testsuite Integration
+
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin/paxoficloud migrate
+          bin/paxoficloud migrate:status
+
+      - name: HTTP smoke test (PHP built-in server)
+        shell: bash
+        run: |
+          set -euo pipefail
+          php -S 127.0.0.1:8080 -t public > /tmp/server.log 2>&1 &
+          sleep 1
+          curl --fail --silent --show-error http://127.0.0.1:8080/health/live
+          curl --fail --silent --show-error http://127.0.0.1:8080/health/ready
+          curl --silent --dump-header - --output /dev/null http://127.0.0.1:8080/health/live | grep -qi '^content-security-policy:'
