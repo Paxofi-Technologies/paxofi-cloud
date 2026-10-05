@@ -4,11 +4,28 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      composer-minor-and-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
       interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # TypeScript majors must move in step with typescript-eslint's peer range
+      # (TS 7 broke `npm ci`); upgrade them deliberately, not via Dependabot.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      # One PR per week for all action bumps instead of one PR per action.
+      github-actions:
+        patterns: ["*"]
