@@ -5,3 +5,7 @@ This repository contains implementation-facing engineering material only.
 Authoritative product and architecture specifications remain in Notion. ClickUp is the execution system. GitHub is the source-control and engineering-change authority.
 
 Do not copy uncontrolled product requirements into this repository.
+
+## Engineering references
+
+- [PCF developer reference](engineering/PCF-DEVELOPER-REFERENCE.md) — the Paxofi Core Framework v1.1.0 API surface as implemented, and the capabilities PaxofiCloud must build on top of it.
