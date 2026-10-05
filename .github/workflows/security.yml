@@ -1,0 +1,105 @@
+name: PaxofiCloud Security Gates
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '41 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paxoficloud-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+
+      - name: Scan every commit on every branch
+        # Redacted output: a finding never prints the secret itself.
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 --log-opts="--all" .'
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    env:
+      SEMGREP_VERSION: 1.179.0
+      # Official community rules, fetched at a pinned commit (not vendored:
+      # their licence restricts redistribution). Bump deliberately.
+      SEMGREP_RULES_COMMIT: a84ff9cc2453ca91d581380de4b8b3f272f6f4be
+      SEMGREP_ENABLE_VERSION_CHECK: '0'
+      SEMGREP_SEND_METRICS: 'off'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep (pinned)
+        run: python -m pip install --disable-pip-version-check "semgrep==${SEMGREP_VERSION}"
+
+      - name: Fetch community rules at pinned commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init -q "$RUNNER_TEMP/semgrep-rules"
+          cd "$RUNNER_TEMP/semgrep-rules"
+          git remote add origin https://github.com/semgrep/semgrep-rules.git
+          git fetch -q --depth 1 origin "${SEMGREP_RULES_COMMIT}"
+          git checkout -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${SEMGREP_RULES_COMMIT}"
+
+      - name: Test PaxofiCloud rules
+        run: semgrep scan --test --metrics=off .semgrep/
+
+      - name: Scan
+        shell: bash
+        run: |
+          set -uo pipefail
+          semgrep scan --metrics=off --error \
+            --config .semgrep/paxoficloud.yaml \
+            --config "$RUNNER_TEMP/semgrep-rules/php" \
+            --sarif-output="$RUNNER_TEMP/semgrep.sarif" \
+            .
+          status=$?
+          # Guard against a silent pass: count the rules Semgrep actually loaded,
+          # from its machine-readable report (text output differs between CI and
+          # local runs, so it is not parsed).
+          rules=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["runs"][0]["tool"]["driver"]["rules"]))' "$RUNNER_TEMP/semgrep.sarif" 2>/dev/null || echo 0)
+          if [ "${rules}" -lt 50 ]; then
+            echo "::error title=Semgrep rules not loaded::Expected at least 50 rules, got ${rules}."
+            exit 1
+          fi
+          echo "Semgrep loaded ${rules} rules." >> "$GITHUB_STEP_SUMMARY"
+          exit "${status}"

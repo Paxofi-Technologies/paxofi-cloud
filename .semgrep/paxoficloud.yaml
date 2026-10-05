@@ -1,0 +1,120 @@
+# PaxofiCloud-specific Semgrep rules. Each enforces a written decision
+# (SRS v2.0, THREAT-MODEL-IDENTITY.md, company rules). Tests live in
+# paxoficloud.php next to this file: `semgrep scan --test .semgrep/`.
+rules:
+  - id: pc-shell-execution
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Shell execution is forbidden in application code (SRS SEC-011).
+      Call a provider API through an adapter instead.
+    pattern-either:
+      - pattern: exec(...)
+      - pattern: shell_exec(...)
+      - pattern: system(...)
+      - pattern: passthru(...)
+      - pattern: proc_open(...)
+      - pattern: popen(...)
+      - pattern: pcntl_exec(...)
+
+  - id: pc-dynamic-code
+    languages: [php]
+    severity: ERROR
+    message: "Dynamic code execution is forbidden (PCF invariant: no unsafe dynamic execution)."
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: create_function(...)
+
+  - id: pc-unserialize
+    languages: [php]
+    severity: ERROR
+    message: >-
+      unserialize() enables object injection. Use json_decode() with
+      JSON_THROW_ON_ERROR, or PCF's allow-listed queue serializer.
+    pattern: unserialize(...)
+
+  - id: pc-password-hash-not-argon2id
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Passwords must be hashed with PASSWORD_ARGON2ID and explicit cost
+      parameters (SRS IAM-004, threat model D-3).
+    patterns:
+      - pattern: password_hash($PASSWORD, $ALGO, ...)
+      - pattern-not: password_hash($PASSWORD, PASSWORD_ARGON2ID, ...)
+
+  - id: pc-insecure-random
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Not cryptographically secure. Use random_bytes() or random_int()
+      (threat model D-1).
+    pattern-either:
+      - pattern: rand(...)
+      - pattern: mt_rand(...)
+      - pattern: srand(...)
+      - pattern: mt_srand(...)
+      - pattern: uniqid(...)
+      - pattern: lcg_value()
+
+  - id: pc-weak-hash
+    languages: [php]
+    severity: ERROR
+    message: MD5, SHA-1 and CRC32 are not acceptable. Use hash('sha256', …) or libsodium.
+    pattern-either:
+      - pattern: md5(...)
+      - pattern: sha1(...)
+      - pattern: crc32(...)
+      - pattern: md5_file(...)
+      - pattern: sha1_file(...)
+      - pattern: hash('md5', ...)
+      - pattern: hash('sha1', ...)
+
+  - id: pc-tls-verification-disabled
+    languages: [php]
+    severity: ERROR
+    message: TLS certificate verification must never be disabled for outbound calls.
+    pattern-either:
+      - pattern: curl_setopt($CURL, CURLOPT_SSL_VERIFYPEER, false)
+      - pattern: curl_setopt($CURL, CURLOPT_SSL_VERIFYPEER, 0)
+      - pattern: curl_setopt($CURL, CURLOPT_SSL_VERIFYHOST, false)
+      - pattern: curl_setopt($CURL, CURLOPT_SSL_VERIFYHOST, 0)
+      - pattern: "[..., CURLOPT_SSL_VERIFYPEER => false, ...]"
+      - pattern: "[..., CURLOPT_SSL_VERIFYHOST => 0, ...]"
+
+  - id: pc-debug-output
+    languages: [php]
+    severity: ERROR
+    message: Debug output can leak secrets and internal state. Use the PCF Logger.
+    pattern-either:
+      - pattern: var_dump(...)
+      - pattern: phpinfo(...)
+      - pattern: debug_zval_dump(...)
+      - pattern: print_r($VALUE)
+      - pattern: var_export($VALUE)
+
+  - id: pc-sql-concatenation
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Build SQL with named parameters, never by concatenating variables or
+      sprintf (SRS SEC-011). Constants such as self::TABLE are allowed.
+    patterns:
+      - pattern: $DB->$METHOD($QUERY, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(execute|fetchAll|fetchOne|query|exec|prepare)$
+      - metavariable-pattern:
+          metavariable: $QUERY
+          pattern-either:
+            - patterns:
+                - pattern: $LEFT . $RIGHT
+                - metavariable-regex:
+                    metavariable: $RIGHT
+                    regex: ^\$
+            - patterns:
+                - pattern: $LEFT . $RIGHT
+                - metavariable-regex:
+                    metavariable: $LEFT
+                    regex: ^\$
+            - pattern: sprintf(...)

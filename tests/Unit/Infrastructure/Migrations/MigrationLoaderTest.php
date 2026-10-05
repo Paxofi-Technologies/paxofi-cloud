@@ -20,10 +20,16 @@ final class MigrationLoaderTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
-        }
+        $this->clearDir();
         rmdir($this->dir);
+    }
+
+    private function clearDir(): void
+    {
+        foreach (glob($this->dir . '/*') ?: [] as $file) {
+            // Only files this test wrote into its own random temp directory.
+            unlink($file); // nosemgrep
+        }
     }
 
     public function testLoadsInNumericOrderAndIgnoresOtherFiles(): void
@@ -48,9 +54,7 @@ final class MigrationLoaderTest extends TestCase
             ['0001_empty.sql' => "  \n"],
         ];
         foreach ($cases as $files) {
-            foreach (glob($this->dir . '/*') ?: [] as $file) {
-                unlink($file);
-            }
+            $this->clearDir();
             foreach ($files as $name => $sql) {
                 file_put_contents($this->dir . '/' . $name, $sql);
             }

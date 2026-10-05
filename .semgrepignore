@@ -1,0 +1,5 @@
+# Rule test fixtures contain deliberately insecure code.
+.semgrep/
+vendor/
+frontend/
+node_modules/
