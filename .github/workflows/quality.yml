@@ -80,7 +80,8 @@ jobs:
 
       - name: Summary
         if: always()
-        run: echo "PCF dependency mode: ${PCF_MODE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "PCF dependency mode: ${PCF_MODE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
   php-85:
     name: PHP 8.5 compatibility
