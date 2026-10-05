@@ -1,0 +1,9 @@
+/vendor/
+/.phpstan.cache/
+/.phpunit.cache/
+/.composer-home/
+.env
+.env.*
+!.env.example
+*.log
+/node_modules/
