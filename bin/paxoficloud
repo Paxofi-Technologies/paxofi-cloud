@@ -1,0 +1,34 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Paxofi\Core\CLI\CommandRegistry;
+use Paxofi\Core\CLI\CommandRunner;
+use PaxofiCloud\Bootstrap\AppFactory;
+use PaxofiCloud\Cli\Console;
+use PaxofiCloud\Infrastructure\Container\Resolve;
+use PaxofiCloud\Infrastructure\Providers\CliProvider;
+
+if (PHP_SAPI !== 'cli') {
+    exit(1);
+}
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$console = Console::standard();
+$command = $argv[1] ?? null;
+if ($command === null || $command === '--help' || $command === '-h') {
+    $console->line('Usage: bin/paxoficloud <command>');
+    $console->line('Commands: migrate, migrate:status');
+    exit($command === null ? 1 : 0);
+}
+
+$application = AppFactory::create(dirname(__DIR__), [new CliProvider($console)]);
+$registry = Resolve::get($application->container(), CommandRegistry::class);
+if (!$registry->has($command)) {
+    $console->error(sprintf('Unknown command "%s".', $command));
+    exit(1);
+}
+
+exit((new CommandRunner($registry))->run($command, array_slice($argv, 2)));
