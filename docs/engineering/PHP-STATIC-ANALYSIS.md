@@ -6,24 +6,20 @@ This document defines the deterministic PHP static-analysis baseline for PaxofiC
 
 ## Current baseline
 
-- PHP CI baseline: 8.4
-- PHPStan: 2.2.8, pinned exactly in GitHub Actions
-- PHPStan analysis level: 8
+- PHP CI baseline: 8.4 (required `Quality baseline` job); 8.5 compatibility job runs PHPUnit
+- PHPStan: `phpstan/phpstan` ^2.1 from `composer.lock` (run as `vendor/bin/phpstan`)
+- PHPStan analysis level: **max**
 - Analysis PHP version: 8.4 (`80400`)
 - Configuration: `phpstan.neon.dist`
-- Governed source boundary: `src`
-- Governed test boundary: `tests`
+- Governed boundaries: `src`, `tests`
 - Required GitHub gate: `Quality baseline`
 
 ## Execution policy
 
 1. Every pull request targeting `main` executes the `Quality baseline` workflow.
-2. PHP files are syntax-checked with the configured PHP runtime.
-3. PHPStan configuration is always validated.
-4. PHPStan static analysis executes automatically whenever PHP source exists.
-5. No PHP baseline suppression file is introduced at this stage. Findings must be fixed rather than hidden.
-6. The current repository contains no production PHP implementation yet; therefore PHPStan execution is intentionally deferred until PHP source is introduced. This is a readiness control, not a production-code waiver.
-7. Once PCF/PaxofiCloud PHP implementation begins, the same required quality check becomes the authoritative static-analysis gate for every pull request.
+2. The workflow lints PHP syntax, validates Composer, installs locked dependencies, runs PHPUnit, PHPStan and `composer audit`.
+3. No PHPStan baseline/suppression file is permitted. Findings are fixed, not hidden.
+4. Tests must be real PHPUnit tests (`extends TestCase`); they cover happy path, failure and security-negative cases.
 
 ## Scope discipline
 
