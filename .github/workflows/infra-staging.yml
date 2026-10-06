@@ -1,0 +1,136 @@
+name: PaxofiCloud Staging Infrastructure
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-staging.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-staging.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan = show changes only; apply = plan and then apply"
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+
+# Never run two infrastructure jobs at once and never cancel one mid-apply.
+concurrency:
+  group: infra-staging
+  cancel-in-progress: false
+
+env:
+  TOFU_VERSION: "1.13.1"
+  TOFU_SHA256: "378ada19d4bc70c43732004e8159be771b23b9a5afdf059e5f8a2b3fa2c70a69"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  validate:
+    name: Infrastructure validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install OpenTofu (checksum verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/tofu.tgz" \
+            "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz"
+          echo "${TOFU_SHA256}  $RUNNER_TEMP/tofu.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/tofu.tgz" -C "$RUNNER_TEMP" tofu
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Format check
+        run: tofu fmt -check -recursive -diff infra
+
+      - name: Validate (no backend, no credentials)
+        working-directory: infra/staging
+        env:
+          # Placeholders only: validation never contacts Vultr, Cloudflare or the state bucket.
+          TF_VAR_state_passphrase: validate-only-placeholder
+          TF_VAR_vultr_api_key: validate-only-placeholder
+        run: |
+          tofu init -backend=false -lockfile=readonly
+          tofu validate
+
+  deploy:
+    name: Staging ${{ inputs.action }}
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The "staging" GitHub Environment holds the secrets and requires the CEO's
+    # approval before this job starts.
+    environment: staging
+    env:
+      TF_VAR_vultr_api_key: ${{ secrets.VULTR_API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_state_passphrase: ${{ secrets.TF_STATE_PASSPHRASE }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.STATE_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.STATE_S3_SECRET_ACCESS_KEY }}
+      TF_VAR_admin_ssh_public_key: ${{ vars.STAGING_ADMIN_SSH_PUBLIC_KEY }}
+      STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+      STATE_S3_ENDPOINT: ${{ vars.STATE_S3_ENDPOINT }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install OpenTofu (checksum verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/tofu.tgz" \
+            "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz"
+          echo "${TOFU_SHA256}  $RUNNER_TEMP/tofu.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/tofu.tgz" -C "$RUNNER_TEMP" tofu
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Check required configuration is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in TF_VAR_vultr_api_key CLOUDFLARE_API_TOKEN TF_VAR_state_passphrase \
+                      AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TF_VAR_admin_ssh_public_key \
+                      STATE_BUCKET STATE_S3_ENDPOINT; do
+            if [ -z "${!name:-}" ]; then echo "::error::$name is not set in the staging environment"; missing=1; fi
+          done
+          exit "$missing"
+
+      - name: Init (remote, encrypted state)
+        working-directory: infra/staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf 'bucket = "%s"\nendpoints = { s3 = "%s" }\n' "$STATE_BUCKET" "$STATE_S3_ENDPOINT" > backend.hcl
+          tofu init -backend-config=backend.hcl -lockfile=readonly
+
+      - name: Plan
+        working-directory: infra/staging
+        run: tofu plan -out=tfplan -lock-timeout=5m
+
+      - name: Apply
+        if: inputs.action == 'apply'
+        working-directory: infra/staging
+        run: tofu apply -lock-timeout=5m tfplan
+
+      - name: Remove local plan and backend config
+        if: always()
+        working-directory: infra/staging
+        run: rm -f tfplan backend.hcl
