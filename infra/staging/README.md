@@ -55,13 +55,13 @@ validation enforces this.
 | `TF_STATE_PASSPHRASE` | Random passphrase, ≥ 32 characters (e.g. `openssl rand -base64 32`). **Store a copy in the company password manager.** Losing it makes the state unreadable. |
 | `STATE_S3_ACCESS_KEY_ID` | Access key for the state bucket |
 | `STATE_S3_SECRET_ACCESS_KEY` | Secret key for the state bucket |
+| `STATE_S3_ENDPOINT` | S3 endpoint: R2 `https://<account-id>.r2.cloudflarestorage.com`, or Vultr Object Storage `https://<region>.vultrobjects.com`. A secret so the account ID is masked in public logs. |
 
 **Variables** (not secret)
 
 | Name | Value |
 |---|---|
 | `STATE_BUCKET` | Bucket name, e.g. `paxoficloud-tfstate` |
-| `STATE_S3_ENDPOINT` | S3 endpoint: R2 `https://<account-id>.r2.cloudflarestorage.com`, or Vultr Object Storage `https://<region>.vultrobjects.com` |
 | `STAGING_ADMIN_SSH_PUBLIC_KEY` | An `ssh-ed25519 …` public key (`ssh-keygen -t ed25519 -C paxoficloud-staging`) |
 
 **State bucket:** Cloudflare R2's free tier is enough.
@@ -75,6 +75,8 @@ GitHub → Actions → **PaxofiCloud Staging Infrastructure** → **Run workflow
 
 1. Run `plan` first and read the plan in the job log.
 2. Run `apply`. Each run waits for the environment approval.
+
+**Public logs.** This repository is public, so workflow logs are public. Plan and apply print only resource addresses, actions and the summary line, never attribute values such as the origin IP. If a plan needs closer inspection, an operator runs it locally with the same credentials.
 
 Pull requests that touch `infra/` run `fmt` and `validate` only. Those runs have no credentials and don't touch the state.
 
