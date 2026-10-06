@@ -83,7 +83,9 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.STATE_S3_SECRET_ACCESS_KEY }}
       TF_VAR_admin_ssh_public_key: ${{ vars.STAGING_ADMIN_SSH_PUBLIC_KEY }}
       STATE_BUCKET: ${{ vars.STATE_BUCKET }}
-      STATE_S3_ENDPOINT: ${{ vars.STATE_S3_ENDPOINT }}
+      # A secret (not a variable) so the account-specific endpoint is masked in
+      # this public repository's logs.
+      STATE_S3_ENDPOINT: ${{ secrets.STATE_S3_ENDPOINT }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -121,16 +123,39 @@ jobs:
           printf 'bucket = "%s"\nendpoints = { s3 = "%s" }\n' "$STATE_BUCKET" "$STATE_S3_ENDPOINT" > backend.hcl
           tofu init -backend-config=backend.hcl -lockfile=readonly
 
-      - name: Plan
+      # This repository is public, so its Actions logs are public too. Full
+      # plan/apply output would publish the origin IP and provider resource
+      # IDs; the logs show only resource addresses, actions and the summary.
+      - name: Plan (summary only)
         working-directory: infra/staging
-        run: tofu plan -out=tfplan -lock-timeout=5m
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! tofu plan -out=tfplan -lock-timeout=5m -no-color > "$RUNNER_TEMP/plan.log" 2>&1; then
+            echo "::error::tofu plan failed. Error headlines (details withheld from the public log):"
+            grep -E '^(│ )?Error: ' "$RUNNER_TEMP/plan.log" | sed 's/^│ //' | sort -u || true
+            exit 1
+          fi
+          tofu show -json tfplan \
+            | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join("+"))\t\(.address)"' \
+            | sort
+          grep -E '^(Plan:|No changes)' "$RUNNER_TEMP/plan.log"
 
-      - name: Apply
+      - name: Apply (summary only)
         if: inputs.action == 'apply'
         working-directory: infra/staging
-        run: tofu apply -lock-timeout=5m tfplan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! tofu apply -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply.log" 2>&1; then
+            echo "::error::tofu apply failed. Error headlines (details withheld from the public log):"
+            grep -E '^(│ )?Error: ' "$RUNNER_TEMP/apply.log" | sed 's/^│ //' | sort -u || true
+            exit 1
+          fi
+          grep -E '^Apply complete' "$RUNNER_TEMP/apply.log"
+          echo "Staging URL: $(tofu output -raw staging_url)"
 
-      - name: Remove local plan and backend config
+      - name: Remove local plan, logs and backend config
         if: always()
         working-directory: infra/staging
-        run: rm -f tfplan backend.hcl
+        run: rm -f tfplan backend.hcl "$RUNNER_TEMP/plan.log" "$RUNNER_TEMP/apply.log"
