@@ -43,6 +43,7 @@ abstract class IntegrationTestCase extends TestCase
     {
         $pdo = self::pdo();
         $pdo->exec('DROP TABLE IF EXISTS example_accounts');
+        $pdo->exec('DROP TABLE IF EXISTS provider_credentials');
         $pdo->exec('DROP TABLE IF EXISTS schema_migrations');
     }
 
