@@ -1,0 +1,60 @@
+#cloud-config
+# Baseline host hardening for PaxofiCloud staging. Application deployment is a
+# separate pipeline step; this file only prepares a locked-down Docker host.
+
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+  - fail2ban
+
+users:
+  - name: deploy
+    groups: [docker]
+    shell: /bin/bash
+    lock_passwd: true
+    # The SSH key is installed by Vultr (ssh_key_ids) for root; copied to deploy below.
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-paxofi.conf
+    permissions: "0644"
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      X11Forwarding no
+      AllowUsers deploy
+      MaxAuthTries 3
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "live-restore": true,
+        "no-new-privileges": true,
+        "log-driver": "local",
+        "log-opts": { "max-size": "10m", "max-file": "5" }
+      }
+  - path: /etc/sysctl.d/90-paxofi.conf
+    permissions: "0644"
+    content: |
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.tcp_syncookies = 1
+      kernel.kptr_restrict = 2
+      kernel.dmesg_restrict = 1
+
+runcmd:
+  - install -d -m 0700 -o deploy -g deploy /home/deploy/.ssh
+  - install -m 0600 -o deploy -g deploy /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+  - sysctl --system
+  - systemctl restart ssh
+  - systemctl enable --now docker fail2ban unattended-upgrades
