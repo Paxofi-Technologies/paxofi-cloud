@@ -54,4 +54,21 @@ final class KeyRingTest extends TestCase
         $this->expectException(\LogicException::class);
         serialize($ring);
     }
+
+    public function testReadsTheProcessEnvironmentAndRequiresBothVariables(): void
+    {
+        $saved = [getenv('PROVIDER_CREDENTIAL_KEYS'), getenv('PROVIDER_CREDENTIAL_ACTIVE_KEY')];
+        try {
+            putenv('PROVIDER_CREDENTIAL_KEYS=' . KeyRing::generateEntry('k-env'));
+            putenv('PROVIDER_CREDENTIAL_ACTIVE_KEY=k-env');
+            self::assertSame('k-env', KeyRing::fromProcessEnvironment()->activeKeyId);
+
+            putenv('PROVIDER_CREDENTIAL_ACTIVE_KEY');
+            $this->expectException(InvalidKeyRing::class);
+            KeyRing::fromProcessEnvironment();
+        } finally {
+            putenv($saved[0] === false ? 'PROVIDER_CREDENTIAL_KEYS' : 'PROVIDER_CREDENTIAL_KEYS=' . $saved[0]);
+            putenv($saved[1] === false ? 'PROVIDER_CREDENTIAL_ACTIVE_KEY' : 'PROVIDER_CREDENTIAL_ACTIVE_KEY=' . $saved[1]);
+        }
+    }
 }

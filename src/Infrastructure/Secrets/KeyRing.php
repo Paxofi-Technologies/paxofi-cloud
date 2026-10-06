@@ -66,6 +66,22 @@ final class KeyRing
         return new self($keys, trim($activeKeyId));
     }
 
+    /**
+     * Reads PROVIDER_CREDENTIAL_KEYS and PROVIDER_CREDENTIAL_ACTIVE_KEY from the
+     * process environment at the moment of use. Deliberately not part of the
+     * configuration files, which may be cached to disk in production.
+     */
+    public static function fromProcessEnvironment(): self
+    {
+        $keys = getenv('PROVIDER_CREDENTIAL_KEYS');
+        $active = getenv('PROVIDER_CREDENTIAL_ACTIVE_KEY');
+        if (!is_string($keys) || $keys === '' || !is_string($active) || $active === '') {
+            throw new InvalidKeyRing('PROVIDER_CREDENTIAL_KEYS and PROVIDER_CREDENTIAL_ACTIVE_KEY must be set (workers and operator CLI only).');
+        }
+
+        return self::fromEnvironment($keys, $active);
+    }
+
     /** Generates a new random key in the PROVIDER_CREDENTIAL_KEYS entry format. */
     public static function generateEntry(string $keyId): string
     {

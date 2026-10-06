@@ -89,6 +89,26 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource
         return $count;
     }
 
+    /** @return list<CredentialSummary> metadata of every stored credential, ordered by ID */
+    public function summaries(): array
+    {
+        $summaries = [];
+        foreach ($this->repository->fetchAll('SELECT id, provider, environment, access_level, key_id, review_due_on FROM provider_credentials ORDER BY id') as $row) {
+            $reviewDueOn = \DateTimeImmutable::createFromFormat('!Y-m-d', Row::string($row, 'review_due_on'));
+            if ($reviewDueOn === false) {
+                throw new \UnexpectedValueException(sprintf('Credential "%s" has an invalid review date.', Row::string($row, 'id')));
+            }
+            $summaries[] = new CredentialSummary(self::toMetadata($row), Row::string($row, 'key_id'), $reviewDueOn);
+        }
+
+        return $summaries;
+    }
+
+    public function needsReencryption(CredentialSummary $summary): bool
+    {
+        return $this->cipher->isOnRetiredKey($summary->keyId);
+    }
+
     private function metadata(string $credentialId): ?StoredCredential
     {
         $row = $this->row($credentialId);

@@ -55,7 +55,13 @@ final class SecretCipher
     /** True when the envelope was not produced with the currently active key. */
     public function needsReencryption(string $envelope): bool
     {
-        return self::keyIdOf($envelope) !== $this->keys->activeKeyId;
+        return $this->isOnRetiredKey(self::keyIdOf($envelope));
+    }
+
+    /** True when ciphertexts under this key ID should be re-encrypted with the active key. */
+    public function isOnRetiredKey(string $keyId): bool
+    {
+        return $keyId !== $this->keys->activeKeyId;
     }
 
     public static function keyIdOf(string $envelope): string
