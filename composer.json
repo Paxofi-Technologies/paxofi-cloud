@@ -5,6 +5,7 @@
   "license": "proprietary",
   "require": {
     "php": ">=8.4",
+    "ext-curl": "*",
     "ext-json": "*",
     "ext-sodium": "*",
     "paxofi-technologies/paxofi-core-framework": "1.1.0"
