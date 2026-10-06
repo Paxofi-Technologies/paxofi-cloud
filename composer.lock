@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "f009ccb224587ec9dcccd0387b3557b5",
+    "content-hash": "78e7c41ee2afe2d408b18bd36ec1d4c5",
     "packages": [
         {
             "name": "paxofi-technologies/paxofi-core-framework",
