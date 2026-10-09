@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -88,7 +88,7 @@ jobs:
       STATE_S3_ENDPOINT: ${{ secrets.STATE_S3_ENDPOINT }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
