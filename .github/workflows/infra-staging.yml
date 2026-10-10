@@ -87,6 +87,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.STATE_S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.STATE_S3_SECRET_ACCESS_KEY }}
       TF_VAR_admin_ssh_public_key: ${{ vars.STAGING_ADMIN_SSH_PUBLIC_KEY }}
+      TF_VAR_deploy_ssh_public_key: ${{ vars.STAGING_DEPLOY_SSH_PUBLIC_KEY }}
       STATE_BUCKET: ${{ vars.STATE_BUCKET }}
       # A secret (not a variable) so the account-specific endpoint is masked in
       # this public repository's logs.
@@ -113,7 +114,7 @@ jobs:
           set -euo pipefail
           missing=0
           for name in TF_VAR_vultr_api_key CLOUDFLARE_API_TOKEN TF_VAR_state_passphrase \
-                      AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TF_VAR_admin_ssh_public_key \
+                      AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TF_VAR_admin_ssh_public_key TF_VAR_deploy_ssh_public_key \
                       STATE_BUCKET STATE_S3_ENDPOINT; do
             if [ -z "${!name:-}" ]; then echo "::error::$name is not set in the staging environment"; missing=1; fi
           done

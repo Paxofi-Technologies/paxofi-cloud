@@ -51,7 +51,7 @@ variable "os_name" {
 }
 
 variable "admin_ssh_public_key" {
-  description = "Public SSH key for the deploy user (TF_VAR_admin_ssh_public_key). Public keys are not secrets, but are kept out of the repo."
+  description = "Administrator public SSH key installed for root by Vultr (TF_VAR_admin_ssh_public_key). Root login is disabled; the Vultr console is the break-glass path. Public keys are not secrets, but are kept out of the repo."
   type        = string
 
   validation {
@@ -60,13 +60,12 @@ variable "admin_ssh_public_key" {
   }
 }
 
-variable "admin_ssh_cidrs" {
-  description = "IPv4 CIDRs allowed to reach SSH. Empty (default) means SSH is closed and the Vultr console is the break-glass path."
-  type        = list(string)
-  default     = []
+variable "deploy_ssh_public_key" {
+  description = "Public key of the CI deploy key (TF_VAR_deploy_ssh_public_key). It may only run the deploy agent on the host."
+  type        = string
 
   validation {
-    condition     = alltrue([for c in var.admin_ssh_cidrs : can(cidrhost(c, 0)) && !startswith(c, "0.0.0.0/")])
-    error_message = "admin_ssh_cidrs must be valid IPv4 CIDRs and must not open SSH to the whole internet."
+    condition     = can(regex("^ssh-ed25519 [A-Za-z0-9+/=]+( .*)?$", var.deploy_ssh_public_key))
+    error_message = "deploy_ssh_public_key must be an ssh-ed25519 public key."
   }
 }
