@@ -13,10 +13,15 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "plan = show changes only; apply = plan and then apply"
+        description: "plan = show changes only; apply = plan and then apply; destroy = remove all staging resources"
         type: choice
-        options: [plan, apply]
+        options: [plan, apply, destroy]
         default: plan
+      confirm_destroy:
+        description: "Only for destroy: type destroy-staging to confirm"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -114,6 +119,17 @@ jobs:
           done
           exit "$missing"
 
+      - name: Confirm destroy
+        if: inputs.action == 'destroy'
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm_destroy }}
+        run: |
+          if [ "$CONFIRM" != "destroy-staging" ]; then
+            echo "::error::destroy needs confirm_destroy = destroy-staging"
+            exit 1
+          fi
+
       - name: Init (remote, encrypted state)
         working-directory: infra/staging
         shell: bash
@@ -129,9 +145,13 @@ jobs:
       - name: Plan (summary only)
         working-directory: infra/staging
         shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
         run: |
           set -euo pipefail
-          if ! tofu plan -out=tfplan -lock-timeout=5m -no-color > "$RUNNER_TEMP/plan.log" 2>&1; then
+          mode=()
+          if [ "$ACTION" = "destroy" ]; then mode=(-destroy); fi
+          if ! tofu plan "${mode[@]}" -out=tfplan -lock-timeout=5m -no-color > "$RUNNER_TEMP/plan.log" 2>&1; then
             echo "::error::tofu plan failed. Error headlines (details withheld from the public log):"
             grep -E '^(│ )?Error: ' "$RUNNER_TEMP/plan.log" | sed 's/^│ //' | sort -u || true
             exit 1
@@ -142,9 +162,11 @@ jobs:
           grep -E '^(Plan:|No changes)' "$RUNNER_TEMP/plan.log"
 
       - name: Apply (summary only)
-        if: inputs.action == 'apply'
+        if: inputs.action == 'apply' || inputs.action == 'destroy'
         working-directory: infra/staging
         shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
         run: |
           set -euo pipefail
           if ! tofu apply -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply.log" 2>&1; then
@@ -152,8 +174,10 @@ jobs:
             grep -E '^(│ )?Error: ' "$RUNNER_TEMP/apply.log" | sed 's/^│ //' | sort -u || true
             exit 1
           fi
-          grep -E '^Apply complete' "$RUNNER_TEMP/apply.log"
-          echo "Staging URL: $(tofu output -raw staging_url)"
+          grep -E '^(Apply|Destroy) complete' "$RUNNER_TEMP/apply.log"
+          if [ "$ACTION" = "apply" ]; then
+            echo "Staging URL: $(tofu output -raw staging_url)"
+          fi
 
       - name: Remove local plan, logs and backend config
         if: always()
