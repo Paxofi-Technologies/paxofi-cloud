@@ -42,3 +42,9 @@ will be introduced only when the identity/tenant storage decision is approved.
 - Authorization occurs before tenant-scoped reads and mutations.
 - Cross-tenant access is denied even when the requested tenant identifier is
   syntactically valid.
+
+## Threat model
+
+Threats, design decisions and the required negative tests for identity and
+tenant isolation are in [THREAT-MODEL-IDENTITY.md](../security/THREAT-MODEL-IDENTITY.md)
+(see T-35…T-38 and decision D-13).

@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-      - chore/paxoficloud-foundation
   workflow_dispatch:
 
 permissions:
@@ -23,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -31,50 +30,88 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          tools: composer, phpstan:2.2.8
+          extensions: sodium, pdo_mysql, mbstring
+          tools: composer
           coverage: none
         env:
           fail-fast: true
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: package-lock.json
-        continue-on-error: true
-
       - name: Validate repository whitespace
         run: git diff --check
 
-      - name: Validate PHP analysis configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f phpstan.neon.dist
-          phpstan --version
+      - name: Validate Composer manifest and lock
+        run: composer validate --no-check-publish
 
-      - name: Validate PHP files when present
+      - name: Lint PHP syntax
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(find . -type f -name '*.php' -not -path './.git/*' -print0)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No PHP source files present; PHP syntax and static analysis execution deferred until PHP implementation exists."
-            exit 0
-          fi
-          for file in "${files[@]}"; do
-            php -l "$file"
-          done
+          find src tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
 
-      - name: Run PHPStan when PHP source is present
+      - name: Install dependencies
         shell: bash
+        env:
+          # Read-only token (Contents: read on paxofi-core-framework only).
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
         run: |
           set -euo pipefail
-          if find . -type f -name '*.php' -not -path './.git/*' -print -quit | grep -q .; then
-            phpstan analyse --configuration=phpstan.neon.dist --error-format=github --no-progress
+          if [ -n "${PCF_READ_TOKEN}" ]; then
+            composer config --global github-oauth.github.com "${PCF_READ_TOKEN}"
+            composer install --no-interaction --no-progress --prefer-dist
+            echo "PCF_MODE=locked" >> "$GITHUB_ENV"
           else
-            echo "PHPStan configuration validated; no PHP source exists yet."
+            # The private PCF package cannot be resolved without a token. Resolve
+            # everything else so unit tests and static analysis still run; any code
+            # that already depends on PCF will fail analysis loudly here.
+            echo "::warning title=PCF not resolved::Secret PCF_READ_TOKEN is not configured; dependencies installed without paxofi-core-framework."
+            php -r '$j = json_decode(file_get_contents("composer.json"), true, 512, JSON_THROW_ON_ERROR); unset($j["require"]["paxofi-technologies/paxofi-core-framework"], $j["repositories"]); file_put_contents("composer.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
+            composer update --no-interaction --no-progress --prefer-dist
+            echo "PCF_MODE=standalone" >> "$GITHUB_ENV"
+          fi
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G --error-format=github
+
+      - name: Composer audit
+        run: composer audit --no-interaction
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "PCF dependency mode: ${PCF_MODE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+
+  php-85:
+    name: PHP 8.5 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: sodium, mbstring
+          tools: composer
+          coverage: none
+
+      - name: Install dependencies
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PCF_READ_TOKEN}" ]; then
+            composer config --global github-oauth.github.com "${PCF_READ_TOKEN}"
+            composer install --no-interaction --no-progress --prefer-dist
+          else
+            php -r '$j = json_decode(file_get_contents("composer.json"), true, 512, JSON_THROW_ON_ERROR); unset($j["require"]["paxofi-technologies/paxofi-core-framework"], $j["repositories"]); file_put_contents("composer.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
+            composer update --no-interaction --no-progress --prefer-dist
           fi
 
       - name: Run executable PHP unit invariants
@@ -87,29 +124,81 @@ jobs:
           done
 
       - name: Validate Composer manifest when present
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f composer.json ]; then
-            echo "No composer.json present; Composer validation skipped."
-            exit 0
-          fi
-          composer validate --no-check-publish
+      - name: PHPUnit
+        run: vendor/bin/phpunit
 
-      - name: Validate Node package when present
+  integration:
+    name: Integration (MySQL 8.4, Redis 7)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-only
+          MYSQL_DATABASE: paxoficloud
+          MYSQL_USER: paxoficloud
+          MYSQL_PASSWORD: ci-only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -pci-root-only --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      PAXOFICLOUD_INTEGRATION: '1'
+      APP_ENV: testing
+      DB_DSN: 'mysql:host=127.0.0.1;port=3306;dbname=paxoficloud;charset=utf8mb4'
+      DB_USERNAME: paxoficloud
+      DB_PASSWORD: ci-only
+      REDIS_HOST: 127.0.0.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: sodium, pdo_mysql, mbstring
+          tools: composer
+          coverage: none
+
+      - name: Install dependencies (requires PCF)
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PCF_READ_TOKEN}" ]; then
+            echo "::error title=PCF not resolved::Integration tests need PCF; configure the PCF_READ_TOKEN secret."
+            exit 1
+          fi
+          composer config --global github-oauth.github.com "${PCF_READ_TOKEN}"
+          composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Integration tests
+        run: vendor/bin/phpunit --testsuite Integration
+
+      - name: CLI smoke test
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f package.json ]; then
-            echo "No package.json present; Node validation skipped."
-            exit 0
-          fi
-          node --version
-          npm --version
-          if [ -f package-lock.json ]; then
-            npm ci --ignore-scripts
-          else
-            npm install --package-lock=false --ignore-scripts
-          fi
-          npm run lint --if-present
-          npm test --if-present
+          bin/paxoficloud migrate
+          bin/paxoficloud migrate:status
+
+      - name: HTTP smoke test (PHP built-in server)
+        shell: bash
+        run: |
+          set -euo pipefail
+          php -S 127.0.0.1:8080 -t public > /tmp/server.log 2>&1 &
+          sleep 1
+          curl --fail --silent --show-error http://127.0.0.1:8080/health/live
+          curl --fail --silent --show-error http://127.0.0.1:8080/health/ready
+          curl --silent --dump-header - --output /dev/null http://127.0.0.1:8080/health/live | grep -qi '^content-security-policy:'

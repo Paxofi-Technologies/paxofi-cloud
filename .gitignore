@@ -1,0 +1,22 @@
+/vendor/
+/.phpstan.cache/
+/.phpunit.cache/
+/.composer-home/
+.env
+.env.*
+!.env.example
+*.log
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+*.tsbuildinfo
+
+# OpenTofu
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.tfvars
+backend.hcl

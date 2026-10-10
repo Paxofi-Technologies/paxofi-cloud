@@ -5,15 +5,22 @@ declare(strict_types=1);
 namespace PaxofiCloud\Tests\Unit\Domain\Identity;
 
 use PaxofiCloud\Domain\Identity\IdentityId;
+use PHPUnit\Framework\TestCase;
 
-final class IdentityIdTest
+final class IdentityIdTest extends TestCase
 {
-    public static function acceptsNonEmptyValue(): void
+    public function testAcceptsNonEmptyValue(): void
     {
         $id = new IdentityId('identity-1');
 
-        if ((string) $id !== 'identity-1') {
-            throw new \RuntimeException('Identity ID value was not preserved.');
-        }
+        self::assertSame('identity-1', $id->value);
+        self::assertSame('identity-1', (string) $id);
+    }
+
+    public function testRejectsEmptyValue(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new IdentityId('');
     }
 }

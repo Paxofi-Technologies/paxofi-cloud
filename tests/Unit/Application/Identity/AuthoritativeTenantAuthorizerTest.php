@@ -10,32 +10,50 @@ use PaxofiCloud\Application\Identity\AuthoritativeTenantAuthorizer;
 use PaxofiCloud\Application\Identity\UnauthorizedTenantAccess;
 use PaxofiCloud\Domain\Identity\IdentityId;
 use PaxofiCloud\Domain\Tenant\TenantId;
+use PHPUnit\Framework\TestCase;
 
-final class AuthoritativeTenantAuthorizerTest
+final class AuthoritativeTenantAuthorizerTest extends TestCase
 {
-    public static function run(): void
-    {
-        $identity = new IdentityId('identity-1');
-        $tenant = new TenantId('tenant-1');
-        $otherTenant = new TenantId('tenant-2');
-        $context = new RequestContext($identity, $tenant, 'corr-1');
+    private AuthoritativeTenantAuthorizer $authorizer;
 
+    protected function setUp(): void
+    {
         $reader = new class implements TenantMembershipReader {
             public function isMember(IdentityId $identityId, TenantId $tenantId): bool
             {
-                return $identityId->value === 'identity-1' && $tenantId->value === 'tenant-1';
+                return $identityId->value === 'identity-1'
+                    && in_array($tenantId->value, ['tenant-1', 'tenant-2'], true);
             }
         };
 
-        $authorizer = new AuthoritativeTenantAuthorizer($reader);
-        $authorizer->assertCanAccess($tenant, $context);
+        $this->authorizer = new AuthoritativeTenantAuthorizer($reader);
+    }
 
-        try {
-            $authorizer->assertCanAccess($otherTenant, $context);
-        } catch (UnauthorizedTenantAccess) {
-            return;
-        }
+    public function testAllowsMemberAccessingOwnContextTenant(): void
+    {
+        $tenant = new TenantId('tenant-1');
 
-        throw new \RuntimeException('Cross-tenant access must be rejected.');
+        $this->authorizer->assertCanAccess($tenant, $this->context('identity-1', 'tenant-1'));
+
+        $this->addToAssertionCount(1);
+    }
+
+    public function testRejectsTenantThatDiffersFromRequestContextEvenWhenMember(): void
+    {
+        $this->expectException(UnauthorizedTenantAccess::class);
+
+        $this->authorizer->assertCanAccess(new TenantId('tenant-2'), $this->context('identity-1', 'tenant-1'));
+    }
+
+    public function testRejectsIdentityWithoutAuthoritativeMembership(): void
+    {
+        $this->expectException(UnauthorizedTenantAccess::class);
+
+        $this->authorizer->assertCanAccess(new TenantId('tenant-1'), $this->context('identity-2', 'tenant-1'));
+    }
+
+    private function context(string $identity, string $tenant): RequestContext
+    {
+        return new RequestContext(new IdentityId($identity), new TenantId($tenant), 'corr-1');
     }
 }

@@ -5,3 +5,20 @@ This repository contains implementation-facing engineering material only.
 Authoritative product and architecture specifications remain in Notion. ClickUp is the execution system. GitHub is the source-control and engineering-change authority.
 
 Do not copy uncontrolled product requirements into this repository.
+
+## Engineering references
+
+- [PCF developer reference](engineering/PCF-DEVELOPER-REFERENCE.md) — the Paxofi Core Framework v1.1.0 API surface as implemented, and the capabilities PaxofiCloud must build on top of it.
+
+- [Local development](engineering/LOCAL-DEVELOPMENT.md) — the Docker stack (PHP-FPM, Nginx, MySQL, Redis), first-run steps and everyday commands.
+- [Database migrations](engineering/MIGRATIONS.md) — writing migrations and the rules `bin/paxoficloud migrate` enforces.
+
+## Security
+
+- [CI security gates](engineering/SECURITY-GATES.md) — gitleaks, Semgrep (with PaxofiCloud rules) and the architecture layering test; what each blocks and how to respond.
+
+- [Identity threat model](security/THREAT-MODEL-IDENTITY.md) — STRIDE threat model for identity, sessions, tenant isolation and audit (Sprint 1). Identity PRs cite its threat IDs and add its tests.
+
+## Frontend
+
+- [Design system v1 and portal prototype](../frontend/README.md) — design tokens (Figma-importable), components and the sign-in, dashboard and domain-search screens.

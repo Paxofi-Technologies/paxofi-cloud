@@ -1,0 +1,75 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--pc-font-family-sans);
+  font-size: 100%;
+  line-height: var(--pc-font-lineHeight-normal);
+  color: var(--pc-semantic-text-primary);
+  background: var(--pc-semantic-surface-page);
+  -webkit-font-smoothing: antialiased;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--pc-font-size-2xl);
+  line-height: var(--pc-font-lineHeight-tight);
+  font-weight: var(--pc-font-weight-bold);
+  color: var(--pc-semantic-text-brand);
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: var(--pc-font-size-lg);
+  line-height: var(--pc-font-lineHeight-tight);
+  font-weight: var(--pc-font-weight-semibold);
+}
+
+a {
+  color: var(--pc-semantic-text-link);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--pc-semantic-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.pc-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

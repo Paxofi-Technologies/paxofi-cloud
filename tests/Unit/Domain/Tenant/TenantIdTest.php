@@ -5,15 +5,22 @@ declare(strict_types=1);
 namespace PaxofiCloud\Tests\Unit\Domain\Tenant;
 
 use PaxofiCloud\Domain\Tenant\TenantId;
+use PHPUnit\Framework\TestCase;
 
-final class TenantIdTest
+final class TenantIdTest extends TestCase
 {
-    public static function acceptsNonEmptyValue(): void
+    public function testAcceptsNonEmptyValue(): void
     {
         $id = new TenantId('tenant-1');
 
-        if ((string) $id !== 'tenant-1') {
-            throw new \RuntimeException('Tenant ID value was not preserved.');
-        }
+        self::assertSame('tenant-1', $id->value);
+        self::assertSame('tenant-1', (string) $id);
+    }
+
+    public function testRejectsEmptyValue(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new TenantId('');
     }
 }

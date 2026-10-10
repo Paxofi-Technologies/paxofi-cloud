@@ -5,12 +5,20 @@
   "license": "proprietary",
   "require": {
     "php": ">=8.4",
-    "paxofi-technologies/paxofi-core-framework": "1.0.0"
+    "ext-curl": "*",
+    "ext-json": "*",
+    "ext-sodium": "*",
+    "paxofi-technologies/paxofi-core-framework": "1.1.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^11.5",
+    "phpstan/phpstan": "^2.1"
   },
   "repositories": [
     {
       "type": "vcs",
-      "url": "https://github.com/Paxofi-Technologies/paxofi-core-framework.git"
+      "url": "https://github.com/Paxofi-Technologies/paxofi-core-framework.git",
+      "no-api": true
     }
   ],
   "autoload": {
@@ -21,6 +29,20 @@
   "autoload-dev": {
     "psr-4": {
       "PaxofiCloud\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit",
+    "analyse": "phpstan analyse --no-progress --memory-limit=1G",
+    "verify": [
+      "@test",
+      "@analyse"
+    ]
+  },
+  "config": {
+    "sort-packages": true,
+    "platform": {
+      "php": "8.4.0"
     }
   },
   "minimum-stability": "stable",
