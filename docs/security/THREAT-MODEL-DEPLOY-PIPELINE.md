@@ -56,7 +56,7 @@ flowchart LR
 - **B2 deploy channel.** It is the most sensitive boundary, and this model decides it.
 - **B3 origin channel.** Today it is HTTPS on port 443, allow-listed to Cloudflare's published ranges.
 
-## 4. Options for B2/B3 (decision required)
+## 4. Options for B2/B3 (decided: B)
 
 | | A. Open SSH | B. Cloudflare Tunnel (recommended) | C. Pull from a registry |
 |---|---|---|---|
@@ -76,7 +76,7 @@ flowchart LR
 
 The cost is that the existing Cloudflare API token needs three more account-level permissions, listed in §8.
 
-## 5. Design decisions (assuming option B)
+## 5. Design decisions (option B)
 
 | ID | Decision |
 |---|---|
@@ -119,12 +119,13 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 
 | ID | Item |
 |---|---|
-| DP-1 | Choose option A, B or C (§4). Recommended: B. |
+| DP-1 | **Decided 2026-10-10 (CEO): option B, Cloudflare Tunnel.** |
 | DP-2 | For B: add to the existing Cloudflare API token: **Account → Cloudflare Tunnel: Edit**, **Account → Access: Apps and Policies: Edit**, **Account → Access: Service Tokens: Edit**. Keep the existing zone permissions. |
-| DP-3 | For A (only if chosen): create a Cloudflare Origin Certificate and store it as staging environment secrets. |
+| DP-3 | Not needed: the Origin Certificate applied only to option A. |
 
 ## 9. Review log
 
 | Date | Change |
 |---|---|
 | 2026-10-10 | Baseline written before any pipeline code. |
+| 2026-10-10 | DP-1 decided by the CEO: option B (Cloudflare Tunnel). |
