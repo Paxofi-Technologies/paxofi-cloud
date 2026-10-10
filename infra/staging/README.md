@@ -75,6 +75,13 @@ GitHub → Actions → **PaxofiCloud Staging Infrastructure** → **Run workflow
 
 1. Run `plan` first and read the plan in the job log.
 2. Run `apply`. Each run waits for the environment approval.
+3. To switch staging off and stop paying for the server, run `destroy` and type
+   `destroy-staging` in the confirmation box. This removes the server, its
+   firewall, the SSH key and the DNS records. Run `apply` again to bring it back.
+
+Never delete or change these resources in the Vultr or Cloudflare dashboards.
+OpenTofu would then hold a stale record of them. If something was deleted by
+hand, run `destroy` (or `apply`) and the next run reconciles the state.
 
 **Public logs.** This repository is public, so workflow logs are public. Plan and apply print only resource addresses, actions and the summary line, never attribute values such as the origin IP. If a plan needs closer inspection, an operator runs it locally with the same credentials.
 
