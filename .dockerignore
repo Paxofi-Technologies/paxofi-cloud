@@ -1,0 +1,19 @@
+# Production images copy an explicit allow-list (see docker/production/*.Dockerfile);
+# this keeps secrets and bulk out of the build context regardless.
+.git
+.github
+.env
+.env.*
+!.env.example
+.phpstan.cache
+.phpunit.cache
+.composer-home
+node_modules
+frontend
+infra
+tests
+docs
+storage
+*.log
+*.tfstate
+*.tfvars

@@ -122,6 +122,7 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | DP-1 | **Decided 2026-10-10 (CEO): option B, Cloudflare Tunnel.** |
 | DP-2 | For B: add to the existing Cloudflare API token: **Account → Cloudflare Tunnel: Edit**, **Account → Access: Apps and Policies: Edit**, **Account → Access: Service Tokens: Edit**. Keep the existing zone permissions. |
 | DP-3 | Not needed: the Origin Certificate applied only to option A. |
+| DP-4 | **Before production:** with `APP_ENV=production`, PCF caches the resolved configuration, including the database password, in `storage/cache/config.php`. Staging runs `APP_ENV=staging` (no cache), and the image filesystem is read-only. For production, either keep the cache on a tmpfs or have PCF exclude secrets from it (PCF change, needs approval). |
 
 ## 9. Review log
 
@@ -129,3 +130,4 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 |---|---|
 | 2026-10-10 | Baseline written before any pipeline code. |
 | 2026-10-10 | DP-1 decided by the CEO: option B (Cloudflare Tunnel). |
+| 2026-10-10 | DP-4 added: the production config cache stores resolved secrets on disk. |
