@@ -14,6 +14,8 @@ on:
       - 'composer.lock'
       - '.env.example'
       - '.github/workflows/docker.yml'
+      - 'deploy/**'
+      - '.dockerignore'
   push:
     branches:
       - main
@@ -100,3 +102,46 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  production:
+    name: Production images smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Deploy threat model D-03: every base image is pinned by digest.
+      - name: Base images are pinned by digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          unpinned=$(grep -hE '^FROM ' docker/production/*.Dockerfile | grep -v '@sha256:' || true)
+          unpinned+=$(grep -hE '^\s+image: (mysql|redis)' deploy/staging/compose.yaml | grep -v '@sha256:' || true)
+          if [ -n "$unpinned" ]; then echo "::error::Unpinned base images:"; echo "$unpinned"; exit 1; fi
+
+      - name: Install runtime dependencies only (requires PCF)
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PCF_READ_TOKEN}" ]; then
+            echo "::error title=PCF not resolved::The production image needs PCF; configure the PCF_READ_TOKEN secret."
+            exit 1
+          fi
+          export COMPOSER_AUTH="{\"github-oauth\":{\"github.com\":\"${PCF_READ_TOKEN}\"}}"
+          docker run --rm -e COMPOSER_AUTH -v "$PWD:/app" -w /app --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer \
+            composer:2@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac install --no-dev --no-interaction --no-progress --prefer-dist --classmap-authoritative
+
+      - name: Build images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/production/php.Dockerfile --build-arg APP_REVISION="${GITHUB_SHA}" -t "paxoficloud-php:${GITHUB_SHA}" .
+          docker build -f docker/production/nginx.Dockerfile --build-arg APP_REVISION="${GITHUB_SHA}" -t "paxoficloud-nginx:${GITHUB_SHA}" .
+          docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep paxoficloud-
+
+      - name: Run the staging runtime and verify hardening
+        run: APP_VERSION="${GITHUB_SHA}" deploy/staging/smoke-test.sh

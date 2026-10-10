@@ -1,0 +1,104 @@
+# PaxofiCloud staging runtime, run on the host by the deploy script
+# (docs/security/THREAT-MODEL-DEPLOY-PIPELINE.md).
+#
+# - Images are built in CI and loaded onto the host; nothing is built here.
+# - Runtime secrets come from env files in /etc/paxoficloud (P-5), never this
+#   file. PAXOFICLOUD_ENV_DIR overrides the directory (CI smoke test only).
+# - Only Nginx is published, and only on 127.0.0.1 for cloudflared (D-05).
+# - MySQL and Redis sit on an internal network with no published ports (P-9).
+# - The web tier never receives the provider-credential KEK (P-6).
+
+name: paxoficloud
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+services:
+  php:
+    <<: *hardening
+    image: paxoficloud-php:${APP_VERSION:?APP_VERSION is required}
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
+    environment:
+      APP_ENV: staging
+      DB_DSN: mysql:host=mysql;port=3306;dbname=paxoficloud;charset=utf8mb4
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    tmpfs: [/tmp]
+    networks: [edge, data]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 9000) ? 0 : 1);'"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  nginx:
+    <<: *hardening
+    image: paxoficloud-nginx:${APP_VERSION:?APP_VERSION is required}
+    # The master process drops to the nginx user for workers; no other privilege.
+    cap_add: [CHOWN, SETUID, SETGID]
+    ports: ["127.0.0.1:8080:8080"]
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    networks: [edge]
+    depends_on:
+      php: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  mysql:
+    image: mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/mysql.env"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+      - --sql-mode=STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,ONLY_FULL_GROUP_BY
+    volumes: [mysql-data:/var/lib/mysql]
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    restart: unless-stopped
+    # The image's own unprivileged redis user (skips the root entrypoint step).
+    user: "999:999"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/redis.env"
+    # The password is fed to redis-server on stdin rather than as an argument,
+    # so it is never part of the process's argv.
+    command: ["sh", "-c", "printf 'requirepass %s\\n' \"$$REDIS_PASSWORD\" | exec redis-server - --appendonly yes --dir /data"]
+    volumes: [redis-data:/data]
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  mysql-data: {}
+  redis-data: {}
