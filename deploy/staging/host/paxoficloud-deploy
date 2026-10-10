@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# PaxofiCloud staging deploy agent: the ONLY command the `deploy` SSH user can
+# run (sshd ForceCommand + authorized_keys `restrict,command=`), see
+# docs/security/THREAT-MODEL-DEPLOY-PIPELINE.md (P-4, P-7, P-8, D-01, D-08, D-11).
+#
+# Verbs (from SSH_ORIGINAL_COMMAND; anything else is refused):
+#   load               stdin: `docker save ... | gzip` of the two app images
+#   release <sha>      migrate, start <sha>, health-check; roll back on failure
+#   status             current/previous version and container health
+#
+# Runtime secrets (DB/Redis passwords) are generated here on first release and
+# never leave the host. Logs never print secret values (P-11).
+set -euo pipefail
+umask 077
+
+ROOT="${PAXOFICLOUD_ROOT:-}"                      # test harness only; sshd passes no env
+COMPOSE_FILE="$ROOT/opt/paxoficloud/compose.yaml"
+ENV_DIR="$ROOT/etc/paxoficloud"
+STATE_DIR="$ROOT/var/lib/paxoficloud"
+LOG_FILE="$ROOT/var/log/paxoficloud/deploy.log"
+HEALTH_URL="${PAXOFICLOUD_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
+PROJECT=paxoficloud
+MAX_IMAGE_STREAM_BYTES=$((2 * 1024 * 1024 * 1024))
+
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FILE" >&2; }
+die() { log "ERROR $*"; exit 1; }
+
+compose() { APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "${@:2}"; }
+
+random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40; }
+
+ensure_secrets() {
+  install -d -m 0700 "$ENV_DIR"
+  if [ ! -s "$ENV_DIR/app.env" ]; then
+    local db redis
+    db="$(random_secret)"; redis="$(random_secret)"
+    printf 'DB_USERNAME=paxoficloud\nDB_PASSWORD=%s\nREDIS_PASSWORD=%s\n' "$db" "$redis" > "$ENV_DIR/app.env"
+    printf 'MYSQL_RANDOM_ROOT_PASSWORD=yes\nMYSQL_DATABASE=paxoficloud\nMYSQL_USER=paxoficloud\nMYSQL_PASSWORD=%s\n' "$db" > "$ENV_DIR/mysql.env"
+    printf 'REDIS_PASSWORD=%s\n' "$redis" > "$ENV_DIR/redis.env"
+    log "generated runtime secrets (values not logged)"
+  fi
+}
+
+image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
+
+healthy() {
+  local i
+  for i in $(seq 1 30); do
+    if [ "$(curl -s --max-time 3 "$HEALTH_URL" || true)" = '{"status":"healthy"}' ]; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
+
+start_version() {
+  local version="$1"
+  compose "$version" up -d --wait --wait-timeout 180 --remove-orphans >>"$LOG_FILE" 2>&1
+}
+
+cmd_load() {
+  # Only gzip'd `docker save` output of our two repositories is accepted.
+  local tmp loaded
+  tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
+  head -c "$MAX_IMAGE_STREAM_BYTES" > "$tmp"
+  gzip -t "$tmp" 2>/dev/null || die "load: input is not a gzip stream"
+  loaded="$(gunzip -c "$tmp" | docker load | sed -n 's/^Loaded image: //p')"
+  [ -n "$loaded" ] || die "load: no images loaded"
+  while read -r ref; do
+    [[ "$ref" =~ ^paxoficloud-(php|nginx):[0-9a-f]{40}$ ]] || { docker image rm -f "$ref" >/dev/null 2>&1 || true; die "load: unexpected image $ref removed"; }
+  done <<<"$loaded"
+  log "loaded $(tr '\n' ' ' <<<"$loaded")"
+}
+
+cmd_release() {
+  local version="$1" current=""
+  [[ "$version" =~ ^[0-9a-f]{40}$ ]] || die "release: version must be a 40-character git SHA"
+  image_exists "paxoficloud-php:$version" && image_exists "paxoficloud-nginx:$version" || die "release: images for $version are not loaded"
+  ensure_secrets
+  [ -f "$STATE_DIR/current" ] && current="$(cat "$STATE_DIR/current")"
+
+  log "release $version (current: ${current:-none})"
+  # Data services first, then forward-only migrations with the NEW code (P-8).
+  compose "$version" up -d --wait --wait-timeout 180 mysql redis >>"$LOG_FILE" 2>&1 || die "release: mysql/redis did not become healthy"
+  if ! compose "$version" run --rm -T --no-deps php bin/paxoficloud migrate >>"$LOG_FILE" 2>&1; then
+    die "release: migration failed; $version not started, ${current:-nothing} still serving"
+  fi
+
+  if start_version "$version" && healthy; then
+    [ -n "$current" ] && [ "$current" != "$version" ] && printf '%s\n' "$current" > "$STATE_DIR/previous"
+    printf '%s\n' "$version" > "$STATE_DIR/current"
+    log "release $version OK"
+    prune_images "$version" "$current"
+    return 0
+  fi
+
+  log "release $version FAILED health check"
+  if [ -n "$current" ] && [ "$current" != "$version" ]; then
+    if start_version "$current" && healthy; then
+      log "rolled back to $current"
+    else
+      log "ROLLBACK to $current ALSO FAILED: manual intervention required"
+    fi
+  fi
+  exit 1
+}
+
+prune_images() {
+  # Keep only the running version and the one before it.
+  local keep1="$1" keep2="$2" repo ref
+  for repo in paxoficloud-php paxoficloud-nginx; do
+    docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | while read -r ref; do
+      case "${ref#*:}" in "$keep1"|"$keep2") ;; *) docker image rm "$ref" >/dev/null 2>&1 || true ;; esac
+    done
+  done
+}
+
+cmd_status() {
+  printf 'current=%s\nprevious=%s\n' "$(cat "$STATE_DIR/current" 2>/dev/null || echo none)" "$(cat "$STATE_DIR/previous" 2>/dev/null || echo none)"
+  docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Status}}'
+}
+
+install -d -m 0700 "$STATE_DIR" "$(dirname "$LOG_FILE")"
+read -r -a args <<<"${SSH_ORIGINAL_COMMAND:-}"
+case "${args[0]:-}:${#args[@]}" in
+  load:1)    cmd_load ;;
+  release:2) cmd_release "${args[1]}" ;;
+  status:1)  cmd_status ;;
+  *)         log "refused command"; echo "usage: load | release <sha> | status" >&2; exit 64 ;;
+esac

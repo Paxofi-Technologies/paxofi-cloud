@@ -1,0 +1,170 @@
+name: PaxofiCloud Staging Deploy
+
+# Builds the images from the selected commit on main and releases them to the
+# staging host through the Cloudflare Tunnel
+# (docs/security/THREAT-MODEL-DEPLOY-PIPELINE.md, P-1..P-11).
+#
+# One job on purpose: the images contain the private PCF source, so they are
+# never uploaded as workflow artifacts (downloadable on a public repository).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Shares the lock with the infrastructure workflow: never deploy during an apply.
+concurrency:
+  group: infra-staging
+  cancel-in-progress: false
+
+env:
+  TOFU_VERSION: "1.13.1"
+  TOFU_SHA256: "378ada19d4bc70c43732004e8159be771b23b9a5afdf059e5f8a2b3fa2c70a69"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  CLOUDFLARED_IMAGE: "cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07"
+  COMPOSER_IMAGE: "composer:2@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac"
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Approval by the environment's required reviewer gates every deploy (P-3).
+    environment: staging
+    env:
+      TF_VAR_vultr_api_key: ${{ secrets.VULTR_API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_state_passphrase: ${{ secrets.TF_STATE_PASSPHRASE }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.STATE_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.STATE_S3_SECRET_ACCESS_KEY }}
+      TF_VAR_admin_ssh_public_key: ${{ vars.STAGING_ADMIN_SSH_PUBLIC_KEY }}
+      TF_VAR_deploy_ssh_public_key: ${{ vars.STAGING_DEPLOY_SSH_PUBLIC_KEY }}
+      STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+      STATE_S3_ENDPOINT: ${{ secrets.STATE_S3_ENDPOINT }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check required configuration is present
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+          DEPLOY_KEY: ${{ secrets.STAGING_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in PCF_READ_TOKEN DEPLOY_KEY TF_VAR_state_passphrase AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+                      CLOUDFLARE_API_TOKEN TF_VAR_vultr_api_key STATE_BUCKET STATE_S3_ENDPOINT TF_VAR_deploy_ssh_public_key; do
+            if [ -z "${!name:-}" ]; then echo "::error::$name is not set in the staging environment"; missing=1; fi
+          done
+          exit "$missing"
+
+      - name: Install runtime dependencies only (requires PCF)
+        shell: bash
+        env:
+          PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          export COMPOSER_AUTH="{\"github-oauth\":{\"github.com\":\"${PCF_READ_TOKEN}\"}}"
+          docker run --rm -e COMPOSER_AUTH -v "$PWD:/app" -w /app --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer \
+            "$COMPOSER_IMAGE" install --no-dev --no-interaction --no-progress --prefer-dist --classmap-authoritative
+
+      - name: Build images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -q -f docker/production/php.Dockerfile --build-arg APP_REVISION="$GITHUB_SHA" -t "paxoficloud-php:$GITHUB_SHA" .
+          docker build -q -f docker/production/nginx.Dockerfile --build-arg APP_REVISION="$GITHUB_SHA" -t "paxoficloud-nginx:$GITHUB_SHA" .
+
+      - name: Smoke-test the exact images being deployed
+        run: APP_VERSION="$GITHUB_SHA" deploy/staging/smoke-test.sh
+
+      - name: Install OpenTofu (checksum verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/tofu.tgz" \
+            "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz"
+          echo "${TOFU_SHA256}  $RUNNER_TEMP/tofu.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/tofu.tgz" -C "$RUNNER_TEMP" tofu
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # The Access service token and SSH hostname come from the encrypted state;
+      # they are masked before they are ever written anywhere.
+      - name: Read deploy endpoint from state
+        working-directory: infra/staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf 'bucket = "%s"\nendpoints = { s3 = "%s" }\n' "$STATE_BUCKET" "$STATE_S3_ENDPOINT" > backend.hcl
+          tofu init -backend-config=backend.hcl -lockfile=readonly >/dev/null
+          host="$(tofu output -raw deploy_ssh_host)"
+          id="$(tofu output -raw deploy_access_client_id)"
+          secret="$(tofu output -raw deploy_access_client_secret)"
+          echo "::add-mask::$host"; echo "::add-mask::$id"; echo "::add-mask::$secret"
+          {
+            echo "DEPLOY_SSH_HOST=$host"
+            echo "TUNNEL_SERVICE_TOKEN_ID=$id"
+            echo "TUNNEL_SERVICE_TOKEN_SECRET=$secret"
+          } >> "$GITHUB_ENV"
+          rm -f backend.hcl
+
+      - name: Configure SSH through Cloudflare Access
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.STAGING_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/deploy_key"
+          # Host authenticity rests on the tunnel: only our cloudflared (holder of
+          # the tunnel token) can serve this hostname. A fresh known_hosts per run.
+          cat > "$RUNNER_TEMP/ssh_config" <<CONFIG
+          Host staging
+            HostName ${DEPLOY_SSH_HOST}
+            User deploy
+            IdentityFile ${RUNNER_TEMP}/deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ${RUNNER_TEMP}/known_hosts
+            ServerAliveInterval 15
+            ProxyCommand docker run -i --rm -e TUNNEL_SERVICE_TOKEN_ID -e TUNNEL_SERVICE_TOKEN_SECRET ${CLOUDFLARED_IMAGE} access ssh --hostname %h
+          CONFIG
+
+      - name: Ship images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker save "paxoficloud-php:$GITHUB_SHA" "paxoficloud-nginx:$GITHUB_SHA" | gzip -1 \
+            | ssh -F "$RUNNER_TEMP/ssh_config" staging load
+
+      - name: Release (migrate, start, health check, automatic rollback)
+        run: ssh -F "$RUNNER_TEMP/ssh_config" staging release "$GITHUB_SHA"
+
+      - name: Verify through Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            if [ "$(curl -s --max-time 10 https://cloud-staging.paxofi.com/health/ready)" = '{"status":"healthy"}' ]; then
+              echo "Staging is serving $GITHUB_SHA"; exit 0
+            fi
+            sleep 6
+          done
+          echo "::error::https://cloud-staging.paxofi.com/health/ready is not healthy"
+          exit 1
+
+      - name: Status
+        if: always() && env.DEPLOY_SSH_HOST != ''
+        run: ssh -F "$RUNNER_TEMP/ssh_config" staging status || true
+
+      - name: Remove credentials from the runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/ssh_config" "$RUNNER_TEMP/known_hosts" infra/staging/backend.hcl

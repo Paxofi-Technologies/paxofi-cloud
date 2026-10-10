@@ -84,7 +84,7 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | P-2 | Images are labelled with the git SHA. The host keeps the previous image so a rollback is a retag. Nothing is built on the host. |
 | P-3 | Deploys run only via `workflow_dispatch` (later: automatically after main is green), in the `staging` environment, which requires approval. Concurrency is 1 and a deploy is never cancelled mid-way. |
 | P-4 | CI connects through the tunnel as user `deploy`, which may only run `/usr/local/sbin/paxoficloud-deploy` (forced command). No interactive shell. |
-| P-5 | Runtime secrets live as GitHub Environment secrets. They are written on the host to `/etc/paxoficloud/app.env` (root:deploy, mode 0640) and passed to containers through `env_file`. They are never put in images, logs or the repository. |
+| P-5 | Runtime secrets (DB and Redis passwords) are generated **on the host** by the deploy agent on the first release, written to `/etc/paxoficloud/*.env` (owner `deploy`, mode 0600) and passed to containers through `env_file`. They never pass through CI and are never put in images, logs or the repository. *(Changed during implementation: generating them on the host removes them from GitHub entirely.)* |
 | P-6 | The KEK (`PROVIDER_CREDENTIAL_*`) goes **only** to the worker container. The web container never receives it (VPS threat model D-5). |
 | P-7 | Deploy sequence: load images → `migrate:status` → `migrate` → start the new containers → health check `/health/ready`. If any step fails: automatic rollback to the previous image and a non-zero exit. |
 | P-8 | Migrations are forward-only and additive (MIGRATIONS.md), so a rollback of the code never needs a rollback of the schema. |
@@ -92,6 +92,7 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | P-10 | The host blocks container access to the cloud metadata address (169.254.169.254) with a `DOCKER-USER` iptables rule, so the tunnel token in user data cannot be read from inside a container. |
 | P-11 | Logs print step names and results only: no env files, no `docker inspect`, no IPs. The repository is public, so its Actions logs are public too. |
 | P-12 | The Vultr firewall drops all inbound traffic. Break-glass access is the Vultr web console. |
+| P-13 | CI reaches the host by SSH through the tunnel (`cloudflared access ssh` as `ProxyCommand`). The host key is accepted on first use into a per-run `known_hosts`: only the holder of the tunnel token can serve the SSH hostname, and Access admits only our service token, so the tunnel authenticates the endpoint. Residual risk in §7. |
 
 ## 6. Threats (STRIDE)
 
@@ -113,6 +114,7 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 ## 7. Residual risks
 
 - **Cloudflare is a single dependency for both access and serving.** If Cloudflare is down, staging is unreachable. That is acceptable for staging. Production adds a second break-glass path (O-3).
+- **Host key trust on first use (P-13).** A per-run `known_hosts` means CI does not pin the host key. An attacker would need the tunnel token or control of our Cloudflare account to impersonate the host, and even then would receive only the images (private code, but no runtime secrets, which never leave the host). Pinning the host key via state is a follow-up before production.
 - **The tunnel token sits in the instance user data.** It is readable by root on the host and by anyone with the Vultr API key. This is mitigated by the least-privilege Vultr sub-user and P-10.
 
 ## 8. Open items (CEO)
@@ -131,3 +133,4 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | 2026-10-10 | Baseline written before any pipeline code. |
 | 2026-10-10 | DP-1 decided by the CEO: option B (Cloudflare Tunnel). |
 | 2026-10-10 | DP-4 added: the production config cache stores resolved secrets on disk. |
+| 2026-10-10 | Implementation: P-5 changed (secrets generated on host), P-13 and its residual risk added. Worker container and KEK delivery (P-6) arrive with the provisioning worker in Sprint 4. |
