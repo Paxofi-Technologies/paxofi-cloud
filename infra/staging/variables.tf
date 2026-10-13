@@ -55,8 +55,8 @@ variable "admin_ssh_public_key" {
   type        = string
 
   validation {
-    condition     = can(regex("^ssh-ed25519 [A-Za-z0-9+/=]+( .*)?$", var.admin_ssh_public_key))
-    error_message = "admin_ssh_public_key must be an ssh-ed25519 public key."
+    condition     = can(regex("^ssh-ed25519 [A-Za-z0-9+/=]+( [^\\r\\n]*)?$", trimspace(var.admin_ssh_public_key)))
+    error_message = "admin_ssh_public_key must be one ssh-ed25519 public key (surrounding whitespace and a trailing Windows line ending are ignored)."
   }
 }
 
@@ -65,7 +65,7 @@ variable "deploy_ssh_public_key" {
   type        = string
 
   validation {
-    condition     = can(regex("^ssh-ed25519 [A-Za-z0-9+/=]+( .*)?$", var.deploy_ssh_public_key))
-    error_message = "deploy_ssh_public_key must be an ssh-ed25519 public key."
+    condition     = can(regex("^ssh-ed25519 [A-Za-z0-9+/=]+( [^\\r\\n]*)?$", trimspace(var.deploy_ssh_public_key)))
+    error_message = "deploy_ssh_public_key must be one ssh-ed25519 public key (surrounding whitespace and a trailing Windows line ending are ignored)."
   }
 }

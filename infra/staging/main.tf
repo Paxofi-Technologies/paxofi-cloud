@@ -111,7 +111,7 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
 
 resource "vultr_ssh_key" "admin" {
   name    = "${local.name}-admin"
-  ssh_key = var.admin_ssh_public_key
+  ssh_key = trimspace(var.admin_ssh_public_key)
 }
 
 # No rules: Vultr drops every inbound connection to instances in this group.
@@ -135,7 +135,7 @@ resource "vultr_instance" "staging" {
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
     tunnel_token          = data.cloudflare_zero_trust_tunnel_cloudflared_token.staging.token
     cloudflared_image     = local.cloudflared_image
-    deploy_ssh_public_key = var.deploy_ssh_public_key
+    deploy_ssh_public_key = trimspace(var.deploy_ssh_public_key)
     deploy_agent          = file("${path.module}/../../deploy/staging/host/paxoficloud-deploy")
     compose_file          = file("${path.module}/../../deploy/staging/compose.yaml")
   })
