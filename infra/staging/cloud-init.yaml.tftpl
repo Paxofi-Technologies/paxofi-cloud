@@ -1,0 +1,117 @@
+#cloud-config
+# PaxofiCloud staging host (docs/security/THREAT-MODEL-DEPLOY-PIPELINE.md).
+# Rendered by OpenTofu; contains the tunnel token, so the rendered file only
+# ever exists in Vultr user data and the encrypted state.
+
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+  - curl
+
+users:
+  - name: deploy
+    groups: [docker]
+    shell: /bin/bash
+    lock_passwd: true
+    # P-4: this key can only run the deploy agent; no shell, PTY or forwarding.
+    ssh_authorized_keys:
+      - restrict,command="/usr/local/sbin/paxoficloud-deploy" ${deploy_ssh_public_key}
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-paxofi.conf
+    permissions: "0644"
+    content: |
+      # Loopback only: the sole way in is cloudflared (D-01, D-05).
+      ListenAddress 127.0.0.1
+      ListenAddress ::1
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      AllowUsers deploy
+      MaxAuthTries 3
+      X11Forwarding no
+      AllowTcpForwarding no
+      AllowAgentForwarding no
+      PermitTunnel no
+      Match User deploy
+        ForceCommand /usr/local/sbin/paxoficloud-deploy
+        PermitTTY no
+  - path: /usr/local/sbin/paxoficloud-deploy
+    permissions: "0755"
+    owner: root:root
+    content: |
+      ${indent(6, deploy_agent)}
+  - path: /opt/paxoficloud/compose.yaml
+    permissions: "0644"
+    owner: root:root
+    content: |
+      ${indent(6, compose_file)}
+  - path: /etc/cloudflared/tunnel.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      TUNNEL_TOKEN=${tunnel_token}
+  - path: /etc/systemd/system/cloudflared.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Cloudflare Tunnel (outbound only) for PaxofiCloud staging
+      After=docker.service network-online.target
+      Requires=docker.service
+      [Service]
+      ExecStartPre=-/usr/bin/docker rm -f cloudflared
+      ExecStart=/usr/bin/docker run --rm --name cloudflared --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true --env-file /etc/cloudflared/tunnel.env ${cloudflared_image} tunnel --no-autoupdate run
+      ExecStop=/usr/bin/docker stop cloudflared
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+  # P-10 / D-06: containers must not reach the cloud metadata service (which
+  # serves this user data, including the tunnel token).
+  - path: /etc/systemd/system/paxoficloud-metadata-block.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Block container access to cloud metadata
+      After=docker.service
+      Requires=docker.service
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/sh -c 'iptables -C DOCKER-USER -d 169.254.169.254 -j DROP 2>/dev/null || iptables -I DOCKER-USER -d 169.254.169.254 -j DROP'
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "live-restore": true,
+        "no-new-privileges": true,
+        "log-driver": "local",
+        "log-opts": { "max-size": "10m", "max-file": "5" }
+      }
+  - path: /etc/sysctl.d/90-paxofi.conf
+    permissions: "0644"
+    content: |
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.tcp_syncookies = 1
+      kernel.kptr_restrict = 2
+      kernel.dmesg_restrict = 1
+
+runcmd:
+  - install -d -m 0700 -o deploy -g deploy /etc/paxoficloud /var/lib/paxoficloud /var/log/paxoficloud
+  - sysctl --system
+  - systemctl restart ssh
+  - systemctl daemon-reload
+  - systemctl enable --now docker unattended-upgrades paxoficloud-metadata-block cloudflared

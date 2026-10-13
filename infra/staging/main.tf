@@ -1,19 +1,23 @@
-# PaxofiCloud staging: one Vultr instance behind Cloudflare.
+# PaxofiCloud staging: one Vultr instance reachable only through a Cloudflare
+# Tunnel (docs/security/THREAT-MODEL-DEPLOY-PIPELINE.md, option B).
 #
-# Exposure model (see README.md):
-#   - HTTPS (443) is reachable only from Cloudflare's published edge ranges, so
-#     the WAF, rate limiting and TLS policy in Cloudflare cannot be bypassed by
-#     hitting the origin IP directly.
-#   - SSH is closed unless admin_ssh_cidrs is set; key-only, root login off.
-#   - Nothing else is open. The Vultr web console is the break-glass path.
+# Exposure model:
+#   - The Vultr firewall accepts NO inbound traffic (P-12). cloudflared on the
+#     host dials out to Cloudflare; the origin IP is useless to an attacker.
+#   - cloud-staging.<zone>      -> tunnel -> nginx on 127.0.0.1:8080
+#   - cloud-staging-ssh.<zone>  -> tunnel -> sshd on 127.0.0.1:22, behind a
+#     Cloudflare Access policy that admits only the CI service token (D-01).
+#   - The deploy user can only run the deploy agent (P-4). The Vultr web console
+#     is the break-glass path.
 
 locals {
-  name = "paxoficloud-staging"
-  tags = ["paxoficloud", "staging", "managed-by-opentofu"]
-
-  edge_v4 = { for c in data.cloudflare_ip_ranges.edge.ipv4_cidrs : "v4 ${c}" => { type = "v4", cidr = c } }
-  edge_v6 = { for c in data.cloudflare_ip_ranges.edge.ipv6_cidrs : "v6 ${c}" => { type = "v6", cidr = c } }
-  ssh_v4  = { for c in var.admin_ssh_cidrs : "ssh ${c}" => { type = "v4", cidr = c } }
+  name       = "paxoficloud-staging"
+  tags       = ["paxoficloud", "staging", "managed-by-opentofu"]
+  account_id = data.cloudflare_zone.this.account.id
+  web_host   = "${var.hostname}.${var.zone_name}"
+  ssh_host   = "${var.hostname}-ssh.${var.zone_name}"
+  # Pinned by digest; the same image is used by CI to reach the host.
+  cloudflared_image = "cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07"
 }
 
 data "cloudflare_zone" "this" {
@@ -22,8 +26,6 @@ data "cloudflare_zone" "this" {
   }
 }
 
-data "cloudflare_ip_ranges" "edge" {}
-
 data "vultr_os" "ubuntu" {
   filter {
     name   = "name"
@@ -31,37 +33,90 @@ data "vultr_os" "ubuntu" {
   }
 }
 
+# --- Cloudflare Tunnel ------------------------------------------------------
+
+resource "cloudflare_zero_trust_tunnel_cloudflared" "staging" {
+  account_id = local.account_id
+  name       = local.name
+  config_src = "cloudflare"
+}
+
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "staging" {
+  account_id = local.account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.staging.id
+  config = {
+    ingress = [
+      { hostname = local.web_host, service = "http://127.0.0.1:8080" },
+      { hostname = local.ssh_host, service = "ssh://127.0.0.1:22" },
+      { service = "http_status:404" },
+    ]
+  }
+}
+
+data "cloudflare_zero_trust_tunnel_cloudflared_token" "staging" {
+  account_id = local.account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.staging.id
+}
+
+resource "cloudflare_dns_record" "web" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = local.web_host
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.staging.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "PaxofiCloud staging web (managed by OpenTofu; do not edit by hand)"
+}
+
+resource "cloudflare_dns_record" "ssh" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = local.ssh_host
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.staging.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "PaxofiCloud staging deploy SSH, Access-protected (managed by OpenTofu)"
+}
+
+# --- Cloudflare Access: only the CI service token reaches SSH (D-01, D-12) --
+
+resource "cloudflare_zero_trust_access_service_token" "deploy" {
+  account_id = local.account_id
+  name       = "${local.name}-deploy"
+  duration   = "2160h" # 90 days; rotate by tainting this resource
+}
+
+resource "cloudflare_zero_trust_access_policy" "deploy" {
+  account_id = local.account_id
+  name       = "${local.name}-deploy-service-token"
+  decision   = "non_identity"
+  include = [
+    { service_token = { token_id = cloudflare_zero_trust_access_service_token.deploy.id } },
+  ]
+}
+
+resource "cloudflare_zero_trust_access_application" "ssh" {
+  account_id           = local.account_id
+  name                 = "${local.name}-ssh"
+  type                 = "self_hosted"
+  domain               = local.ssh_host
+  session_duration     = "15m"
+  app_launcher_visible = false
+  policies = [
+    { id = cloudflare_zero_trust_access_policy.deploy.id, precedence = 1 },
+  ]
+}
+
+# --- Vultr host -------------------------------------------------------------
+
 resource "vultr_ssh_key" "admin" {
   name    = "${local.name}-admin"
   ssh_key = var.admin_ssh_public_key
 }
 
+# No rules: Vultr drops every inbound connection to instances in this group.
 resource "vultr_firewall_group" "staging" {
-  description = "${local.name}: HTTPS from Cloudflare only; SSH from admin CIDRs only"
-}
-
-resource "vultr_firewall_rule" "https_from_cloudflare" {
-  for_each = merge(local.edge_v4, local.edge_v6)
-
-  firewall_group_id = vultr_firewall_group.staging.id
-  protocol          = "tcp"
-  ip_type           = each.value.type
-  subnet            = split("/", each.value.cidr)[0]
-  subnet_size       = tonumber(split("/", each.value.cidr)[1])
-  port              = "443"
-  notes             = "cloudflare-edge"
-}
-
-resource "vultr_firewall_rule" "ssh_from_admin" {
-  for_each = local.ssh_v4
-
-  firewall_group_id = vultr_firewall_group.staging.id
-  protocol          = "tcp"
-  ip_type           = each.value.type
-  subnet            = split("/", each.value.cidr)[0]
-  subnet_size       = tonumber(split("/", each.value.cidr)[1])
-  port              = "22"
-  notes             = "admin-ssh"
+  description = "${local.name}: no inbound traffic (Cloudflare Tunnel only)"
 }
 
 resource "vultr_instance" "staging" {
@@ -77,31 +132,17 @@ resource "vultr_instance" "staging" {
   activation_email  = false
   firewall_group_id = vultr_firewall_group.staging.id
   ssh_key_ids       = [vultr_ssh_key.admin.id]
-  user_data         = file("${path.module}/cloud-init.yaml")
+  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    tunnel_token          = data.cloudflare_zero_trust_tunnel_cloudflared_token.staging.token
+    cloudflared_image     = local.cloudflared_image
+    deploy_ssh_public_key = var.deploy_ssh_public_key
+    deploy_agent          = file("${path.module}/../../deploy/staging/host/paxoficloud-deploy")
+    compose_file          = file("${path.module}/../../deploy/staging/compose.yaml")
+  })
 
   lifecycle {
-    # Re-provisioning staging must be a deliberate replace, not a side effect of
-    # an image catalogue change.
-    ignore_changes = [os_id, user_data]
+    # A changed host definition (user_data) replaces the instance; the plan shows
+    # it before anyone approves the apply. OS image catalogue changes never do.
+    ignore_changes = [os_id]
   }
-}
-
-resource "cloudflare_dns_record" "staging_v4" {
-  zone_id = data.cloudflare_zone.this.zone_id
-  name    = "${var.hostname}.${var.zone_name}"
-  type    = "A"
-  content = vultr_instance.staging.main_ip
-  proxied = true
-  ttl     = 1
-  comment = "PaxofiCloud staging (managed by OpenTofu; do not edit by hand)"
-}
-
-resource "cloudflare_dns_record" "staging_v6" {
-  zone_id = data.cloudflare_zone.this.zone_id
-  name    = "${var.hostname}.${var.zone_name}"
-  type    = "AAAA"
-  content = vultr_instance.staging.v6_main_ip
-  proxied = true
-  ttl     = 1
-  comment = "PaxofiCloud staging (managed by OpenTofu; do not edit by hand)"
 }

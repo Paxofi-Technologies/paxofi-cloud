@@ -145,3 +145,7 @@ jobs:
 
       - name: Run the staging runtime and verify hardening
         run: APP_VERSION="${GITHUB_SHA}" deploy/staging/smoke-test.sh
+
+      # Runs last: the agent prunes image tags it does not keep.
+      - name: Deploy agent releases, rolls back and prunes
+        run: BASE_TAG="${GITHUB_SHA}" deploy/staging/host/test-deploy-agent.sh
