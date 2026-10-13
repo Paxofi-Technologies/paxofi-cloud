@@ -153,8 +153,8 @@ jobs:
           mode=()
           if [ "$ACTION" = "destroy" ]; then mode=(-destroy); fi
           if ! tofu plan "${mode[@]}" -out=tfplan -lock-timeout=5m -no-color > "$RUNNER_TEMP/plan.log" 2>&1; then
-            echo "::error::tofu plan failed. Error headlines (details withheld from the public log):"
-            grep -E '^(│ )?Error: ' "$RUNNER_TEMP/plan.log" | sed 's/^│ //' | sort -u || true
+            echo "::error::tofu plan failed. Redacted summary (IDs, IPs, hosts and URLs removed):"
+            ./error-summary.sh "$RUNNER_TEMP/plan.log"
             exit 1
           fi
           tofu show -json tfplan \
@@ -171,8 +171,8 @@ jobs:
         run: |
           set -euo pipefail
           if ! tofu apply -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply.log" 2>&1; then
-            echo "::error::tofu apply failed. Error headlines (details withheld from the public log):"
-            grep -E '^(│ )?Error: ' "$RUNNER_TEMP/apply.log" | sed 's/^│ //' | sort -u || true
+            echo "::error::tofu apply failed. Redacted summary (IDs, IPs, hosts and URLs removed):"
+            ./error-summary.sh "$RUNNER_TEMP/apply.log"
             exit 1
           fi
           grep -E '^(Apply|Destroy) complete' "$RUNNER_TEMP/apply.log"
