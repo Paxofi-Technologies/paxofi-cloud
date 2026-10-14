@@ -11,11 +11,12 @@
 #     is the break-glass path.
 
 locals {
-  name       = "paxoficloud-staging"
-  tags       = ["paxoficloud", "staging", "managed-by-opentofu"]
-  account_id = data.cloudflare_zone.this.account.id
-  web_host   = "${var.hostname}.${var.zone_name}"
-  ssh_host   = "${var.hostname}-ssh.${var.zone_name}"
+  allowed_emails = [for e in split(",", var.staging_allowed_emails) : lower(trimspace(e)) if trimspace(e) != ""]
+  name           = "paxoficloud-staging"
+  tags           = ["paxoficloud", "staging", "managed-by-opentofu"]
+  account_id     = data.cloudflare_zone.this.account.id
+  web_host       = "${var.hostname}.${var.zone_name}"
+  ssh_host       = "${var.hostname}-ssh.${var.zone_name}"
   # Pinned by digest; the same image is used by CI to reach the host.
   cloudflared_image = "cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07"
 }
@@ -104,6 +105,30 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   app_launcher_visible = false
   policies = [
     { id = cloudflare_zero_trust_access_policy.deploy.id, precedence = 1 },
+  ]
+}
+
+# --- Cloudflare Access: staging web is private ------------------------------
+# Only the listed people (email one-time PIN) can open the site. The deploy
+# service token may too, so the pipeline can verify a release end to end.
+
+resource "cloudflare_zero_trust_access_policy" "staging_viewers" {
+  account_id = local.account_id
+  name       = "${local.name}-viewers"
+  decision   = "allow"
+  include    = [for email in local.allowed_emails : { email = { email = email } }]
+}
+
+resource "cloudflare_zero_trust_access_application" "web" {
+  account_id           = local.account_id
+  name                 = "${local.name}-web"
+  type                 = "self_hosted"
+  domain               = local.web_host
+  session_duration     = "24h"
+  app_launcher_visible = false
+  policies = [
+    { id = cloudflare_zero_trust_access_policy.deploy.id, precedence = 1 },
+    { id = cloudflare_zero_trust_access_policy.staging_viewers.id, precedence = 2 },
   ]
 }
 
