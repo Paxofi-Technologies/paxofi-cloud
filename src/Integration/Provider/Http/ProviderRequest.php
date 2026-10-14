@@ -12,17 +12,26 @@ namespace PaxofiCloud\Integration\Provider\Http;
 final class ProviderRequest
 {
     private const array METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
+    /** Extra request headers an adapter may set; anything else is refused. */
+    private const array HEADERS = ['Idempotency-Key'];
 
     /**
      * @param array<string, string|int> $query
      * @param array<string, mixed>|null $json
+     * @param array<string, string> $headers
      */
     public function __construct(
         public readonly string $method,
         public readonly string $path,
         public readonly array $query = [],
         public readonly ?array $json = null,
+        public readonly array $headers = [],
     ) {
+        foreach ($headers as $name => $value) {
+            if (!in_array($name, self::HEADERS, true) || preg_match('/^[A-Za-z0-9._:-]{1,128}$/', $value) !== 1) {
+                throw new \InvalidArgumentException('Provider request header is not allowed or has an invalid value.');
+            }
+        }
         if (!in_array($method, self::METHODS, true)) {
             throw new \InvalidArgumentException('Unsupported HTTP method for provider calls.');
         }
@@ -40,10 +49,13 @@ final class ProviderRequest
         return new self('GET', $path, $query);
     }
 
-    /** @param array<string, mixed> $json */
-    public static function post(string $path, array $json): self
+    /**
+     * @param array<string, mixed> $json
+     * @param array<string, string> $headers
+     */
+    public static function post(string $path, array $json, array $headers = []): self
     {
-        return new self('POST', $path, [], $json);
+        return new self('POST', $path, [], $json, $headers);
     }
 
     public static function delete(string $path): self
