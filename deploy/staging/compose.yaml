@@ -6,7 +6,10 @@
 #   file. PAXOFICLOUD_ENV_DIR overrides the directory (CI smoke test only).
 # - Only Nginx is published, and only on 127.0.0.1 for cloudflared (D-05).
 # - MySQL and Redis sit on an internal network with no published ports (P-9).
-# - The web tier never receives the provider-credential KEK (P-6).
+# - The web tier never receives the provider-credential KEK (P-6), email
+#   provider tokens or the outbox secret key; it gets only the outbox PUBLIC
+#   key (email threat model E-3/E-6). The mail worker runs only when a
+#   provider token has been delivered (profile "mail").
 
 name: paxoficloud
 
@@ -22,8 +25,10 @@ services:
     image: paxoficloud-php:${APP_VERSION:?APP_VERSION is required}
     env_file:
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
-    environment:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-public.env"
+    environment: &app-environment
       APP_ENV: staging
+      APP_URL: https://cloud-staging.paxofi.com
       DB_DSN: mysql:host=mysql;port=3306;dbname=paxoficloud;charset=utf8mb4
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -37,6 +42,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+
+  mail-worker:
+    <<: *hardening
+    image: paxoficloud-php:${APP_VERSION:?APP_VERSION is required}
+    profiles: [mail]
+    command: ["php", "bin/paxoficloud", "mail:work"]
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-public.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-secret.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/mail-providers.env"
+    environment: *app-environment
+    tmpfs: [/tmp]
+    # data: MySQL; egress: HTTPS to the allow-listed email APIs only (E-7).
+    networks: [data, egress]
+    depends_on:
+      mysql: {condition: service_healthy}
 
   nginx:
     <<: *hardening
@@ -96,6 +118,7 @@ services:
 
 networks:
   edge: {}
+  egress: {}
   data:
     internal: true
 

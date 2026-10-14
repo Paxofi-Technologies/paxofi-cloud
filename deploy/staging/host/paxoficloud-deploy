@@ -5,11 +5,14 @@
 #
 # Verbs (from SSH_ORIGINAL_COMMAND; anything else is refused):
 #   load               stdin: `docker save ... | gzip` of the two app images
+#   mail-secrets       stdin: NAME=value lines for the mail worker (email
+#                      threat model E-6); only allow-listed names and formats
 #   release <sha>      migrate, start <sha>, health-check; roll back on failure
 #   status             current/previous version and container health
 #
-# Runtime secrets (DB/Redis passwords) are generated here on first release and
-# never leave the host. Logs never print secret values (P-11).
+# Runtime secrets (DB/Redis passwords, the email outbox key pair) are generated
+# here on first release and never leave the host. Logs never print secret
+# values (P-11).
 set -euo pipefail
 umask 077
 
@@ -25,12 +28,18 @@ MAX_IMAGE_STREAM_BYTES=$((2 * 1024 * 1024 * 1024))
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FILE" >&2; }
 die() { log "ERROR $*"; exit 1; }
 
-compose() { APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "${@:2}"; }
+# The mail worker (compose profile "mail") runs only once a provider token exists.
+mail_profile() { grep -Eqs '^(POSTMARK_SERVER_TOKEN|RESEND_API_KEY)=.' "$ENV_DIR/mail-providers.env" && echo mail || true; }
+compose() { APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" COMPOSE_PROFILES="$(mail_profile)" docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "${@:2}"; }
 
 random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40; }
 
 ensure_secrets() {
+  local version="$1" f keys
   install -d -m 0700 "$ENV_DIR"
+  for f in outbox-public.env outbox-secret.env mail-providers.env; do
+    [ -e "$ENV_DIR/$f" ] || install -m 0600 /dev/null "$ENV_DIR/$f"
+  done
   if [ ! -s "$ENV_DIR/app.env" ]; then
     local db redis
     db="$(random_secret)"; redis="$(random_secret)"
@@ -39,6 +48,39 @@ ensure_secrets() {
     printf 'REDIS_PASSWORD=%s\n' "$redis" > "$ENV_DIR/redis.env"
     log "generated runtime secrets (values not logged)"
   fi
+  if [ ! -s "$ENV_DIR/outbox-public.env" ]; then
+    # Email outbox key pair (E-3): the web tier gets the public half only.
+    # libsodium in the release image, without booting the app (which needs MySQL).
+    keys="$(compose "$version" run --rm -T --no-deps --entrypoint php php -r \
+      '$k = sodium_crypto_box_keypair(); echo "EMAIL_OUTBOX_PUBLIC_KEY=", base64_encode(sodium_crypto_box_publickey($k)), "\n", "EMAIL_OUTBOX_SECRET_KEY=", base64_encode(sodium_crypto_box_secretkey($k)), "\n"; sodium_memzero($k);' \
+      2>>"$LOG_FILE")" || die "release: could not generate the email outbox keys"
+    grep -Eq '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' <<<"$keys" && grep -Eq '^EMAIL_OUTBOX_SECRET_KEY=[A-Za-z0-9+/]{43}=$' <<<"$keys" \
+      || die "release: unexpected outbox key output"
+    grep '^EMAIL_OUTBOX_SECRET_KEY=' <<<"$keys" > "$ENV_DIR/outbox-secret.env"
+    grep '^EMAIL_OUTBOX_PUBLIC_KEY=' <<<"$keys" > "$ENV_DIR/outbox-public.env"
+    log "generated email outbox key pair (values not logged)"
+  fi
+}
+
+cmd_mail_secrets() {
+  # stdin: NAME=value lines. Unknown names or values outside the expected
+  # format are refused as a whole; nothing is written unless all lines pass.
+  local input line name value out
+  input="$(head -c 8192)"
+  out="$(mktemp "$ENV_DIR/.mail-providers.XXXXXX")"; trap 'rm -f "$out"' RETURN
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    name="${line%%=*}"; value="${line#*=}"
+    case "$name" in
+      POSTMARK_SERVER_TOKEN) [[ "$value" =~ ^[A-Za-z0-9-]{0,128}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      RESEND_API_KEY)        [[ "$value" =~ ^(re_[A-Za-z0-9_]{8,128})?$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      EMAIL_RECIPIENT_ALLOWLIST) [[ "$value" =~ ^[A-Za-z0-9@._+,\ -]{0,2000}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      *) die "mail-secrets: refused name" ;;
+    esac
+    printf '%s=%s\n' "$name" "$value" >> "$out"
+  done <<<"$input"
+  mv -f "$out" "$ENV_DIR/mail-providers.env"
+  log "mail-secrets updated: $(cut -d= -f1 "$ENV_DIR/mail-providers.env" | tr '\n' ' ')(values not logged)"
 }
 
 image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
@@ -75,7 +117,7 @@ cmd_release() {
   local version="$1" current=""
   [[ "$version" =~ ^[0-9a-f]{40}$ ]] || die "release: version must be a 40-character git SHA"
   image_exists "paxoficloud-php:$version" && image_exists "paxoficloud-nginx:$version" || die "release: images for $version are not loaded"
-  ensure_secrets
+  ensure_secrets "$version"
   [ -f "$STATE_DIR/current" ] && current="$(cat "$STATE_DIR/current")"
 
   log "release $version (current: ${current:-none})"
@@ -123,7 +165,8 @@ install -d -m 0700 "$STATE_DIR" "$(dirname "$LOG_FILE")"
 read -r -a args <<<"${SSH_ORIGINAL_COMMAND:-}"
 case "${args[0]:-}:${#args[@]}" in
   load:1)    cmd_load ;;
+  mail-secrets:1) install -d -m 0700 "$ENV_DIR"; cmd_mail_secrets ;;
   release:2) cmd_release "${args[1]}" ;;
   status:1)  cmd_status ;;
-  *)         log "refused command"; echo "usage: load | release <sha> | status" >&2; exit 64 ;;
+  *)         log "refused command"; echo "usage: load | mail-secrets | release <sha> | status" >&2; exit 64 ;;
 esac

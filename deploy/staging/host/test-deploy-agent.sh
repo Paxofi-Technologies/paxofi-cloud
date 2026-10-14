@@ -22,7 +22,7 @@ health() { curl -s --max-time 3 http://127.0.0.1:8080/health/ready || true; }
 cleanup() {
   status=$?
   [ "$status" -ne 0 ] && tail -40 "$root/var/log/paxoficloud/deploy.log" 2>/dev/null
-  APP_VERSION="$A" PAXOFICLOUD_ENV_DIR="$root/etc/paxoficloud" \
+  APP_VERSION="$A" PAXOFICLOUD_ENV_DIR="$root/etc/paxoficloud" COMPOSE_PROFILES=mail \
     docker compose -p paxoficloud -f "$root/opt/paxoficloud/compose.yaml" down -v >/dev/null 2>&1 || true
   rm -rf "$root"
   exit "$status"
@@ -50,6 +50,13 @@ run "release $A" 2>/dev/null || fail "release A failed"
 [ "$(current)" = "$A" ] || fail "current is not A"
 grep -qiE 'password=' "$root/var/log/paxoficloud/deploy.log" && fail "a password reached the deploy log"
 [ "$(stat -c %a "$root/etc/paxoficloud/app.env")" = 600 ] || fail "app.env is not 0600"
+for f in outbox-public.env outbox-secret.env mail-providers.env; do
+  [ "$(stat -c %a "$root/etc/paxoficloud/$f")" = 600 ] || fail "$f is not 0600"
+done
+grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/outbox-public.env" || fail "outbox public key not generated"
+secret_key="$(cut -d= -f2- "$root/etc/paxoficloud/outbox-secret.env")"
+grep -qF -- "$secret_key" "$root/var/log/paxoficloud/deploy.log" && fail "the outbox secret key reached the deploy log"
+docker ps --format '{{.Names}}' | grep -q mail-worker && fail "mail worker started without a provider token"
 
 echo "== broken release rolls back"
 docker tag "paxoficloud-php:$A" "paxoficloud-php:$B"
@@ -61,6 +68,15 @@ if run "release $B" 2>/dev/null; then fail "broken release B reported success"; 
 [ "$(current)" = "$A" ] || fail "current changed after a failed release"
 grep -q "rolled back to $A" "$root/var/log/paxoficloud/deploy.log" || fail "no rollback recorded"
 
+echo "== mail secrets"
+printf 'FOO=bar\n' | run mail-secrets 2>/dev/null && fail "accepted an unknown secret name"
+printf 'POSTMARK_SERVER_TOKEN=a b;rm -rf /\n' | run mail-secrets 2>/dev/null && fail "accepted a malformed token"
+[ -s "$root/etc/paxoficloud/mail-providers.env" ] && fail "a refused update was written"
+token="agent-test-$(openssl rand -hex 8)"
+printf 'POSTMARK_SERVER_TOKEN=%s\nRESEND_API_KEY=\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' "$token" | run mail-secrets 2>/dev/null || fail "mail-secrets refused valid input"
+[ "$(stat -c %a "$root/etc/paxoficloud/mail-providers.env")" = 600 ] || fail "mail-providers.env is not 0600"
+grep -qF -- "$token" "$root/var/log/paxoficloud/deploy.log" && fail "a provider token reached the deploy log"
+
 echo "== second release and pruning"
 for repo in paxoficloud-php paxoficloud-nginx; do docker tag "$repo:$A" "$repo:$C"; done
 run "release $C" 2>/dev/null || fail "release C failed"
@@ -68,5 +84,6 @@ run "release $C" 2>/dev/null || fail "release C failed"
 [ "$(cat "$root/var/lib/paxoficloud/previous")" = "$A" ] || fail "previous is not A"
 docker image inspect "paxoficloud-nginx:$B" >/dev/null 2>&1 && fail "old image B was not pruned"
 docker image inspect "paxoficloud-php:$A" >/dev/null 2>&1 || fail "previous image A was pruned"
+docker ps --format '{{.Names}}' | grep -q 'paxoficloud-mail-worker' || fail "mail worker did not start once a provider token was delivered"
 
-echo "OK: deploy agent refuses bad input, releases, rolls back and prunes"
+echo "OK: deploy agent refuses bad input, releases, rolls back, prunes and wires the mail worker"

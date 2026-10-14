@@ -16,6 +16,20 @@
   - `mysql.env`: `MYSQL_RANDOM_ROOT_PASSWORD=yes`, `MYSQL_DATABASE`,
     `MYSQL_USER`, `MYSQL_PASSWORD`
   - `redis.env`: `REDIS_PASSWORD`
+  - `outbox-public.env`: `EMAIL_OUTBOX_PUBLIC_KEY` (web tier: seals queued
+    email; the key pair is generated with libsodium in the release image)
+  - `outbox-secret.env`: `EMAIL_OUTBOX_SECRET_KEY` (mail worker only)
+  - `mail-providers.env`: `POSTMARK_SERVER_TOKEN`, `RESEND_API_KEY`,
+    `EMAIL_RECIPIENT_ALLOWLIST`. These are the only secrets that come from
+    CI: the deploy workflow pipes the `staging` environment secrets to the
+    `mail-secrets` verb over the tunnel (stdin, never argv or logs).
+- **Mail worker:** `mail-worker` (compose profile `mail`) runs
+  `bin/paxoficloud mail:work`. It is the only container with the outbox
+  secret key and provider tokens, and the only one on the `egress` network.
+  The agent enables it only when `mail-providers.env` holds a provider token.
+  On staging, `EMAIL_RECIPIENT_ALLOWLIST` is the same value as
+  `STAGING_ALLOWED_EMAILS`, so mail can only reach people allowed through
+  Cloudflare Access (threat model E-9).
 - **Web app:** the Nginx image also carries the customer-portal build from
   `frontend/` (built in a pinned Node stage; nothing else from that stage
   ships). Nginx serves it at `/` with its own CSP and security headers, and
@@ -37,12 +51,13 @@ CI runs the same script in the "Production images smoke test" job.
 ## Deploy agent (`host/paxoficloud-deploy`)
 
 Installed by cloud-init as `/usr/local/sbin/paxoficloud-deploy` and bound to the
-`deploy` user's key as a forced command. It accepts exactly three verbs:
+`deploy` user's key as a forced command. It accepts exactly four verbs:
 
 | Verb | Does |
 |---|---|
 | `load` | Reads a gzip `docker save` stream from stdin. Keeps only `paxoficloud-php:<sha>` / `paxoficloud-nginx:<sha>`; anything else is removed and the command fails. |
 | `release <40-hex sha>` | Generates secrets on first run, starts MySQL/Redis, runs `bin/paxoficloud migrate`, starts the new version and waits for `/health/ready`. On success records `current`/`previous` and prunes older images; on failure restarts the previous version and exits 1. |
+| `mail-secrets` | Reads `NAME=value` lines from stdin (max 8 KiB). Accepts only `POSTMARK_SERVER_TOKEN`, `RESEND_API_KEY` and `EMAIL_RECIPIENT_ALLOWLIST`, each format-checked; any bad line rejects the whole update. Writes `mail-providers.env` atomically (0600) and logs names only. |
 | `status` | Prints the current and previous release SHAs. |
 
 Every run is appended to `/var/log/paxoficloud/deploy.log` (time, verb, SHA,
