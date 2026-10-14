@@ -17,6 +17,7 @@ is released by the **PaxofiCloud Staging Deploy** workflow
 | `cloudflare_zero_trust_tunnel_cloudflared.staging` + `_config` | Outbound-only tunnel: `cloud-staging.<zone>` → Nginx on `127.0.0.1:8080`; `cloud-staging-ssh.<zone>` → sshd on `127.0.0.1:22`; everything else 404 |
 | `cloudflare_dns_record.web` / `.ssh` | Proxied CNAMEs to the tunnel (no origin IP is ever published) |
 | `cloudflare_zero_trust_access_application.ssh` + policy + service token | Only the CI service token (90-day expiry) can open the SSH hostname |
+| `cloudflare_zero_trust_access_application.web` + viewers policy | The staging site is private: only addresses in `STAGING_ALLOWED_EMAILS` (email one-time PIN) and the CI service token can open it |
 
 The hostname must be one label deep (`cloud-staging`, not `staging.cloud`).
 Cloudflare's free Universal SSL covers only `*.<zone>`, and the variable
@@ -61,6 +62,7 @@ validation enforces this.
 | `VULTR_API_KEY` | API key of the Vultr `iac-staging` user |
 | `CLOUDFLARE_API_TOKEN` | Token with `Zone:DNS:Edit` + `Zone:Zone:Read` on the zone, and account `Cloudflare Tunnel:Edit`, `Access: Apps and Policies:Edit`, `Access: Service Tokens:Edit` |
 | `STAGING_DEPLOY_SSH_KEY` | Private half of the deploy key (used only by the deploy workflow) |
+| `STAGING_ALLOWED_EMAILS` | Comma-separated emails allowed to open the staging site, e.g. `a@example.com,b@example.com`. A secret so addresses stay out of the public logs. Requires **One-time PIN** under Zero Trust → Settings → Authentication → Login methods. |
 | `TF_STATE_PASSPHRASE` | Random passphrase, ≥ 32 characters (e.g. `openssl rand -base64 32`). **Store a copy in the company password manager.** Losing it makes the state unreadable. |
 | `STATE_S3_ACCESS_KEY_ID` | Access key for the state bucket |
 | `STATE_S3_SECRET_ACCESS_KEY` | Secret key for the state bucket |
