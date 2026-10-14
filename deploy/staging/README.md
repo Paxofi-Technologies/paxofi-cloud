@@ -16,6 +16,10 @@
   - `mysql.env`: `MYSQL_RANDOM_ROOT_PASSWORD=yes`, `MYSQL_DATABASE`,
     `MYSQL_USER`, `MYSQL_PASSWORD`
   - `redis.env`: `REDIS_PASSWORD`
+- **Web app:** the Nginx image also carries the customer-portal build from
+  `frontend/` (built in a pinned Node stage; nothing else from that stage
+  ships). Nginx serves it at `/` with its own CSP and security headers, and
+  routes only `/health/*` and `/api/*` to PHP.
 - **Exposure:** only Nginx is published, on `127.0.0.1:8080`. `cloudflared` on
   the host forwards to it. MySQL and Redis sit on an internal network.
 
