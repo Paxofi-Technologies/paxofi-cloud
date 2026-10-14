@@ -69,3 +69,15 @@ variable "deploy_ssh_public_key" {
     error_message = "deploy_ssh_public_key must be one ssh-ed25519 public key (surrounding whitespace and a trailing Windows line ending are ignored)."
   }
 }
+
+variable "staging_allowed_emails" {
+  description = "Comma-separated email addresses allowed to open the staging site (TF_VAR_staging_allowed_emails, from the STAGING_ALLOWED_EMAILS environment secret, so addresses never appear in the public repository or its logs)."
+  type        = string
+
+  validation {
+    condition = length([for e in split(",", var.staging_allowed_emails) : e if trimspace(e) != ""]) > 0 && alltrue([
+      for e in split(",", var.staging_allowed_emails) : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", trimspace(e))) if trimspace(e) != ""
+    ])
+    error_message = "staging_allowed_emails must list at least one valid email address, separated by commas."
+  }
+}

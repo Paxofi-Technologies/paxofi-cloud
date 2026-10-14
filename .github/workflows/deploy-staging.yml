@@ -42,6 +42,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.STATE_S3_SECRET_ACCESS_KEY }}
       TF_VAR_admin_ssh_public_key: ${{ vars.STAGING_ADMIN_SSH_PUBLIC_KEY }}
       TF_VAR_deploy_ssh_public_key: ${{ vars.STAGING_DEPLOY_SSH_PUBLIC_KEY }}
+      TF_VAR_staging_allowed_emails: ${{ secrets.STAGING_ALLOWED_EMAILS }}
       STATE_BUCKET: ${{ vars.STATE_BUCKET }}
       STATE_S3_ENDPOINT: ${{ secrets.STATE_S3_ENDPOINT }}
     steps:
@@ -148,12 +149,13 @@ jobs:
       - name: Release (migrate, start, health check, automatic rollback)
         run: ssh -F "$RUNNER_TEMP/ssh_config" staging release "$GITHUB_SHA"
 
+      # The site is behind Access (viewers by email); CI passes with its service token.
       - name: Verify through Cloudflare
         shell: bash
         run: |
           set -euo pipefail
           for i in $(seq 1 20); do
-            if [ "$(curl -s --max-time 10 https://cloud-staging.paxofi.com/health/ready)" = '{"status":"healthy"}' ]; then
+            if [ "$(curl -s --max-time 10 -H "CF-Access-Client-Id: $TUNNEL_SERVICE_TOKEN_ID" -H "CF-Access-Client-Secret: $TUNNEL_SERVICE_TOKEN_SECRET" https://cloud-staging.paxofi.com/health/ready)" = '{"status":"healthy"}' ]; then
               echo "Staging is serving $GITHUB_SHA"; exit 0
             fi
             sleep 6
