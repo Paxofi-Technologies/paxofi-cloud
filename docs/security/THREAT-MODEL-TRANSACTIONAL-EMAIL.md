@@ -18,7 +18,7 @@ takeover.
 
 ```mermaid
 flowchart LR
-  W["Web tier (PHP-FPM)"] -- "E1: enqueue (encrypted payload)" --> DB[("MySQL email_outbox")]
+  W["Web tier (PHP-FPM)"] -- "E1: enqueue (payload sealed to worker public key)" --> DB[("MySQL email_outbox")]
   K["Mail worker"] -- "E2: claim + decrypt" --> DB
   K -- "E3: HTTPS, allow-listed host" --> P["Postmark API"]
   K -. "failover" .-> R["Resend API"]
@@ -27,7 +27,7 @@ flowchart LR
 ```
 
 - **E1:** the web tier never talks to an email provider and never holds provider tokens.
-- **E2:** only the worker holds the provider tokens and the KEK that decrypts outbox payloads.
+- **E2:** only the worker holds the provider tokens and the secret key that opens outbox payloads.
 - **E3:** outbound HTTPS goes through `ProviderHttpClient`, with allow-listed hosts, TLS verification and timeouts.
 
 ## 2. Design decisions
@@ -36,7 +36,7 @@ flowchart LR
 |---|---|
 | E-1 | **One port, two adapters.** `TransactionalEmailSender` is implemented by `PostmarkEmailSender` and `ResendEmailSender`. `EMAIL_PROVIDER=postmark\|resend` picks the primary. The other provider is the failover, used only on a timeout, a 5xx response or a 429 after the primary's bounded retries. Never on a 4xx, which is a request we must fix, not retry elsewhere. |
 | E-2 | **Transactional outbox.** The web request writes one `email_outbox` row in the same database transaction as the action that needs the email (e.g. creating the account). The worker sends it. A crash between "account created" and "email sent" therefore never loses or duplicates the intent. |
-| E-3 | **Encrypted payload, purged after send.** Outbox payloads contain raw one-time tokens. They are encrypted with `SecretCipher` (XChaCha20-Poly1305, AAD = row id + template) and the ciphertext is deleted once the message is accepted or dead-lettered. This keeps Identity D-2 true: at rest, the database holds token hashes only. |
+| E-3 | **Sealed payload, purged after send.** Outbox payloads contain raw one-time tokens. The web tier encrypts each payload with libsodium `crypto_box_seal` to the **worker's public key** (X25519 + XSalsa20-Poly1305). The web tier holds only the public key, so a compromised web container can enqueue mail but can never read the queue. The worker holds the secret key, decrypts the payload, and checks that the decrypted outbox id and template match the row, which binds the ciphertext to its row. The ciphertext is deleted once the message is accepted or dead-lettered. This keeps Identity D-2 true: at rest, the database holds token hashes only. The deploy agent generates the keypair on the host on first release (like the database passwords); it never passes through CI. |
 | E-4 | **Bounded retries.** At most 5 attempts with exponential backoff and jitter (1 min to 30 min), then dead-letter and an operator alert. There are no unbounded retries (PCF invariant). |
 | E-5 | **Idempotency.** Each send carries the outbox row id as the provider's idempotency key (Resend `Idempotency-Key`; Postmark `Metadata` plus our claim lock). The worker claims rows with `SELECT … FOR UPDATE SKIP LOCKED`. |
 | E-6 | **Credentials.** `POSTMARK_SERVER_TOKEN` (one Postmark *Server* per environment) and `RESEND_API_KEY` (sending-only, restricted to our domain) are GitHub **environment secrets**. The deploy agent receives them over the Access-gated tunnel on stdin, writes them to `/etc/paxoficloud/worker.env` (mode 0600), and passes them to the worker container only. They are never put in images, the web tier, logs or the repository. Rotation is a secret update followed by a deploy. |
@@ -51,7 +51,7 @@ flowchart LR
 
 | ID | Threat | Element | Mitigation | Test |
 |---|---|---|---|---|
-| M-01 | **I:** raw verification or reset tokens readable in a database dump | Outbox | E-3 encrypt and purge | `EmailOutboxEncryptionTest` (stored bytes contain no token; tampered AAD fails) |
+| M-01 | **I:** raw verification or reset tokens readable in a database dump, or by a compromised web tier | Outbox | E-3 sealed to the worker key, then purged | `EmailOutboxEncryptionTest` (stored bytes contain no token; a payload moved to another row is rejected; the web tier cannot open it) |
 | M-02 | **I:** a provider token leaks from the web tier or the logs | Web, logs | E-6, E-10 | `WebTierHasNoEmailCredentialsTest` (container env); log redaction test |
 | M-03 | **S:** a forged email from our domain is used for phishing | DNS | E-11 DKIM, SPF alignment, DMARC | Manual DNS check at go-live; DMARC reports reviewed monthly |
 | M-04 | **T:** a reset link points at an attacker host (Host-header injection) | Templates | E-8 | `ResetLinkBaseUrlTest` |
