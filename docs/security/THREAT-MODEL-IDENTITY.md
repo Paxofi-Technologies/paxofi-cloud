@@ -254,7 +254,7 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 | O-1 | ADR: WebAuthn library selection (D-10). Criteria: maintained, minimal dependencies, no framework, supports ES256 + EdDSA, test suite, licence compatible | Sprint 0 end (23 Oct 2026) |
 | O-2 | ADR: where the daily audit-chain anchor is stored (object storage with object lock, or a separate append-only service) | Sprint 1 end |
 | O-3 | Choice of breached-password source (hosted range API vs. downloaded offline corpus) — privacy and availability trade-off | Sprint 1 planning |
-| O-4 | Transactional email provider for Sprint 1 (sandbox acceptable); SPF/DKIM/DMARC on the sending domain | Sprint 1 planning |
+| O-4 | **Resolved 2026-10-14:** Postmark primary, Resend secondary; see THREAT-MODEL-TRANSACTIONAL-EMAIL.md | Sprint 1 planning |
 
 ## 10. Review log
 
