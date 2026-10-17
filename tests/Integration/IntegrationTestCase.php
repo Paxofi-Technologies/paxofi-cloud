@@ -20,6 +20,10 @@ abstract class IntegrationTestCase extends TestCase
         if (getenv('PAXOFICLOUD_INTEGRATION') !== '1') {
             self::markTestSkipped('Set PAXOFICLOUD_INTEGRATION=1 with MySQL and Redis to run integration tests.');
         }
+        // No live calls to the breached-password API from tests (unit tests cover it).
+        if (getenv('BREACHED_PASSWORD_CHECK') === false) {
+            putenv('BREACHED_PASSWORD_CHECK=off');
+        }
     }
 
     protected static function env(string $key): string

@@ -14,6 +14,7 @@ use PaxofiCloud\Tests\Support\FixedClock;
 use PaxofiCloud\Tests\Support\ImmediateTransactions;
 use PaxofiCloud\Tests\Support\InMemoryIdentityStore;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
+use PaxofiCloud\Tests\Support\ScriptedBreachCheck;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -34,7 +35,7 @@ final class ResendVerificationTest extends TestCase
         $this->limiter = new ScriptedRateLimiter();
         $clock = new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'));
         $transactions = new ImmediateTransactions();
-        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), $transactions, $this->limiter, $clock, '2026-10-01');
+        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), $transactions, $this->limiter, $clock, '2026-10-01', new ScriptedBreachCheck());
         $this->resend = new ResendVerification($this->store, $this->outbox, $transactions, $this->limiter, $clock);
     }
 

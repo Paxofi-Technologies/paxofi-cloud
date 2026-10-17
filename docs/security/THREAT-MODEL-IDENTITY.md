@@ -247,6 +247,7 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 - PCF's `NativePasswordHasher` uses `PASSWORD_DEFAULT` (bcrypt), which breaks D-3 and silently truncates passwords longer than 72 bytes. PaxofiCloud therefore binds its own `Argon2idPasswordHasher` with the D-3 parameters; reported to the PCF maintainers as a framework finding.
 - The client IP used for rate limits is nginx's `$remote_addr`, which `real_ip_header CF-Connecting-IP` sets only for requests arriving through the tunnel (trusted loopback and Docker ranges).
 - Turnstile (T-02) and the breached-password check (T-06, IAM-003) are delivered in the follow-up PR, because both add an outbound integration; staging stays behind Cloudflare Access until then.
+- **T-06 at registration (implemented 2026-10-17).** Before the password is hashed, the web tier asks the Pwned Passwords range API (`api.pwnedpasswords.com`, allow-listed in `ProviderHttpClient`; same TLS, DNS-pinning and size caps as other providers) for the 5-character prefix of the password's SHA-1, with `Add-Padding: true` so response size does not leak the bucket. Only the prefix leaves our network; the suffix comparison happens locally. SHA-1 is required by that protocol and is used for nothing else (one reviewed `nosemgrep` line, covering our rule and the community weak-crypto rule). A hit returns the field error `password: breached`. Timeouts are short (2 s connect, 4 s total); on outage or a non-200 the check **fails open** and logs `password_breach_check.unavailable` (no password data). The retry at next sign-in lands with sign-in.
 
 ## 8. Residual risks
 
@@ -273,3 +274,4 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 | 2026-10-05 | Baseline created before Sprint 1 implementation | Claude (security engineering) |
 | 2026-10-17 | T-46 pre-hijacking, T-47 email bombing, T-48 cross-origin API POSTs, §6.10 registration notes; written before the registration code | Claude (security engineering) |
 | 2026-10-17 | T-49 resend verification email (enumeration and email bombing); written before the resend code | Claude (security engineering) |
+| 2026-10-17 | T-06 breached-password check at registration (k-anonymity range API, padding, fail-open + log), written before the code | Claude (security engineering) |

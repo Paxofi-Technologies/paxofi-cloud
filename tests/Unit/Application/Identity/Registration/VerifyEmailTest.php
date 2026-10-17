@@ -13,6 +13,7 @@ use PaxofiCloud\Tests\Support\ImmediateTransactions;
 use PaxofiCloud\Tests\Support\InMemoryIdentityStore;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
+use PaxofiCloud\Tests\Support\ScriptedBreachCheck;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
 use PHPUnit\Framework\TestCase;
 
@@ -30,7 +31,7 @@ final class VerifyEmailTest extends TestCase
         $this->store = new InMemoryIdentityStore();
         $this->outbox = new RecordingOutbox();
         $this->clock = new MutableClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'));
-        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, '2026-10-01');
+        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, '2026-10-01', new ScriptedBreachCheck());
         $this->verify = new VerifyEmail($this->store, new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock);
     }
 
