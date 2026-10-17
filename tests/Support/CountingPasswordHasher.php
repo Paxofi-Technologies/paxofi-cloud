@@ -10,6 +10,8 @@ use Paxofi\Core\Contracts\PasswordHasher;
 final class CountingPasswordHasher implements PasswordHasher
 {
     public int $hashes = 0;
+    /** @var list<string> hashes passed to verify(), in order */
+    public array $verified = [];
 
     public function hash(string $password): string
     {
@@ -20,6 +22,8 @@ final class CountingPasswordHasher implements PasswordHasher
 
     public function verify(string $password, string $hash): bool
     {
+        $this->verified[] = $hash;
+
         return hash_equals($hash, '$argon2id$test$' . hash('sha256', $password));
     }
 }

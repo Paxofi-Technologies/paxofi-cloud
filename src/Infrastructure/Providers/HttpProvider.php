@@ -15,6 +15,9 @@ use PaxofiCloud\Http\Controllers\LivenessController;
 use PaxofiCloud\Http\Controllers\ReadinessController;
 use PaxofiCloud\Http\Controllers\RegisterController;
 use PaxofiCloud\Http\Controllers\ResendVerificationController;
+use PaxofiCloud\Http\Controllers\SessionController;
+use PaxofiCloud\Http\Controllers\SignInController;
+use PaxofiCloud\Http\Controllers\SignOutController;
 use PaxofiCloud\Http\Controllers\VerifyEmailController;
 use PaxofiCloud\Http\Middleware\ApiWriteGuardMiddleware;
 use PaxofiCloud\Http\Middleware\BodySizeLimitMiddleware;
@@ -40,6 +43,9 @@ final class HttpProvider implements Provider
             $router->controller('POST', '/api/v1/auth/register', RegisterController::class, $dispatcher);
             $router->controller('POST', '/api/v1/auth/verify-email', VerifyEmailController::class, $dispatcher);
             $router->controller('POST', '/api/v1/auth/resend-verification', ResendVerificationController::class, $dispatcher);
+            $router->controller('POST', '/api/v1/auth/sign-in', SignInController::class, $dispatcher);
+            $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
+            $router->controller('POST', '/api/v1/auth/sign-out', SignOutController::class, $dispatcher);
 
             return $router;
         });

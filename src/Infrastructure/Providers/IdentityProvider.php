@@ -4,6 +4,26 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Infrastructure\Providers;
 
+use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
+use PaxofiCloud\Application\Contracts\EmailOutbox;
+use PaxofiCloud\Application\Contracts\SignInStore;
+use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
+use PaxofiCloud\Application\Identity\Registration\ResendVerification;
+use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
+use PaxofiCloud\Application\Identity\Session\Sessions;
+use PaxofiCloud\Application\Identity\SignIn\SignIn;
+use PaxofiCloud\Infrastructure\Container\Resolve;
+use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
+use PaxofiCloud\Infrastructure\Email\OutboxSealer;
+use PaxofiCloud\Infrastructure\Identity\Argon2idPasswordHasher;
+use PaxofiCloud\Infrastructure\Identity\MysqlIdentityStore;
+use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
+use PaxofiCloud\Infrastructure\Session\RedisSessionStore;
+use PaxofiCloud\Infrastructure\Session\RedisSignInThrottle;
+use PaxofiCloud\Infrastructure\Time\SystemClock;
+use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
+use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
+use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
 use Paxofi\Core\Application;
 use Paxofi\Core\Contracts\Configuration;
 use Paxofi\Core\Contracts\Connection;
@@ -13,21 +33,6 @@ use Paxofi\Core\Contracts\Provider;
 use Paxofi\Core\Contracts\RedisClient;
 use Paxofi\Core\Contracts\Repository;
 use Paxofi\Core\Contracts\TransactionManager;
-use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
-use PaxofiCloud\Application\Contracts\EmailOutbox;
-use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
-use PaxofiCloud\Application\Identity\Registration\ResendVerification;
-use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
-use PaxofiCloud\Infrastructure\Container\Resolve;
-use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
-use PaxofiCloud\Infrastructure\Email\OutboxSealer;
-use PaxofiCloud\Infrastructure\Identity\Argon2idPasswordHasher;
-use PaxofiCloud\Infrastructure\Identity\MysqlIdentityStore;
-use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
-use PaxofiCloud\Infrastructure\Time\SystemClock;
-use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
-use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
-use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
 
 /**
  * Registration and email verification for the web tier. The outbox here can
@@ -82,6 +87,29 @@ final class IdentityProvider implements Provider
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
         ));
+        $container->singleton(Sessions::class, static fn (Container $c): Sessions => new Sessions(
+            new RedisSessionStore(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+        ));
+
+        $container->singleton(SignInStore::class, static fn (Container $c): SignInStore => new MysqlIdentityStore(
+            Resolve::get($c, Connection::class),
+            Resolve::get($c, Repository::class),
+        ));
+
+        $container->singleton(SignIn::class, static function (Container $c): SignIn {
+            $hasher = new Argon2idPasswordHasher();
+
+            return new SignIn(
+                Resolve::get($c, SignInStore::class),
+                $hasher,
+                $hasher,
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                new RedisSignInThrottle(Resolve::get($c, RedisClient::class)),
+                Resolve::get($c, Sessions::class),
+                Resolve::get($c, Logger::class),
+            );
+        });
     }
 
     private static function breachedPasswordCheck(Container $c): BreachedPasswordCheck

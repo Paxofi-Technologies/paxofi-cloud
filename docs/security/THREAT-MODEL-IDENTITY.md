@@ -249,6 +249,18 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 - Turnstile (T-02) and the breached-password check (T-06, IAM-003) are delivered in the follow-up PR, because both add an outbound integration; staging stays behind Cloudflare Access until then.
 - **T-06 at registration (implemented 2026-10-17).** Before the password is hashed, the web tier asks the Pwned Passwords range API (`api.pwnedpasswords.com`, allow-listed in `ProviderHttpClient`; same TLS, DNS-pinning and size caps as other providers) for the 5-character prefix of the password's SHA-1, with `Add-Padding: true` so response size does not leak the bucket. Only the prefix leaves our network; the suffix comparison happens locally. SHA-1 is required by that protocol and is used for nothing else (one reviewed `nosemgrep` line, covering our rule and the community weak-crypto rule). A hit returns the field error `password: breached`. Timeouts are short (2 s connect, 4 s total); on outage or a non-200 the check **fails open** and logs `password_breach_check.unavailable` (no password data). The retry at next sign-in lands with sign-in.
 
+### 6.11 Sign-in and session implementation notes (Sprint 1, PR "sign-in API + sessions")
+
+Written before the code; it fixes how T-06…T-12 and T-18…T-24 are met in this PR and what is deferred.
+
+- **Endpoints.** `POST /api/v1/auth/sign-in` `{email, password}` (strict schema), `GET /api/v1/auth/session`, `POST /api/v1/auth/sign-out`. All writes keep the T-48 Origin + JSON guard.
+- **Uniform failure (T-09, D-7).** Unknown email, wrong password → the same `401 invalid_credentials`. An unknown email still runs `password_verify` against a fixed dummy Argon2id hash with the D-3 parameters, so timing is comparable. Only after the correct password: `403 email_not_verified` (pending) or `403 account_unavailable` (suspended); revealing state to someone who knows the password is acceptable.
+- **Throttling (T-07, T-08, T-11).** Before any hash: 30 attempts/min per client IP. Per (email, IP bucket = IPv4 /24 or IPv6 /64): from the 5th failure within 15 min the pair is locked for 30 s × 2^(n−5), capped at 15 min; a success clears the pair. The owner's own network is never locked by someone else's failures (T-08). Counter (b), failures per account across all IPs per hour, is counted and logged above 10 now; the Turnstile challenge and owner notification it triggers land with the Turnstile and audit PRs (**residual until then:** a distributed attack is limited by the per-IP and per-pair limits only).
+- **Rehash (D-3).** `password_needs_rehash` after every successful sign-in; the new hash is stored.
+- **Sessions (D-6, T-18, T-20, T-24).** 256-bit random session ID; Redis key `pc:sess:{SHA-256(sid)}` (raw ID never stored). Cookie `__Host-pc_sid` (Secure, HttpOnly, SameSite=Lax, Path=/, no Max-Age). Idle timeout 30 min (sliding Redis TTL and a stored `last_seen_at`), absolute 12 h (`created_at`). Every sign-in issues a new ID and destroys the session named by any cookie sent with it, so a planted ID is never promoted.
+- **CSRF (T-21).** Each session has its own 256-bit synchroniser token, kept in the server-side session record (whose key is the hash of the session ID, so a Redis read yields no usable cookie) and returned in the JSON body of sign-in and `GET /session` (CORS is never granted, so other origins cannot read it). State-changing requests made with a session (sign-out now; every later authenticated write) must send it as `X-CSRF-Token`, compared with `hash_equals`, in addition to the Origin check.
+- **Deferred to named follow-ups:** session list and revoke (T-23) and new-device email; breached-password retry at sign-in (T-06); audit events for sign-in success and failure (§6.8, audit PR); MFA step (T-13…T-17); staff sessions (§6.6).
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -275,3 +287,4 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 | 2026-10-17 | T-46 pre-hijacking, T-47 email bombing, T-48 cross-origin API POSTs, §6.10 registration notes; written before the registration code | Claude (security engineering) |
 | 2026-10-17 | T-49 resend verification email (enumeration and email bombing); written before the resend code | Claude (security engineering) |
 | 2026-10-17 | T-06 breached-password check at registration (k-anonymity range API, padding, fail-open + log), written before the code | Claude (security engineering) |
+| 2026-10-17 | §6.11 sign-in and session implementation notes (T-06…T-12, T-18…T-24), written before the sign-in code | Claude (security engineering) |

@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace PaxofiCloud\Tests\Support;
 
 use PaxofiCloud\Application\Contracts\IdentityStore;
+use PaxofiCloud\Application\Contracts\SignInStore;
 
 /** Mirrors MysqlIdentityStore's rules in memory (integration tests prove the SQL). */
-final class InMemoryIdentityStore implements IdentityStore
+final class InMemoryIdentityStore implements IdentityStore, SignInStore
 {
     /** @var array<string, array{id: string, email: string, lookup: string, full_name: string, phone: string, password_hash: string, status: string, terms: string, verified_at: ?\DateTimeImmutable, account_id: string}> */
     public array $identities = [];
@@ -71,5 +72,29 @@ final class InMemoryIdentityStore implements IdentityStore
         $this->identities[$identityId]['verified_at'] = $now;
 
         return true;
+    }
+
+    public function findForSignIn(string $emailLookup): ?array
+    {
+        foreach ($this->identities as $identity) {
+            if ($identity['lookup'] === $emailLookup) {
+                return ['id' => $identity['id'], 'status' => $identity['status'], 'password_hash' => $identity['password_hash'], 'account_id' => $identity['account_id']];
+            }
+        }
+
+        return null;
+    }
+
+    public function replacePasswordHash(string $identityId, string $passwordHash): void
+    {
+        $this->writes++;
+        $this->identities[$identityId]['password_hash'] = $passwordHash;
+    }
+
+    public function findProfile(string $identityId): ?array
+    {
+        $identity = $this->identities[$identityId] ?? null;
+
+        return $identity === null ? null : ['full_name' => $identity['full_name'], 'email' => $identity['email'], 'status' => $identity['status']];
     }
 }
