@@ -75,6 +75,16 @@ final class RequestFactoryTest extends TestCase
         self::assertSame(['q' => 'okafor', 'tld' => ['ng', 'com.ng']], $request->query());
     }
 
+    public function testCapturesAValidClientIpOnly(): void
+    {
+        $factory = new RequestFactory();
+
+        self::assertSame('198.51.100.7', $factory->fromGlobals(['REMOTE_ADDR' => '198.51.100.7'], [])->attributes()[RequestFactory::CLIENT_IP]);
+        self::assertSame('2001:db8::1', $factory->fromGlobals(['REMOTE_ADDR' => '2001:db8::1'], [])->attributes()[RequestFactory::CLIENT_IP]);
+        self::assertSame('', $factory->fromGlobals(['REMOTE_ADDR' => '1.2.3.4, 5.6.7.8'], [])->attributes()[RequestFactory::CLIENT_IP]);
+        self::assertSame('', $factory->fromGlobals([], [])->attributes()[RequestFactory::CLIENT_IP]);
+    }
+
     /** @return resource */
     private function stream(string $content)
     {

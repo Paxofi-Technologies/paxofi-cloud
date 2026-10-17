@@ -31,6 +31,7 @@ final class ProblemDetails
 
     /**
      * @param array<string, string> $headers
+     * @param array<string, string> $errors per-field error codes (never the submitted values)
      */
     public static function response(
         int $status,
@@ -38,6 +39,7 @@ final class ProblemDetails
         ?string $requestId = null,
         ?string $detail = null,
         array $headers = [],
+        array $errors = [],
     ): HttpResponse {
         $body = [
             'type' => 'about:blank',
@@ -47,6 +49,9 @@ final class ProblemDetails
         ];
         if ($detail !== null && $detail !== '') {
             $body['detail'] = $detail;
+        }
+        if ($errors !== []) {
+            $body['errors'] = $errors;
         }
         if ($requestId !== null && $requestId !== '') {
             $body['request_id'] = $requestId;

@@ -21,6 +21,8 @@ use Paxofi\Core\Http\Request;
 final readonly class RequestFactory
 {
     public const string BODY_TOO_LARGE = '_body_too_large';
+    /** REMOTE_ADDR as set by nginx (`real_ip_header CF-Connecting-IP` from trusted hops only); '' if absent. */
+    public const string CLIENT_IP = '_client_ip';
 
     public function __construct(private int $maxBodyBytes = 1_048_576)
     {
@@ -69,6 +71,9 @@ final readonly class RequestFactory
             $body,
             self::sanitiseQuery($query),
         );
+
+        $remote = $server['REMOTE_ADDR'] ?? '';
+        $request = $request->withAttribute(self::CLIENT_IP, is_string($remote) && filter_var($remote, FILTER_VALIDATE_IP) !== false ? $remote : '');
 
         return $tooLarge ? $request->withAttribute(self::BODY_TOO_LARGE, true) : $request;
     }
