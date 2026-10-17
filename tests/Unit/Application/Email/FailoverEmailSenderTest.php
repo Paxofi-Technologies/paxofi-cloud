@@ -31,6 +31,17 @@ final class FailoverEmailSenderTest extends TestCase
         self::assertSame('resend', $receipt->provider);
     }
 
+    public function testWhenBothFailTheErrorNamesBothAndStaysTransient(): void
+    {
+        try {
+            (new FailoverEmailSender(self::sender('smtp', DeliveryFailureKind::Transient), self::sender('postmark', DeliveryFailureKind::Rejected)))->send(self::message());
+            self::fail('Expected a failure');
+        } catch (EmailDeliveryFailed $e) {
+            self::assertSame(DeliveryFailureKind::Transient, $e->kind, 'The primary may recover; the worker must retry');
+            self::assertSame('smtp: scripted transient Failover postmark: scripted rejected', $e->getMessage());
+        }
+    }
+
     public function testDoesNotFailOverOnRejectionOrConfigurationErrors(): void
     {
         foreach ([DeliveryFailureKind::Rejected, DeliveryFailureKind::Configuration] as $kind) {

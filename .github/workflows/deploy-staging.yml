@@ -9,6 +9,12 @@ name: PaxofiCloud Staging Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy = build and release this commit; status = only print the host and mail status"
+        type: choice
+        options: [deploy, status]
+        default: deploy
 
 permissions:
   contents: read
@@ -66,6 +72,7 @@ jobs:
           exit "$missing"
 
       - name: Install runtime dependencies only (requires PCF)
+        if: inputs.action != 'status'
         shell: bash
         env:
           PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
@@ -76,6 +83,7 @@ jobs:
             "$COMPOSER_IMAGE" install --no-dev --no-interaction --no-progress --prefer-dist --classmap-authoritative
 
       - name: Build images
+        if: inputs.action != 'status'
         shell: bash
         run: |
           set -euo pipefail
@@ -83,6 +91,7 @@ jobs:
           docker build -q -f docker/production/nginx.Dockerfile --build-arg APP_REVISION="$GITHUB_SHA" -t "paxoficloud-nginx:$GITHUB_SHA" .
 
       - name: Smoke-test the exact images being deployed
+        if: inputs.action != 'status'
         run: APP_VERSION="$GITHUB_SHA" deploy/staging/smoke-test.sh
 
       - name: Install OpenTofu (checksum verified)
@@ -140,6 +149,7 @@ jobs:
           CONFIG
 
       - name: Ship images
+        if: inputs.action != 'status'
         shell: bash
         run: |
           set -euo pipefail
@@ -151,6 +161,7 @@ jobs:
       # threat model E-6, E-13). The
       # staging viewers are also the only people staging may email (E-9).
       - name: Deliver mail worker secrets
+        if: inputs.action != 'status'
         shell: bash
         env:
           POSTMARK_SERVER_TOKEN: ${{ secrets.POSTMARK_SERVER_TOKEN }}
@@ -173,10 +184,12 @@ jobs:
           fi
 
       - name: Release (migrate, start, health check, automatic rollback)
+        if: inputs.action != 'status'
         run: ssh -F "$RUNNER_TEMP/ssh_config" staging release "$GITHUB_SHA"
 
       # The site is behind Access (viewers by email); CI passes with its service token.
       - name: Verify through Cloudflare
+        if: inputs.action != 'status'
         shell: bash
         run: |
           set -euo pipefail
