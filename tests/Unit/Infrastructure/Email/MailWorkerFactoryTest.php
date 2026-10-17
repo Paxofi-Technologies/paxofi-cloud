@@ -60,6 +60,27 @@ final class MailWorkerFactoryTest extends TestCase
         $this->sender('smtp', ['SMTP_PASSWORD' => 'has space'] + self::SMTP);
     }
 
+    public function testBase64PasswordFromTheDeployAgentIsDecoded(): void
+    {
+        $env = ['SMTP_PASSWORD_B64' => base64_encode('pa$$w0rd"#\'x')] + self::SMTP;
+        unset($env['SMTP_PASSWORD']);
+        $failover = $this->sender('smtp', $env);
+        self::assertInstanceOf(FailoverEmailSender::class, $failover);
+        $smtp = (new \ReflectionProperty($failover, 'primary'))->getValue($failover);
+
+        self::assertInstanceOf(SmtpEmailSender::class, $smtp);
+        $credential = (new \ReflectionProperty($smtp, 'password'))->getValue($smtp);
+        self::assertInstanceOf(\PaxofiCloud\Integration\Provider\ProviderCredential::class, $credential);
+        self::assertSame('pa$$w0rd"#\'x', $credential->reveal());
+    }
+
+    public function testInvalidBase64PasswordIsRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('SMTP_PASSWORD_B64');
+        $this->sender('smtp', ['SMTP_PASSWORD_B64' => 'not base64!!'] + self::SMTP);
+    }
+
     public function testUnknownProviderIsRefused(): void
     {
         $this->expectException(\InvalidArgumentException::class);

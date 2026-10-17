@@ -26,7 +26,7 @@ use PaxofiCloud\Integration\Provider\ProviderCredential;
  * Builds the mail worker from configuration plus secrets read from the
  * worker's process environment only (threat model E-6):
  *   EMAIL_OUTBOX_PUBLIC_KEY, EMAIL_OUTBOX_SECRET_KEY, POSTMARK_SERVER_TOKEN,
- *   RESEND_API_KEY, SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD (each
+ *   RESEND_API_KEY, SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD[_B64] (each
  *   provider is optional; at least one is required).
  */
 final class MailWorkerFactory
@@ -67,7 +67,7 @@ final class MailWorkerFactory
         }
 
         $smtpHost = $getenv('SMTP_HOST');
-        $smtpPassword = $getenv('SMTP_PASSWORD');
+        $smtpPassword = self::smtpPassword($getenv);
         if (is_string($smtpHost) && $smtpHost !== '' && is_string($smtpPassword) && $smtpPassword !== '') {
             $port = $getenv('SMTP_PORT');
             $username = $getenv('SMTP_USERNAME');
@@ -96,6 +96,27 @@ final class MailWorkerFactory
         }
 
         return new FailoverEmailSender($primary, $secondary);
+    }
+
+    /**
+     * SMTP_PASSWORD_B64 (what the staging deploy agent writes, so passwords
+     * with `$`, quotes or `#` survive the env file) wins over SMTP_PASSWORD.
+     *
+     * @param \Closure(string): (string|false) $getenv
+     */
+    private static function smtpPassword(\Closure $getenv): string|false
+    {
+        $encoded = $getenv('SMTP_PASSWORD_B64');
+        if (is_string($encoded) && $encoded !== '') {
+            $decoded = base64_decode($encoded, true);
+            if ($decoded === false || $decoded === '') {
+                throw new \InvalidArgumentException('SMTP_PASSWORD_B64 is not valid base64.');
+            }
+
+            return $decoded;
+        }
+
+        return $getenv('SMTP_PASSWORD');
     }
 
     private static function port(string $value): int
