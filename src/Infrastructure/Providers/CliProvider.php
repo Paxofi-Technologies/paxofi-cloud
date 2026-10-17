@@ -7,7 +7,9 @@ namespace PaxofiCloud\Infrastructure\Providers;
 use Paxofi\Core\Application;
 use Paxofi\Core\CLI\CommandRegistry;
 use Paxofi\Core\Contracts\Connection;
+use Paxofi\Core\Contracts\Configuration;
 use Paxofi\Core\Contracts\Container;
+use Paxofi\Core\Contracts\Logger;
 use Paxofi\Core\Contracts\Provider;
 use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Bootstrap\AppPaths;
@@ -16,9 +18,13 @@ use PaxofiCloud\Cli\CredentialsListCommand;
 use PaxofiCloud\Cli\CredentialsReencryptCommand;
 use PaxofiCloud\Cli\CredentialsSetCommand;
 use PaxofiCloud\Cli\CredentialStoreAccess;
+use PaxofiCloud\Cli\MailKeygenCommand;
+use PaxofiCloud\Cli\MailWorkCommand;
 use PaxofiCloud\Cli\MigrateCommand;
 use PaxofiCloud\Cli\MigrateStatusCommand;
 use PaxofiCloud\Infrastructure\Container\Resolve;
+use PaxofiCloud\Infrastructure\Email\EmailWorker;
+use PaxofiCloud\Infrastructure\Email\MailWorkerFactory;
 use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
@@ -64,6 +70,13 @@ final readonly class CliProvider implements Provider
             $registry->register(new CredentialsSetCommand($credentials, $console, $clock));
             $registry->register(new CredentialsListCommand($credentials, $console, $clock));
             $registry->register(new CredentialsReencryptCommand($credentials, $console));
+            $registry->register(new MailWorkCommand(static fn (): EmailWorker => MailWorkerFactory::create(
+                Resolve::get($c, Configuration::class),
+                Resolve::get($c, Connection::class),
+                Resolve::get($c, Repository::class),
+                Resolve::get($c, Logger::class),
+            ), $console));
+            $registry->register(new MailKeygenCommand($console));
 
             return $registry;
         });
