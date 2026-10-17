@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AuthLayout } from '../components';
+import { Alert, AuthLayout, ResendVerification } from '../components';
 import { describeWait, postJson } from '../lib/api';
 
 export interface VerifyEmailScreenProps {
@@ -73,7 +73,8 @@ export function VerifyEmailScreen({ initialHash, fetchImpl }: VerifyEmailScreenP
               <h1>This link can’t be used</h1>
               <p className="pc-muted">This link has already been used or has expired. Links work once and last 24 hours.</p>
             </div>
-            <Alert tone="info">If you have already confirmed your email, just sign in. Otherwise, register again to get a new link.</Alert>
+            <Alert tone="info">If you have already confirmed your email, just sign in. Otherwise, enter your email to get a new link.</Alert>
+            <ResendVerification fetchImpl={fetchImpl} />
             <p className="pc-auth__footer">
               <a href="/">Sign in</a> · <a href="/register">Register again</a>
             </p>
