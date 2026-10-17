@@ -137,6 +137,9 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale; risk = L × I.
 | T-03 | S | Verification token guessed or reused | 1 | 2 | D-1, D-2; single-use, 24 h expiry; a new token invalidates older ones | IAM-002 | `EmailVerificationTokenTest` |
 | T-04 | T | Mass assignment, e.g. `{"role":"admin","account_id":…}` in the body | 2 | 3 | Strict input schema that rejects unknown fields; role and account are never accepted from the client | API-002 | `RegistrationSchemaTest` |
 | T-05 | I | Unverified identity places orders or receives services | 2 | 2 | `verified_at` is checked on checkout; unverified identities have read-only scope | IAM-002 | `UnverifiedCannotOrderTest` |
+| T-46 | S | **Account pre-hijacking:** an attacker registers a victim's email first, so the account later verified by the victim carries the attacker's password | 1 | 3 | A pending (unverified) identity is overwritten by the latest registration (name, phone, password) and every older verification token is deleted, so only the newest submission can ever be activated; per-email limit 3/h makes racing the victim impractical; unverified identities cannot sign in (sign-in PR); the "verified" step does not reveal the account's password or details | IAM-001, IAM-002 | `RegistrationPreHijackTest` |
+| T-47 | D | Email bombing: repeated registrations for one address flood a victim's inbox | 2 | 1 | Per-email limit 3/h (keyed by the address hash) in addition to the per-IP limit; the worker's global hourly cap | IAM-016 | `RegistrationRateLimitTest` |
+| T-48 | T | Cross-site POST to the registration or verification API from another origin | 2 | 2 | State-changing `/api` requests must carry an `Origin` equal to `APP_URL`'s origin and a JSON content type (which forces a CORS preflight that we never approve); sessions add the T-21 synchroniser token when they land | API-003 | `OriginGuardTest` |
 
 ### 6.2 Sign-in and passwords (IAM-003…006)
 
@@ -238,6 +241,12 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 | Audit / logs | `AuditChainVerificationTest`, `AuditGrantsTest`, `LogRedactionTest`, `RequestIdTest` |
 | Edge | `SecurityHeadersTest`, `CorsTest`, `RateLimitTest` |
 
+### 6.10 Registration implementation notes (Sprint 1, PR "registration + email verification")
+
+- PCF's `NativePasswordHasher` uses `PASSWORD_DEFAULT` (bcrypt), which breaks D-3 and silently truncates passwords longer than 72 bytes. PaxofiCloud therefore binds its own `Argon2idPasswordHasher` with the D-3 parameters; reported to the PCF maintainers as a framework finding.
+- The client IP used for rate limits is nginx's `$remote_addr`, which `real_ip_header CF-Connecting-IP` sets only for requests arriving through the tunnel (trusted loopback and Docker ranges).
+- Turnstile (T-02) and the breached-password check (T-06, IAM-003) are delivered in the follow-up PR, because both add an outbound integration; staging stays behind Cloudflare Access until then.
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -261,3 +270,4 @@ are negative tests unless noted. Each Sprint 1 PR lists the tests it adds.
 | Date | Change | By |
 |---|---|---|
 | 2026-10-05 | Baseline created before Sprint 1 implementation | Claude (security engineering) |
+| 2026-10-17 | T-46 pre-hijacking, T-47 email bombing, T-48 cross-origin API POSTs, §6.10 registration notes; written before the registration code | Claude (security engineering) |

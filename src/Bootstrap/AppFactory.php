@@ -13,6 +13,7 @@ use Paxofi\Core\Contracts\Provider;
 use Paxofi\Core\Infrastructure\Provider as InfrastructureProvider;
 use PaxofiCloud\Infrastructure\Providers\HealthProvider;
 use PaxofiCloud\Infrastructure\Providers\HttpProvider;
+use PaxofiCloud\Infrastructure\Providers\IdentityProvider;
 use PaxofiCloud\Infrastructure\Providers\PathsProvider;
 
 /**
@@ -41,6 +42,7 @@ final class AppFactory
             new InfrastructureProvider(),
             new PathsProvider(new AppPaths($baseDirectory)),
             new HealthProvider(),
+            new IdentityProvider(),
             new HttpProvider(),
             ...$extraProviders,
         ]);

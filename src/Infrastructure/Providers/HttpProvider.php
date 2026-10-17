@@ -13,6 +13,9 @@ use Paxofi\Core\Http\ControllerDispatcher;
 use Paxofi\Core\Http\Router;
 use PaxofiCloud\Http\Controllers\LivenessController;
 use PaxofiCloud\Http\Controllers\ReadinessController;
+use PaxofiCloud\Http\Controllers\RegisterController;
+use PaxofiCloud\Http\Controllers\VerifyEmailController;
+use PaxofiCloud\Http\Middleware\ApiWriteGuardMiddleware;
 use PaxofiCloud\Http\Middleware\BodySizeLimitMiddleware;
 use PaxofiCloud\Http\Middleware\ErrorBoundaryMiddleware;
 use PaxofiCloud\Http\Middleware\RouteFallbackMiddleware;
@@ -33,6 +36,8 @@ final class HttpProvider implements Provider
             $dispatcher = new ControllerDispatcher($c);
             $router->controller('GET', '/health/live', LivenessController::class, $dispatcher);
             $router->controller('GET', '/health/ready', ReadinessController::class, $dispatcher);
+            $router->controller('POST', '/api/v1/auth/register', RegisterController::class, $dispatcher);
+            $router->controller('POST', '/api/v1/auth/verify-email', VerifyEmailController::class, $dispatcher);
 
             return $router;
         });
@@ -46,6 +51,7 @@ final class HttpProvider implements Provider
                 new SecurityHeadersMiddleware(),
                 new ErrorBoundaryMiddleware($logger, $configuration->get('app.debug', false) === true),
                 new BodySizeLimitMiddleware(),
+                new ApiWriteGuardMiddleware(self::appUrl($configuration)),
                 new RouteFallbackMiddleware(),
             );
         });
@@ -53,6 +59,13 @@ final class HttpProvider implements Provider
         $container->singleton(ProblemDetailsExceptionHandler::class, static function (Container $c): ProblemDetailsExceptionHandler {
             return new ProblemDetailsExceptionHandler(Resolve::get($c, Logger::class));
         });
+    }
+
+    private static function appUrl(Configuration $configuration): string
+    {
+        $url = $configuration->get('app.url');
+
+        return is_string($url) ? $url : '';
     }
 
     public function boot(Application $application): void
