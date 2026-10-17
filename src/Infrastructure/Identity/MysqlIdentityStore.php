@@ -70,6 +70,13 @@ final readonly class MysqlIdentityStore implements IdentityStore
              WHERE id = :id AND status = \'pending_verification\'',
             ['id' => $identityId, 'name' => $fullName, 'phone' => $phoneE164, 'hash' => $passwordHash, 'terms' => $termsVersion, 'now' => self::time($now)],
         );
+        // The personal account was named after the earlier submission (T-46).
+        $this->connection->execute(
+            'UPDATE accounts a JOIN account_members m ON m.account_id = a.id AND m.role = \'owner\'
+             JOIN identities i ON i.id = m.identity_id AND i.status = \'pending_verification\'
+             SET a.name = :name WHERE m.identity_id = :id AND a.type = \'personal\'',
+            ['id' => $identityId, 'name' => $fullName],
+        );
     }
 
     public function replaceVerificationToken(string $identityId, string $tokenHash, \DateTimeImmutable $expiresAt): void

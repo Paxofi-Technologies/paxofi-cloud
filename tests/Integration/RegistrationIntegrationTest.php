@@ -110,8 +110,10 @@ final class RegistrationIntegrationTest extends IntegrationTestCase
         $email = self::uniqueEmail();
         $this->post('/api/v1/auth/register', ['password' => 'attacker passphrase'] + self::form($email));
         $attackerToken = $this->queuedToken();
-        $this->post('/api/v1/auth/register', self::form($email));
+        $this->post('/api/v1/auth/register', ['full_name' => 'Ada Real'] + self::form($email));
         $victimToken = $this->queuedToken();
+        self::assertSame('Ada Real', self::scalar('SELECT name FROM accounts', 'name'), 'The account name follows the newest submission too');
+        self::assertSame('Ada Real', self::scalar('SELECT full_name FROM identities', 'full_name'));
 
         self::assertSame(400, $this->post('/api/v1/auth/verify-email', ['token' => $attackerToken])->status(), 'T-46: the older link is dead');
         self::assertSame(200, $this->post('/api/v1/auth/verify-email', ['token' => $victimToken])->status());
