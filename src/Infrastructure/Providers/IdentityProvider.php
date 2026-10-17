@@ -8,10 +8,12 @@ use Paxofi\Core\Application;
 use Paxofi\Core\Contracts\Configuration;
 use Paxofi\Core\Contracts\Connection;
 use Paxofi\Core\Contracts\Container;
+use Paxofi\Core\Contracts\Logger;
 use Paxofi\Core\Contracts\Provider;
 use Paxofi\Core\Contracts\RedisClient;
 use Paxofi\Core\Contracts\Repository;
 use Paxofi\Core\Contracts\TransactionManager;
+use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\ResendVerification;
@@ -23,6 +25,9 @@ use PaxofiCloud\Infrastructure\Identity\Argon2idPasswordHasher;
 use PaxofiCloud\Infrastructure\Identity\MysqlIdentityStore;
 use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
 use PaxofiCloud\Infrastructure\Time\SystemClock;
+use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
+use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
+use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
 
 /**
  * Registration and email verification for the web tier. The outbox here can
@@ -59,6 +64,7 @@ final class IdentityProvider implements Provider
                 new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 new SystemClock(),
                 is_string($terms) ? $terms : '',
+                self::breachedPasswordCheck($c),
             );
         });
 
@@ -76,6 +82,28 @@ final class IdentityProvider implements Provider
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
         ));
+    }
+
+    private static function breachedPasswordCheck(Container $c): BreachedPasswordCheck
+    {
+        $config = Resolve::get($c, Configuration::class);
+        $mode = $config->get('identity.breached_password_check');
+        if ($mode === 'off') {
+            if ($config->get('app.env') === 'production') {
+                throw new \InvalidArgumentException('BREACHED_PASSWORD_CHECK=off is not allowed in production.');
+            }
+
+            return new DisabledBreachedPasswordCheck();
+        }
+        if ($mode !== 'pwnedpasswords') {
+            throw new \InvalidArgumentException('BREACHED_PASSWORD_CHECK must be "pwnedpasswords" or "off".');
+        }
+
+        return new PwnedPasswordsRangeCheck(
+            // Short timeouts: the check must never make sign-up slow (T-06 fails open).
+            new ProviderHttpClient([PwnedPasswordsRangeCheck::endpoint()], connectTimeoutMs: 2_000, totalTimeoutMs: 4_000, maxResponseBytes: 262_144),
+            Resolve::get($c, Logger::class),
+        );
     }
 
     public function boot(Application $application): void

@@ -48,6 +48,7 @@ describe('registration rules (IAM-001, IAM-003)', () => {
       phone: expect.stringMatching(/valid phone number/) as unknown as string,
       password: expect.stringMatching(/at least 12/) as unknown as string,
     });
+    expect(fromServerErrors({ password: 'breached' }).fields.password).toMatch(/known data breach/);
     expect(fromServerErrors({ role: 'unknown_field' })).toEqual({ fields: {}, other: true });
   });
 });

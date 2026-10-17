@@ -14,10 +14,11 @@ use PaxofiCloud\Tests\Support\FixedClock;
 use PaxofiCloud\Tests\Support\ImmediateTransactions;
 use PaxofiCloud\Tests\Support\InMemoryIdentityStore;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
+use PaxofiCloud\Tests\Support\ScriptedBreachCheck;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
 use PHPUnit\Framework\TestCase;
 
-/** SRS IAM-001; threat model T-01, T-02, T-03, T-46, T-47. */
+/** SRS IAM-001, IAM-003; threat model T-01, T-02, T-03, T-06, T-46, T-47. */
 final class RegisterCustomerTest extends TestCase
 {
     private InMemoryIdentityStore $store;
@@ -34,7 +35,7 @@ final class RegisterCustomerTest extends TestCase
         $this->hasher = new CountingPasswordHasher();
         $this->transactions = new ImmediateTransactions();
         $this->limiter = new ScriptedRateLimiter();
-        $this->register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01');
+        $this->register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck());
     }
 
     public function testNewAddressCreatesAPendingIdentityAndQueuesAVerificationLink(): void
@@ -54,6 +55,48 @@ final class RegisterCustomerTest extends TestCase
         self::assertMatchesRegularExpression('/^[A-Za-z0-9_-]{43}$/', $token);
         self::assertSame([hash('sha256', $token)], array_keys($this->store->tokens), 'Only the token hash is stored (D-2)');
         self::assertEquals(new \DateTimeImmutable('2026-10-27 09:00:00 UTC'), $this->store->tokens[hash('sha256', $token)]['expires_at']);
+    }
+
+    public function testABreachedPasswordIsRefusedBeforeHashingOrStoringAnything(): void
+    {
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(true));
+
+        try {
+            $register->register(RegistrationInputTest::valid(), '198.51.100.7');
+            self::fail('Expected the breached password to be refused.');
+        } catch (InvalidRegistration $e) {
+            self::assertSame(['password' => 'breached'], $e->errors);
+        }
+        self::assertSame(0, $this->hasher->hashes);
+        self::assertSame([], $this->store->identities);
+        self::assertSame([], $this->outbox->queued);
+    }
+
+    public function testRegistrationContinuesWhenTheBreachCheckIsUnavailable(): void
+    {
+        $check = new ScriptedBreachCheck(null);
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', $check);
+
+        $register->register(RegistrationInputTest::valid(), '198.51.100.7');
+
+        self::assertSame(1, $check->calls);
+        self::assertCount(1, $this->store->identities, 'T-06 fails open');
+    }
+
+    public function testThrottledAttemptsNeverReachTheBreachCheck(): void
+    {
+        $check = new ScriptedBreachCheck();
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', $check);
+        for ($i = 0; $i < RegisterCustomer::PER_EMAIL_LIMIT; $i++) {
+            $register->register(RegistrationInputTest::valid(), "198.51.100.{$i}");
+        }
+
+        try {
+            $register->register(RegistrationInputTest::valid(), '198.51.100.99');
+            self::fail('Expected throttling.');
+        } catch (RegistrationThrottled) {
+        }
+        self::assertSame(RegisterCustomer::PER_EMAIL_LIMIT, $check->calls);
     }
 
     public function testActiveAddressGetsAnAccountExistsEmailAndNothingChanges(): void

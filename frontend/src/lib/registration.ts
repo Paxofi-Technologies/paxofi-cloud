@@ -67,6 +67,7 @@ const MESSAGES = {
     too_short: `Use at least ${PASSWORD_MIN} characters. A short phrase works well.`,
     too_long: `Use ${PASSWORD_MAX} characters or fewer.`,
     invalid_characters: 'Your password contains characters that cannot be used.',
+    breached: 'This password has appeared in a known data breach, so it is not safe to use. Please choose a different one.',
   },
   accept_terms: { must_accept: 'Please accept the Terms of Service and Privacy Policy to continue.' },
 } as const;

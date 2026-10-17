@@ -6,6 +6,7 @@ namespace PaxofiCloud\Application\Identity\Registration;
 
 use Paxofi\Core\Contracts\PasswordHasher;
 use Paxofi\Core\Contracts\TransactionManager;
+use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\IdentityStore;
@@ -13,7 +14,8 @@ use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Email\EmailTemplates;
 
 /**
- * Customer self-registration (SRS IAM-001; threat model T-01..T-04, T-46, T-47).
+ * Customer self-registration (SRS IAM-001, IAM-003; threat model T-01..T-04,
+ * T-06, T-46, T-47).
  *
  * The caller always gets the same outcome for valid input, whether the address
  * is new, pending or already active (D-7): the work done is the same (one
@@ -35,6 +37,7 @@ final readonly class RegisterCustomer
         private RateLimiter $limiter,
         private Clock $clock,
         private string $termsVersion,
+        private BreachedPasswordCheck $breaches,
     ) {
         if (preg_match('/^[A-Za-z0-9._-]{1,32}$/', $termsVersion) !== 1) {
             throw new \InvalidArgumentException('Terms version must be 1-32 safe characters.');
@@ -58,6 +61,12 @@ final readonly class RegisterCustomer
         );
         if ($retry > 0) {
             throw new RegistrationThrottled($retry);
+        }
+
+        // T-06: a password already seen in a breach is refused. The lookup fails
+        // open (null) so an outage of the range API never blocks sign-up.
+        if ($this->breaches->isBreached($input->password) === true) {
+            throw new InvalidRegistration(['password' => 'breached']);
         }
 
         $passwordHash = $this->hasher->hash($input->password);
