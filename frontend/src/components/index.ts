@@ -1,7 +1,9 @@
 export { Alert } from './Alert';
+export { AuthLayout } from './AuthLayout';
 export { AppShell, type NavItem } from './AppShell';
 export { Badge, type Tone } from './Badge';
 export { Button } from './Button';
 export { Card } from './Card';
+export { Checkbox } from './Checkbox';
 export { Logo } from './Logo';
 export { TextField } from './TextField';

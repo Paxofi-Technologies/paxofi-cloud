@@ -1,0 +1,54 @@
+import { render, screen } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import { VerifyEmailScreen } from './VerifyEmailScreen';
+
+const TOKEN = 'A'.repeat(20) + 'b_-'.repeat(7) + '12';
+
+function api(status: number, body: unknown = {}) {
+  return vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status }))) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+}
+
+describe('VerifyEmailScreen (IAM-002)', () => {
+  it('posts the token from the fragment exactly once, even under StrictMode', async () => {
+    expect(TOKEN).toHaveLength(43);
+    const fetchImpl = api(200, { status: 'verified' });
+    render(
+      <StrictMode>
+        <VerifyEmailScreen initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} />
+      </StrictMode>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Email confirmed' })).toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [path, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe('/api/v1/auth/verify-email');
+    expect(JSON.parse(String(init.body))).toEqual({ token: TOKEN });
+  });
+
+  it('removes the token from the address bar', async () => {
+    window.history.replaceState(null, '', `/verify-email#token=${TOKEN}`);
+    render(<VerifyEmailScreen fetchImpl={api(200)} />);
+    await screen.findByRole('heading', { name: 'Email confirmed' });
+    expect(window.location.hash).toBe('');
+    expect(window.location.pathname).toBe('/verify-email');
+  });
+
+  it('shows the used-or-expired message when the API refuses the link', async () => {
+    render(<VerifyEmailScreen initialHash={`#token=${TOKEN}`} fetchImpl={api(400, { code: 'verification_link_invalid' })} />);
+    expect(await screen.findByText(/already been used or has expired/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Register again' })).toHaveAttribute('href', '/register');
+  });
+
+  it('does not call the API for a missing or malformed token', async () => {
+    const fetchImpl = api(200);
+    render(<VerifyEmailScreen initialHash="#token=<script>" fetchImpl={fetchImpl} />);
+    expect(await screen.findByRole('heading', { name: 'This link can’t be used' })).toBeInTheDocument();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('reports outages separately from bad links', async () => {
+    render(<VerifyEmailScreen initialHash={`#token=${TOKEN}`} fetchImpl={api(503)} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not confirm your email right now');
+  });
+});
