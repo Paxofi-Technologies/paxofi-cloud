@@ -174,6 +174,21 @@ prune_images() {
 cmd_status() {
   printf 'current=%s\nprevious=%s\n' "$(cat "$STATE_DIR/current" 2>/dev/null || echo none)" "$(cat "$STATE_DIR/previous" 2>/dev/null || echo none)"
   docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Status}}'
+  mail_status
+}
+
+# Mail diagnostics for the (public) Actions log: setting names, the provider
+# choice and counts only. No values, hosts or addresses are printed.
+mail_status() {
+  local f="$ENV_DIR/mail-providers.env" provider allowed current
+  provider="$(sed -n 's/^EMAIL_PROVIDER=\(postmark\|resend\|smtp\)$/\1/p' "$f" 2>/dev/null | tail -n 1)"
+  allowed="$(sed -n 's/^EMAIL_RECIPIENT_ALLOWLIST=//p' "$f" 2>/dev/null | tail -n 1 | tr ',' '\n' | grep -c '@' || true)"
+  printf 'mail worker=%s provider=%s allowlist_entries=%s\n' "$([ -n "$(mail_profile)" ] && echo enabled || echo disabled)" "${provider:-default}" "${allowed:-0}"
+  printf 'mail settings set: %s\n' "$(grep -Eo '^[A-Z0-9_]+=.' "$f" 2>/dev/null | cut -d= -f1 | tr '\n' ' ')"
+  current="$(cat "$STATE_DIR/current" 2>/dev/null || true)"
+  if [[ "$current" =~ ^[0-9a-f]{40}$ ]]; then
+    compose "$current" exec -T php bin/paxoficloud mail:status 2>>"$LOG_FILE" || echo "mail:status unavailable"
+  fi
 }
 
 install -d -m 0700 "$STATE_DIR" "$(dirname "$LOG_FILE")"

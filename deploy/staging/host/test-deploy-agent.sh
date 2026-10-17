@@ -57,6 +57,9 @@ grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/o
 secret_key="$(cut -d= -f2- "$root/etc/paxoficloud/outbox-secret.env")"
 grep -qF -- "$secret_key" "$root/var/log/paxoficloud/deploy.log" && fail "the outbox secret key reached the deploy log"
 docker ps --format '{{.Names}}' | grep -q mail-worker && fail "mail worker started without a provider token"
+status_out="$(run status 2>/dev/null)" || fail "status failed"
+grep -qx 'mail worker=disabled provider=default allowlist_entries=0' <<<"$status_out" || fail "status did not report the disabled mail worker"
+grep -q '^outbox pending=0 sending=0 sent=0 dead=0$' <<<"$status_out" || fail "status did not report the outbox"
 
 echo "== broken release rolls back"
 docker tag "paxoficloud-php:$A" "paxoficloud-php:$B"
@@ -100,4 +103,15 @@ worker="$(docker ps --filter name=paxoficloud-mail-worker --format '{{.Names}}' 
 [ "$(docker exec "$worker" php -r 'echo base64_decode(getenv("SMTP_PASSWORD_B64"), true);')" = "$password" ] \
   || fail "the worker did not receive the exact SMTP password"
 
-echo "OK: deploy agent refuses bad input, releases, rolls back, prunes and wires the mail worker (SMTP)"
+echo "== status shows mail diagnostics without values"
+status_out="$(run status 2>/dev/null)" || fail "status failed"
+grep -qx 'mail worker=enabled provider=smtp allowlist_entries=1' <<<"$status_out" || fail "status did not report the SMTP mail worker"
+grep -q '^mail settings set: .*SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD_B64 EMAIL_PROVIDER EMAIL_RECIPIENT_ALLOWLIST' <<<"$status_out" \
+  || fail "status did not list the configured mail settings"
+grep -q 'POSTMARK_SERVER_TOKEN' <<<"$status_out" && fail "status listed an empty setting"
+grep -q '^outbox ' <<<"$status_out" || fail "status did not report the outbox"
+for leak in "$password" "$(printf '%s' "$password" | base64 -w0)" example.invalid; do
+  grep -qF -- "$leak" <<<"$status_out" && fail "status printed a mail setting value"
+done
+
+echo "OK: deploy agent refuses bad input, releases, rolls back, prunes and wires the mail worker (SMTP) and reports mail status without values"

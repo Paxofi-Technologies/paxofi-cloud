@@ -19,12 +19,14 @@ use PaxofiCloud\Cli\CredentialsReencryptCommand;
 use PaxofiCloud\Cli\CredentialsSetCommand;
 use PaxofiCloud\Cli\CredentialStoreAccess;
 use PaxofiCloud\Cli\MailKeygenCommand;
+use PaxofiCloud\Cli\MailStatusCommand;
 use PaxofiCloud\Cli\MailWorkCommand;
 use PaxofiCloud\Cli\MigrateCommand;
 use PaxofiCloud\Cli\MigrateStatusCommand;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\EmailWorker;
 use PaxofiCloud\Infrastructure\Email\MailWorkerFactory;
+use PaxofiCloud\Infrastructure\Email\MysqlOutboxReport;
 use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
@@ -77,6 +79,7 @@ final readonly class CliProvider implements Provider
                 Resolve::get($c, Logger::class),
             ), $console));
             $registry->register(new MailKeygenCommand($console));
+            $registry->register(new MailStatusCommand(new MysqlOutboxReport(Resolve::get($c, Repository::class)), $console));
 
             return $registry;
         });
