@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Alert, AuthLayout, Button, Checkbox, TextField } from '../components';
+import { Alert, AuthLayout, Button, Checkbox, RESEND_COOLDOWN_SECONDS, ResendVerification, TextField } from '../components';
 import { describeWait, postJson } from '../lib/api';
 import { fromServerErrors, PASSWORD_MIN, toRequest, validate, type FieldErrors, type RegistrationForm } from '../lib/registration';
 
@@ -73,6 +73,7 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
             No email after a few minutes? Check your spam folder. If you already have an account with this address, the email explains how to sign
             in instead.
           </Alert>
+          <ResendVerification email={sentTo} initialCooldown={RESEND_COOLDOWN_SECONDS} fetchImpl={fetchImpl} />
           <p className="pc-auth__footer">
             <a href="/">Back to sign in</a>
           </p>

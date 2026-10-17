@@ -121,6 +121,27 @@ final class RegistrationIntegrationTest extends IntegrationTestCase
         self::assertSame(0, self::rowCount('SELECT COUNT(*) AS n FROM email_verification_tokens WHERE used_at IS NULL'));
     }
 
+    public function testResendGivesAFreshLinkAndLooksTheSameForUnknownAddresses(): void
+    {
+        $email = self::uniqueEmail();
+        $this->post('/api/v1/auth/register', self::form($email));
+        $oldToken = $this->queuedToken();
+
+        $resent = $this->post('/api/v1/auth/resend-verification', ['email' => $email]);
+        $unknown = $this->post('/api/v1/auth/resend-verification', ['email' => self::uniqueEmail()]);
+
+        self::assertSame([202, '{"status":"check_your_email"}'], [$resent->status(), $resent->body()]);
+        self::assertSame([$resent->status(), $resent->body()], [$unknown->status(), $unknown->body()], 'T-49: no enumeration');
+        self::assertSame(2, self::rowCount('SELECT COUNT(*) AS n FROM email_outbox'), 'Nothing is queued for an unknown address');
+        $newToken = $this->queuedToken();
+        self::assertNotSame($oldToken, $newToken);
+        self::assertSame(400, $this->post('/api/v1/auth/verify-email', ['token' => $oldToken])->status(), 'T-46: the older link is dead');
+        self::assertSame(200, $this->post('/api/v1/auth/verify-email', ['token' => $newToken])->status());
+
+        self::assertSame(422, $this->post('/api/v1/auth/resend-verification', ['email' => $email, 'role' => 'admin'])->status());
+        self::assertSame(403, $this->post('/api/v1/auth/resend-verification', ['email' => $email], ['HTTP_ORIGIN' => 'https://evil.example'])->status());
+    }
+
     public function testPerIpLimitReturns429WithRetryAfter(): void
     {
         for ($i = 0; $i < 5; $i++) {
