@@ -14,6 +14,7 @@ use Paxofi\Core\Contracts\Repository;
 use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
+use PaxofiCloud\Application\Identity\Registration\ResendVerification;
 use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
@@ -60,6 +61,14 @@ final class IdentityProvider implements Provider
                 is_string($terms) ? $terms : '',
             );
         });
+
+        $container->singleton(ResendVerification::class, static fn (Container $c): ResendVerification => new ResendVerification(
+            new MysqlIdentityStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+            Resolve::get($c, EmailOutbox::class),
+            Resolve::get($c, TransactionManager::class),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+        ));
 
         $container->singleton(VerifyEmail::class, static fn (Container $c): VerifyEmail => new VerifyEmail(
             new MysqlIdentityStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),

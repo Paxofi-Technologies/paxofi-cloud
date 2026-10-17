@@ -38,6 +38,7 @@ describe('VerifyEmailScreen (IAM-002)', () => {
     render(<VerifyEmailScreen initialHash={`#token=${TOKEN}`} fetchImpl={api(400, { code: 'verification_link_invalid' })} />);
     expect(await screen.findByText(/already been used or has expired/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Register again' })).toHaveAttribute('href', '/register');
+    expect(screen.getByRole('button', { name: 'Send a new link' })).toBeEnabled();
   });
 
   it('does not call the API for a missing or malformed token', async () => {

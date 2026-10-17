@@ -43,6 +43,7 @@ describe('RegisterScreen (IAM-001)', () => {
       accept_terms: true,
     });
     expect(screen.queryByText(/already registered/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Resend email \(\d+s\)/ })).toBeDisabled();
   });
 
   it('shows server field errors next to the right fields', async () => {
