@@ -11,6 +11,11 @@ use PaxofiCloud\Application\Contracts\TransactionalEmailSender;
  * transiently (timeout, 5xx, 429). A rejection or a configuration error is
  * returned as-is: retrying a bad request elsewhere hides a bug, and an auth
  * error must be fixed, not routed around (threat model E-1).
+ *
+ * When the secondary fails too, the error names both reasons (the primary's
+ * is the one an operator usually needs) and stays transient, so the worker
+ * retries the primary later instead of dead-lettering on a secondary that
+ * cannot deliver at all (for example a provider account still under review).
  */
 final readonly class FailoverEmailSender implements TransactionalEmailSender
 {
@@ -35,6 +40,15 @@ final readonly class FailoverEmailSender implements TransactionalEmailSender
             }
         }
 
-        return $this->secondary->send($message);
+        try {
+            return $this->secondary->send($message);
+        } catch (EmailDeliveryFailed $secondaryFailure) {
+            throw new EmailDeliveryFailed(
+                DeliveryFailureKind::Transient,
+                $this->name(),
+                sprintf('%s: %s Failover %s: %s', $this->primary->name(), $failure->getMessage(), $this->secondary->name(), $secondaryFailure->getMessage()),
+                $secondaryFailure,
+            );
+        }
     }
 }
