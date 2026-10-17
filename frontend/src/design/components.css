@@ -143,3 +143,10 @@
   .pc-nav__soon { display: none; }
   .pc-topbar, .pc-content { padding-left: var(--pc-space-4); padding-right: var(--pc-space-4); }
 }
+
+/* Checkbox (sign-up terms). The native control keeps keyboard and screen-reader behaviour. */
+.pc-check { display: grid; grid-template-columns: auto 1fr; column-gap: var(--pc-space-3); align-items: start; }
+.pc-check__input { width: 1.125rem; height: 1.125rem; margin: 0.15rem 0 0; accent-color: var(--pc-color-brand-blue); }
+.pc-check__label { font-size: var(--pc-font-size-sm); color: var(--pc-semantic-text-secondary); line-height: 1.5; }
+.pc-check__error { grid-column: 2; margin-top: var(--pc-space-1); }
+.pc-check--invalid .pc-check__input { outline: 2px solid var(--pc-semantic-action-danger); outline-offset: 2px; }

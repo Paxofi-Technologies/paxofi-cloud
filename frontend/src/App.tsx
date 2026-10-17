@@ -3,7 +3,9 @@ import { AppShell, type NavItem } from './components';
 import { CloudIcon, GlobeIcon, HomeIcon, LifebuoyIcon, ReceiptIcon, ServerIcon, ShieldIcon } from './components/icons';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DomainSearchScreen } from './screens/DomainSearchScreen';
+import { RegisterScreen } from './screens/RegisterScreen';
 import { SignInScreen } from './screens/SignInScreen';
+import { VerifyEmailScreen } from './screens/VerifyEmailScreen';
 import { sampleCustomer } from './mocks/sample';
 
 const NAV: readonly NavItem[] = [
@@ -18,7 +20,15 @@ const NAV: readonly NavItem[] = [
 
 type Screen = 'dashboard' | 'domains';
 
-export function App() {
+/** Real (API-backed) pages are chosen by path; everything else is still the prototype. */
+export function App({ path = window.location.pathname }: { path?: string }) {
+  if (path === '/register') return <RegisterScreen />;
+  if (path === '/verify-email') return <VerifyEmailScreen />;
+
+  return <Prototype />;
+}
+
+function Prototype() {
   const [signedIn, setSignedIn] = useState(false);
   const [screen, setScreen] = useState<Screen>('dashboard');
 

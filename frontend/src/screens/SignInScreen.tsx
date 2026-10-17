@@ -82,7 +82,7 @@ export function SignInScreen({ onSignedIn }: SignInScreenProps) {
               Continue
             </Button>
             <p className="pc-auth__footer">
-              New to PaxofiCloud? <a href="#register">Create an account</a>
+              New to PaxofiCloud? <a href="/register">Create an account</a>
             </p>
           </form>
         ) : (
