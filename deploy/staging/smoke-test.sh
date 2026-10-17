@@ -37,7 +37,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
   printf 'EMAIL_OUTBOX_PUBLIC_KEY=%s\n' "${keys% *}" > "$env_dir/outbox-public.env"
   printf 'EMAIL_OUTBOX_SECRET_KEY=%s\n' "${keys#* }" > "$env_dir/outbox-secret.env"
   printf 'POSTMARK_SERVER_TOKEN=smoke-%s\nRESEND_API_KEY=\nSMTP_HOST=mail.example.invalid\nSMTP_PORT=587\nSMTP_PASSWORD_B64=%s\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' \
-    "$(openssl rand -hex 8)" "$(openssl rand -base64 18)" > "$env_dir/mail-providers.env"
+    "$(openssl rand -hex 8)" "$(printf 'smoke-%s' "$(openssl rand -hex 8)" | base64 -w0)" > "$env_dir/mail-providers.env"
 )
 
 echo "== start"
