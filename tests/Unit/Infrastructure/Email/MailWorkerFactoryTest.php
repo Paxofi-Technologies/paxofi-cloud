@@ -54,6 +54,23 @@ final class MailWorkerFactoryTest extends TestCase
         $this->sender('smtp', ['SMTP_PORT' => '25'] + self::SMTP);
     }
 
+    public function testSmtpTlsNameIsPassedToTheServer(): void
+    {
+        $smtp = $this->sender('smtp', ['SMTP_TLS_NAME' => 'Example.ng'] + self::SMTP);
+        self::assertInstanceOf(FailoverEmailSender::class, $smtp);
+        $smtp = (new \ReflectionProperty($smtp, 'primary'))->getValue($smtp);
+        self::assertInstanceOf(SmtpEmailSender::class, $smtp);
+        $server = (new \ReflectionProperty($smtp, 'server'))->getValue($smtp);
+        self::assertInstanceOf(\PaxofiCloud\Integration\Email\Smtp\SmtpServer::class, $server);
+        self::assertSame(['mail.example.ng', 'example.ng'], [$server->host, $server->tlsName]);
+    }
+
+    public function testSmtpTlsNameOutsideTheHostsDomainIsRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->sender('smtp', ['SMTP_TLS_NAME' => 'gmail.com'] + self::SMTP);
+    }
+
     public function testSmtpPasswordWithSpacesIsRefused(): void
     {
         $this->expectException(\InvalidArgumentException::class);

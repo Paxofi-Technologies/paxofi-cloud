@@ -75,6 +75,30 @@ final class SmtpServerAndConnectorTest extends TestCase
         self::assertSame(STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT, $options['crypto_method']);
     }
 
+    public function testTlsNameDefaultsToTheHostAndMayBeAParentDomain(): void
+    {
+        self::assertSame('mail.example.ng', (new SmtpServer('mail.example.ng', 465))->tlsName);
+        self::assertSame('example.ng', (new SmtpServer('mail.example.ng', 465, 'example.ng'))->tlsName);
+        self::assertSame('mail.example.ng', (new SmtpServer('mail.example.ng', 465, 'mail.example.ng'))->tlsName);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function unrelatedTlsNames(): iterable
+    {
+        yield 'unrelated domain' => ['gmail.com'];
+        yield 'suffix without a label boundary' => ['ample.ng'];
+        yield 'a child, not a parent' => ['smtp.mail.example.ng'];
+        yield 'top-level domain only' => ['ng'];
+        yield 'not a host name' => ['example.ng/evil'];
+    }
+
+    #[DataProvider('unrelatedTlsNames')]
+    public function testTlsNameCannotPointOutsideTheHostsOwnDomain(string $tlsName): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new SmtpServer('mail.example.ng', 465, $tlsName);
+    }
+
     /** @param list<string> $addresses */
     private function connector(array $addresses): StreamSmtpConnector
     {

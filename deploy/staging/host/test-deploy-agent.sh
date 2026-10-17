@@ -78,12 +78,13 @@ printf 'SMTP_PORT=25\n' | run mail-secrets 2>/dev/null && fail "accepted SMTP po
 printf 'SMTP_HOST=10.0.0.1\n' | run mail-secrets 2>/dev/null && fail "accepted an IP literal as SMTP host"
 printf 'SMTP_HOST=mail.example.invalid;id\n' | run mail-secrets 2>/dev/null && fail "accepted an SMTP host with shell characters"
 printf 'SMTP_PASSWORD=has space\n' | run mail-secrets 2>/dev/null && fail "accepted an SMTP password with a space"
+printf 'SMTP_TLS_NAME=example.invalid;id\n' | run mail-secrets 2>/dev/null && fail "accepted an SMTP TLS name with shell characters"
 printf 'EMAIL_PROVIDER=sendmail\n' | run mail-secrets 2>/dev/null && fail "accepted an unknown EMAIL_PROVIDER"
 [ -s "$root/etc/paxoficloud/mail-providers.env" ] && fail "a refused update was written"
 # SMTP only (staging's real setup), with a password full of characters an
 # env file could misread. Postmark/Resend stay empty.
 password="p\$a\"s#s'w0rd-$(openssl rand -hex 8)"
-printf 'POSTMARK_SERVER_TOKEN=\nRESEND_API_KEY=\nSMTP_HOST=mail.example.invalid\nSMTP_PORT=465\nSMTP_USERNAME=no-reply@example.invalid\nSMTP_PASSWORD=%s\nEMAIL_PROVIDER=smtp\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' "$password" \
+printf 'POSTMARK_SERVER_TOKEN=\nRESEND_API_KEY=\nSMTP_HOST=mail.example.invalid\nSMTP_PORT=465\nSMTP_USERNAME=no-reply@example.invalid\nSMTP_PASSWORD=%s\nSMTP_TLS_NAME=example.invalid\nEMAIL_PROVIDER=smtp\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' "$password" \
   | run mail-secrets 2>/dev/null || fail "mail-secrets refused valid SMTP input"
 providers="$root/etc/paxoficloud/mail-providers.env"
 [ "$(stat -c %a "$providers")" = 600 ] || fail "mail-providers.env is not 0600"
@@ -106,7 +107,7 @@ worker="$(docker ps --filter name=paxoficloud-mail-worker --format '{{.Names}}' 
 echo "== status shows mail diagnostics without values"
 status_out="$(run status 2>/dev/null)" || fail "status failed"
 grep -qx 'mail worker=enabled provider=smtp allowlist_entries=1' <<<"$status_out" || fail "status did not report the SMTP mail worker"
-grep -q '^mail settings set: .*SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD_B64 EMAIL_PROVIDER EMAIL_RECIPIENT_ALLOWLIST' <<<"$status_out" \
+grep -q '^mail settings set: .*SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD_B64 SMTP_TLS_NAME EMAIL_PROVIDER EMAIL_RECIPIENT_ALLOWLIST' <<<"$status_out" \
   || fail "status did not list the configured mail settings"
 grep -q 'POSTMARK_SERVER_TOKEN' <<<"$status_out" && fail "status listed an empty setting"
 grep -q '^outbox ' <<<"$status_out" || fail "status did not report the outbox"
