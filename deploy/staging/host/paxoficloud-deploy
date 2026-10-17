@@ -82,6 +82,7 @@ cmd_mail_secrets() {
       EMAIL_RECIPIENT_ALLOWLIST) [[ "$value" =~ ^[A-Za-z0-9@._+,\ -]{0,2000}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
       EMAIL_PROVIDER)        [[ "$value" =~ ^(postmark|resend|smtp)?$ ]] || die "mail-secrets: $name has an unexpected format" ;;
       SMTP_HOST)             [[ "$value" =~ ^([a-z0-9-]{1,63}\.)+[a-z]{2,63}$ || -z "$value" ]] || die "mail-secrets: $name has an unexpected format" ;;
+      SMTP_TLS_NAME)         [[ "$value" =~ ^([a-z0-9-]{1,63}\.)+[a-z]{2,63}$ || -z "$value" ]] || die "mail-secrets: $name has an unexpected format" ;;
       SMTP_PORT)             [[ "$value" =~ ^(465|587)?$ ]] || die "mail-secrets: $name has an unexpected format" ;;
       SMTP_USERNAME)         [[ "$value" =~ ^[A-Za-z0-9@._+-]{0,254}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
       SMTP_PASSWORD)

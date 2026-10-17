@@ -26,7 +26,7 @@ use PaxofiCloud\Integration\Provider\ProviderCredential;
  * Builds the mail worker from configuration plus secrets read from the
  * worker's process environment only (threat model E-6):
  *   EMAIL_OUTBOX_PUBLIC_KEY, EMAIL_OUTBOX_SECRET_KEY, POSTMARK_SERVER_TOKEN,
- *   RESEND_API_KEY, SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD[_B64] (each
+ *   RESEND_API_KEY, SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD[_B64]/SMTP_TLS_NAME (each
  *   provider is optional; at least one is required).
  */
 final class MailWorkerFactory
@@ -71,9 +71,14 @@ final class MailWorkerFactory
         if (is_string($smtpHost) && $smtpHost !== '' && is_string($smtpPassword) && $smtpPassword !== '') {
             $port = $getenv('SMTP_PORT');
             $username = $getenv('SMTP_USERNAME');
+            $tlsName = $getenv('SMTP_TLS_NAME');
             $senders['smtp'] = new SmtpEmailSender(
                 new StreamSmtpConnector(),
-                new SmtpServer(strtolower($smtpHost), is_string($port) && $port !== '' ? self::port($port) : SmtpServer::STARTTLS_PORT),
+                new SmtpServer(
+                    strtolower($smtpHost),
+                    is_string($port) && $port !== '' ? self::port($port) : SmtpServer::STARTTLS_PORT,
+                    is_string($tlsName) && $tlsName !== '' ? strtolower($tlsName) : null,
+                ),
                 is_string($username) && $username !== '' ? $username : $from->address->value,
                 new ProviderCredential('smtp-relay', $smtpPassword),
                 $from,

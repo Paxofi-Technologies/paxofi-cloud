@@ -12,7 +12,7 @@ use PaxofiCloud\Integration\Provider\Http\SystemHostResolver;
  * Opens the relay connection with the same egress rules as ProviderHttpClient
  * (threat model E-13, M-14): we resolve the host ourselves, refuse it if any
  * address is non-public, and connect to the vetted address while verifying
- * the certificate against the configured host name.
+ * the certificate against the configured name (SMTP_TLS_NAME, else the host).
  */
 final readonly class StreamSmtpConnector implements SmtpConnector
 {
@@ -27,7 +27,7 @@ final readonly class StreamSmtpConnector implements SmtpConnector
     {
         $address = $this->vettedAddress($server->host);
         $target = sprintf(str_contains($address, ':') ? 'tcp://[%s]:%d' : 'tcp://%s:%d', $address, $server->port);
-        $context = stream_context_create(['ssl' => self::tlsOptions($server->host)]);
+        $context = stream_context_create(['ssl' => self::tlsOptions($server->tlsName)]);
 
         $errno = 0;
         $errstr = '';
