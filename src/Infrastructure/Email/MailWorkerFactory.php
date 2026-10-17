@@ -16,6 +16,9 @@ use PaxofiCloud\Infrastructure\Time\SystemClock;
 use PaxofiCloud\Integration\Email\PostmarkEmailSender;
 use PaxofiCloud\Integration\Email\ResendEmailSender;
 use PaxofiCloud\Integration\Email\Sender;
+use PaxofiCloud\Integration\Email\Smtp\SmtpEmailSender;
+use PaxofiCloud\Integration\Email\Smtp\SmtpServer;
+use PaxofiCloud\Integration\Email\Smtp\StreamSmtpConnector;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Provider\ProviderCredential;
 
@@ -23,7 +26,8 @@ use PaxofiCloud\Integration\Provider\ProviderCredential;
  * Builds the mail worker from configuration plus secrets read from the
  * worker's process environment only (threat model E-6):
  *   EMAIL_OUTBOX_PUBLIC_KEY, EMAIL_OUTBOX_SECRET_KEY, POSTMARK_SERVER_TOKEN,
- *   RESEND_API_KEY (each provider is optional; at least one is required).
+ *   RESEND_API_KEY, SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD[_B64] (each
+ *   provider is optional; at least one is required).
  */
 final class MailWorkerFactory
 {
@@ -62,22 +66,66 @@ final class MailWorkerFactory
             $senders['resend'] = new ResendEmailSender($transport, new ProviderCredential('resend-sending', $resend), $from);
         }
 
+        $smtpHost = $getenv('SMTP_HOST');
+        $smtpPassword = self::smtpPassword($getenv);
+        if (is_string($smtpHost) && $smtpHost !== '' && is_string($smtpPassword) && $smtpPassword !== '') {
+            $port = $getenv('SMTP_PORT');
+            $username = $getenv('SMTP_USERNAME');
+            $senders['smtp'] = new SmtpEmailSender(
+                new StreamSmtpConnector(),
+                new SmtpServer(strtolower($smtpHost), is_string($port) && $port !== '' ? self::port($port) : SmtpServer::STARTTLS_PORT),
+                is_string($username) && $username !== '' ? $username : $from->address->value,
+                new ProviderCredential('smtp-relay', $smtpPassword),
+                $from,
+            );
+        }
+
         $primaryName = self::string($config, 'mail.provider');
-        if (!in_array($primaryName, ['postmark', 'resend'], true)) {
-            throw new \InvalidArgumentException('EMAIL_PROVIDER must be "postmark" or "resend".');
+        if (!in_array($primaryName, ['postmark', 'resend', 'smtp'], true)) {
+            throw new \InvalidArgumentException('EMAIL_PROVIDER must be "postmark", "resend" or "smtp".');
         }
         $primary = $senders[$primaryName] ?? null;
         unset($senders[$primaryName]);
         $secondary = $senders === [] ? null : array_values($senders)[0];
         if ($primary === null) {
             if ($secondary === null) {
-                throw new \InvalidArgumentException('No email provider credentials: set POSTMARK_SERVER_TOKEN and/or RESEND_API_KEY.');
+                throw new \InvalidArgumentException('No email provider credentials: set POSTMARK_SERVER_TOKEN, RESEND_API_KEY or SMTP_HOST plus SMTP_PASSWORD.');
             }
             // The chosen primary has no key yet: run on the other one alone.
             return $secondary;
         }
 
         return new FailoverEmailSender($primary, $secondary);
+    }
+
+    /**
+     * SMTP_PASSWORD_B64 (what the staging deploy agent writes, so passwords
+     * with `$`, quotes or `#` survive the env file) wins over SMTP_PASSWORD.
+     *
+     * @param \Closure(string): (string|false) $getenv
+     */
+    private static function smtpPassword(\Closure $getenv): string|false
+    {
+        $encoded = $getenv('SMTP_PASSWORD_B64');
+        if (is_string($encoded) && $encoded !== '') {
+            $decoded = base64_decode($encoded, true);
+            if ($decoded === false || $decoded === '') {
+                throw new \InvalidArgumentException('SMTP_PASSWORD_B64 is not valid base64.');
+            }
+
+            return $decoded;
+        }
+
+        return $getenv('SMTP_PASSWORD');
+    }
+
+    private static function port(string $value): int
+    {
+        if (preg_match('/^[0-9]{1,5}$/', $value) !== 1) {
+            throw new \InvalidArgumentException('SMTP_PORT must be a number.');
+        }
+
+        return (int) $value;
     }
 
     /** @param \Closure(string): (string|false) $getenv */

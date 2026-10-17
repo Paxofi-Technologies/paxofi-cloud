@@ -9,6 +9,7 @@ use Paxofi\Core\Configuration\Environment;
 // are read from the worker's process environment at the moment of use, so
 // they never land in a cached configuration file.
 return static fn (Environment $env): array => [
+    // postmark | resend | smtp (threat model E-1, E-13).
     'provider' => $env->get('EMAIL_PROVIDER', 'postmark'),
     'from_name' => $env->get('EMAIL_FROM_NAME', 'PaxofiCloud'),
     'from_address' => $env->get('EMAIL_FROM_ADDRESS', 'no-reply@paxofi.com'),

@@ -7,7 +7,7 @@
 | Requirements | IAM-001, IAM-002, IAM-011, IAM-012, IAM-015, IAM-016, NFR-014 |
 | Standard | OWASP ASVS 5.0 Level 2; **Level 3** for the provider API tokens |
 | Status | Baseline, written **before** the email code. Closes Identity threat model open item O-4. |
-| Decision | CEO, 2026-10-14: **Postmark is primary, Resend is secondary**, switchable at any time. |
+| Decision | CEO, 2026-10-14: **Postmark is primary, Resend is secondary**, switchable at any time. CEO, 2026-10-17: add **SMTP through our own mail server** as a third option, and use it on staging until Postmark and Resend are set up (E-13). |
 
 Email carries the one-time links for verification, password reset and email
 change. It is the customer's recovery root (Identity threat model §4), so a
@@ -45,6 +45,7 @@ flowchart LR
 | E-9 | **Staging cannot email strangers.** Outside production, the worker delivers only to addresses in `EMAIL_RECIPIENT_ALLOWLIST`. It drops (and logs) every other address, so test data can never reach real people. |
 | E-10 | **Logging.** Logs record only the outbox id, template name, provider, provider message id, outcome and a SHA-256 of the recipient. They never contain tokens, links, bodies or plain addresses. |
 | E-11 | **Domain authentication.** Mail is sent from `no-reply@paxofi.com`. Postmark and Resend each publish DKIM for the domain, and use a custom Return-Path or bounce subdomain so SPF alignment does not touch the root SPF record that the existing mailboxes depend on. DMARC starts at `p=none` with reports and moves to `quarantine` once both providers align. |
+| E-13 | **SMTP relay option.** `SmtpEmailSender` implements the same port, so `EMAIL_PROVIDER=smtp` switches to it and the failover rules of E-1 still apply (SMTP 4xx = transient; 530/534/535/538 = configuration; other 5xx = rejected). Our own minimal SMTP client (no new dependency) gives the worker the same egress controls as `ProviderHttpClient`: the host is resolved by us, every address must be public, and the connection is pinned to it. Only ports **465** (implicit TLS) and **587** (STARTTLS) are allowed. TLS 1.2+ with certificate and host-name verification is mandatory: if the server does not offer STARTTLS the client stops **before** sending credentials, so a downgrade cannot expose the password. `AUTH PLAIN`/`LOGIN` happens only inside TLS. `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME` and `SMTP_PASSWORD` are environment secrets delivered to the worker only, exactly like E-6, and the host stays out of the public repository. Error messages carry only SMTP reply codes, never the server's reply text, which can echo addresses (E-10). |
 | E-12 | **Bounces and complaints.** Until the bounce webhooks are built (Sprint 8, with HMAC and replay window per the webhook baseline), both providers' own suppression lists stop delivery to hard-bounced or complaining addresses. |
 
 ## 3. Threats (STRIDE)
@@ -62,10 +63,14 @@ flowchart LR
 | M-09 | **I:** staging emails reach real people | Worker | E-9 allow-list | `NonProductionRecipientAllowlistTest` |
 | M-10 | **E:** SSRF through the email HTTP client | E3 | E-7 allow-list and the existing `ProviderHttpClient` controls | Existing `ProviderHttpClient` tests plus host allow-list test |
 | M-11 | **I:** duplicate sends confuse users or reveal retries | Worker | E-5 claim lock and idempotency key | `EmailIdempotencyTest` |
+| M-12 | **I:** SMTP password sent in clear after a STARTTLS downgrade or to a server with a bad certificate | E3 (SMTP) | E-13 mandatory STARTTLS before AUTH; verified TLS 1.2+ | `SmtpEmailSenderTest` (no STARTTLS → no AUTH line sent; AUTH only after TLS) |
+| M-13 | **T:** header or SMTP command injection through recipient, subject or body (e.g. a lone `.` ending DATA early) | E3 (SMTP) | Validated `EmailAddress` and one-line subject; CRLF-normalised quoted-printable bodies; dot-stuffing | `SmtpMimeMessageTest`, `SmtpEmailSenderTest` |
+| M-14 | **E:** SSRF through `SMTP_HOST` pointing at an internal service | E3 (SMTP) | E-13 own DNS resolution, non-public deny, port allow-list 465/587 | `SmtpServerTest`, `StreamSmtpConnectorTest` |
 
 ## 4. Residual risks
 
 - **Duplicate on failover.** If Postmark accepts a message but the response is lost, the Resend failover may deliver it again. The customer can receive two identical emails. That is acceptable, because the tokens stay single-use.
+- **Own SMTP deliverability.** Mail sent through our hosting mail server shares that server's IP reputation and has no provider suppression list, so bounces must be watched by hand until Postmark or Resend is enabled. It is meant for staging and low volume; production uses Postmark with SMTP as a fallback at most.
 - **Provider sees content.** Both providers process the email body, which includes one-time links. This is mitigated by short token lifetimes (24 h verification, 30 min reset) and single use. It is recorded as a processor in the NDPA data map.
 
 ## 5. Open items (CEO)
@@ -74,6 +79,7 @@ flowchart LR
 |---|---|
 | EM-1 | **Postmark:** create a Server "PaxofiCloud Staging", add the `paxofi.com` sender domain (DKIM plus Return-Path DNS records in Cloudflare), and request account approval. New accounts can only send to their own domain until approved. Store the Server API token as staging secret `POSTMARK_SERVER_TOKEN`. |
 | EM-2 | **Resend:** add domain `paxofi.com` (DNS records via Resend's Cloudflare auto-setup), create an API key with *Sending access* restricted to that domain, and store it as staging secret `RESEND_API_KEY`. |
+| EM-4 | **SMTP (staging, now):** create a mailbox such as `no-reply@paxofi.com` on the paxofi.com mail server, then add staging secrets `SMTP_HOST` (the server's TLS host name, e.g. the one in the cPanel "Connect devices" page), `SMTP_PORT` (465 or 587), `SMTP_USERNAME` and `SMTP_PASSWORD` (no spaces). Check that the domain's SPF record includes that server and that DKIM is enabled for it. |
 | EM-3 | Confirm the sender address `no-reply@paxofi.com` and the display name "PaxofiCloud". |
 
 ## 6. Review log
@@ -81,3 +87,4 @@ flowchart LR
 | Date | Change |
 |---|---|
 | 2026-10-14 | Baseline written before any email code. Postmark primary and Resend secondary (CEO decision). |
+| 2026-10-17 | E-13 SMTP relay option, M-12..M-14, EM-4, written before the SMTP code (CEO decision: SMTP on staging for now). |
