@@ -179,9 +179,13 @@ jobs:
           ALLOWLIST: ${{ secrets.STAGING_ALLOWED_EMAILS }}
         run: |
           set -euo pipefail
-          printf 'POSTMARK_SERVER_TOKEN=%s\nRESEND_API_KEY=%s\nSMTP_HOST=%s\nSMTP_PORT=%s\nSMTP_USERNAME=%s\nSMTP_PASSWORD=%s\nSMTP_TLS_NAME=%s\nEMAIL_PROVIDER=%s\nEMAIL_RECIPIENT_ALLOWLIST=%s\n' \
-            "$POSTMARK_SERVER_TOKEN" "$RESEND_API_KEY" "$SMTP_HOST" "$SMTP_PORT" "$SMTP_USERNAME" "$SMTP_PASSWORD" "$SMTP_TLS_NAME" "$EMAIL_PROVIDER" "$ALLOWLIST" \
-            | ssh -F "$RUNNER_TEMP/ssh_config" staging mail-secrets
+          # SMTP_TLS_NAME is sent only when set: hosts created before the agent
+          # learned that name refuse unknown names (deploy README).
+          {
+            printf 'POSTMARK_SERVER_TOKEN=%s\nRESEND_API_KEY=%s\nSMTP_HOST=%s\nSMTP_PORT=%s\nSMTP_USERNAME=%s\nSMTP_PASSWORD=%s\nEMAIL_PROVIDER=%s\nEMAIL_RECIPIENT_ALLOWLIST=%s\n' \
+              "$POSTMARK_SERVER_TOKEN" "$RESEND_API_KEY" "$SMTP_HOST" "$SMTP_PORT" "$SMTP_USERNAME" "$SMTP_PASSWORD" "$EMAIL_PROVIDER" "$ALLOWLIST"
+            if [ -n "$SMTP_TLS_NAME" ]; then printf 'SMTP_TLS_NAME=%s\n' "$SMTP_TLS_NAME"; fi
+          } | ssh -F "$RUNNER_TEMP/ssh_config" staging mail-secrets
           if [ -z "$POSTMARK_SERVER_TOKEN$RESEND_API_KEY" ] && [ -z "$SMTP_HOST" -o -z "$SMTP_PASSWORD" ]; then
             echo "::warning::No email provider is configured (Postmark, Resend or SMTP); the mail worker stays off until one is added."
           fi
