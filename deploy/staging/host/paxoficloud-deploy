@@ -29,7 +29,11 @@ log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FI
 die() { log "ERROR $*"; exit 1; }
 
 # The mail worker (compose profile "mail") runs only once a provider token exists.
-mail_profile() { grep -Eqs '^(POSTMARK_SERVER_TOKEN|RESEND_API_KEY)=.' "$ENV_DIR/mail-providers.env" && echo mail || true; }
+mail_profile() {
+  local f="$ENV_DIR/mail-providers.env"
+  if grep -Eqs '^(POSTMARK_SERVER_TOKEN|RESEND_API_KEY)=.' "$f" \
+     || { grep -Eqs '^SMTP_HOST=.' "$f" && grep -Eqs '^SMTP_PASSWORD_B64=.' "$f"; }; then echo mail; fi
+}
 compose() { APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" COMPOSE_PROFILES="$(mail_profile)" docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "${@:2}"; }
 
 random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40; }
@@ -66,6 +70,7 @@ cmd_mail_secrets() {
   # stdin: NAME=value lines. Unknown names or values outside the expected
   # format are refused as a whole; nothing is written unless all lines pass.
   local input line name value out
+  local LC_ALL=C
   input="$(head -c 8192)"
   out="$(mktemp "$ENV_DIR/.mail-providers.XXXXXX")"; trap 'rm -f "$out"' RETURN
   while IFS= read -r line || [ -n "$line" ]; do
@@ -75,6 +80,16 @@ cmd_mail_secrets() {
       POSTMARK_SERVER_TOKEN) [[ "$value" =~ ^[A-Za-z0-9-]{0,128}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
       RESEND_API_KEY)        [[ "$value" =~ ^(re_[A-Za-z0-9_]{8,128})?$ ]] || die "mail-secrets: $name has an unexpected format" ;;
       EMAIL_RECIPIENT_ALLOWLIST) [[ "$value" =~ ^[A-Za-z0-9@._+,\ -]{0,2000}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      EMAIL_PROVIDER)        [[ "$value" =~ ^(postmark|resend|smtp)?$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      SMTP_HOST)             [[ "$value" =~ ^([a-z0-9-]{1,63}\.)+[a-z]{2,63}$ || -z "$value" ]] || die "mail-secrets: $name has an unexpected format" ;;
+      SMTP_PORT)             [[ "$value" =~ ^(465|587)?$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      SMTP_USERNAME)         [[ "$value" =~ ^[A-Za-z0-9@._+-]{0,254}$ ]] || die "mail-secrets: $name has an unexpected format" ;;
+      SMTP_PASSWORD)
+        # Any printable password (no spaces). Stored base64-encoded so `$`,
+        # quotes or `#` cannot be reinterpreted by the compose env file.
+        [[ "$value" =~ ^[[:graph:]]{0,256}$ ]] || die "mail-secrets: $name has an unexpected format"
+        name=SMTP_PASSWORD_B64
+        if [ -n "$value" ]; then value="$(printf '%s' "$value" | base64 -w0)"; fi ;;
       *) die "mail-secrets: refused name" ;;
     esac
     printf '%s=%s\n' "$name" "$value" >> "$out"

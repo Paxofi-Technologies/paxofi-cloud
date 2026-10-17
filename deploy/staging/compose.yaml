@@ -55,7 +55,8 @@ services:
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/mail-providers.env"
     environment: *app-environment
     tmpfs: [/tmp]
-    # data: MySQL; egress: HTTPS to the allow-listed email APIs only (E-7).
+    # data: MySQL; egress: HTTPS to the allow-listed email APIs (E-7) and
+    # SMTP submission (465/587) to the configured relay (E-13).
     networks: [data, egress]
     depends_on:
       mysql: {condition: service_healthy}

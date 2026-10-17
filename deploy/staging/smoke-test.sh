@@ -36,7 +36,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
   keys="$(docker run --rm --entrypoint php "paxoficloud-php:$APP_VERSION" -r '$k = sodium_crypto_box_keypair(); echo base64_encode(sodium_crypto_box_publickey($k)), " ", base64_encode(sodium_crypto_box_secretkey($k));')"
   printf 'EMAIL_OUTBOX_PUBLIC_KEY=%s\n' "${keys% *}" > "$env_dir/outbox-public.env"
   printf 'EMAIL_OUTBOX_SECRET_KEY=%s\n' "${keys#* }" > "$env_dir/outbox-secret.env"
-  printf 'POSTMARK_SERVER_TOKEN=smoke-%s\nRESEND_API_KEY=\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' "$(openssl rand -hex 8)" > "$env_dir/mail-providers.env"
+  printf 'POSTMARK_SERVER_TOKEN=smoke-%s\nRESEND_API_KEY=\nSMTP_HOST=mail.example.invalid\nSMTP_PORT=587\nSMTP_PASSWORD_B64=%s\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' \
+    "$(openssl rand -hex 8)" "$(openssl rand -base64 18)" > "$env_dir/mail-providers.env"
 )
 
 echo "== start"
@@ -81,7 +82,7 @@ echo "== mail worker"
 # M-02/E-6: the web tier holds the outbox PUBLIC key only, never provider tokens or the secret key.
 web_env="$("${compose[@]}" exec -T php env)"
 grep -q '^EMAIL_OUTBOX_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the outbox public key"
-grep -qE '^(EMAIL_OUTBOX_SECRET_KEY|POSTMARK_SERVER_TOKEN|RESEND_API_KEY)=' <<<"$web_env" && fail "email secrets present in the php container"
+grep -qE '^(EMAIL_OUTBOX_SECRET_KEY|POSTMARK_SERVER_TOKEN|RESEND_API_KEY|SMTP_[A-Z_]+)=' <<<"$web_env" && fail "email secrets present in the php container"
 
 echo "== hardening"
 for service in php nginx redis; do
@@ -102,7 +103,7 @@ for service in php nginx mysql redis; do
   while IFS='=' read -r _ value; do
     [ -n "$value" ] || continue
     grep -qF -- "$value" <<<"$config" && fail "a secret value appears in the $service container definition"
-  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=" "$env_dir"/*.env)
+  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=" "$env_dir"/*.env)
 done
 # Code inside the image is not writable by the PHP user.
 "${compose[@]}" exec -T php sh -c 'test ! -w /app/src && test ! -w /app/vendor' || fail "application code is writable"

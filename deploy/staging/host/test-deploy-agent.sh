@@ -71,11 +71,22 @@ grep -q "rolled back to $A" "$root/var/log/paxoficloud/deploy.log" || fail "no r
 echo "== mail secrets"
 printf 'FOO=bar\n' | run mail-secrets 2>/dev/null && fail "accepted an unknown secret name"
 printf 'POSTMARK_SERVER_TOKEN=a b;rm -rf /\n' | run mail-secrets 2>/dev/null && fail "accepted a malformed token"
+printf 'SMTP_PORT=25\n' | run mail-secrets 2>/dev/null && fail "accepted SMTP port 25"
+printf 'SMTP_HOST=10.0.0.1\n' | run mail-secrets 2>/dev/null && fail "accepted an IP literal as SMTP host"
+printf 'SMTP_HOST=mail.example.invalid;id\n' | run mail-secrets 2>/dev/null && fail "accepted an SMTP host with shell characters"
+printf 'SMTP_PASSWORD=has space\n' | run mail-secrets 2>/dev/null && fail "accepted an SMTP password with a space"
+printf 'EMAIL_PROVIDER=sendmail\n' | run mail-secrets 2>/dev/null && fail "accepted an unknown EMAIL_PROVIDER"
 [ -s "$root/etc/paxoficloud/mail-providers.env" ] && fail "a refused update was written"
-token="agent-test-$(openssl rand -hex 8)"
-printf 'POSTMARK_SERVER_TOKEN=%s\nRESEND_API_KEY=\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' "$token" | run mail-secrets 2>/dev/null || fail "mail-secrets refused valid input"
-[ "$(stat -c %a "$root/etc/paxoficloud/mail-providers.env")" = 600 ] || fail "mail-providers.env is not 0600"
-grep -qF -- "$token" "$root/var/log/paxoficloud/deploy.log" && fail "a provider token reached the deploy log"
+# SMTP only (staging's real setup), with a password full of characters an
+# env file could misread. Postmark/Resend stay empty.
+password="p\$a\"s#s'w0rd-$(openssl rand -hex 8)"
+printf 'POSTMARK_SERVER_TOKEN=\nRESEND_API_KEY=\nSMTP_HOST=mail.example.invalid\nSMTP_PORT=465\nSMTP_USERNAME=no-reply@example.invalid\nSMTP_PASSWORD=%s\nEMAIL_PROVIDER=smtp\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' "$password" \
+  | run mail-secrets 2>/dev/null || fail "mail-secrets refused valid SMTP input"
+providers="$root/etc/paxoficloud/mail-providers.env"
+[ "$(stat -c %a "$providers")" = 600 ] || fail "mail-providers.env is not 0600"
+grep -qxF "SMTP_PASSWORD_B64=$(printf '%s' "$password" | base64 -w0)" "$providers" || fail "SMTP password not stored base64-encoded"
+grep -qF -- "$password" "$providers" && fail "SMTP password stored in plain text"
+grep -qF -- "$password" "$root/var/log/paxoficloud/deploy.log" && fail "the SMTP password reached the deploy log"
 
 echo "== second release and pruning"
 for repo in paxoficloud-php paxoficloud-nginx; do docker tag "$repo:$A" "$repo:$C"; done
@@ -84,6 +95,9 @@ run "release $C" 2>/dev/null || fail "release C failed"
 [ "$(cat "$root/var/lib/paxoficloud/previous")" = "$A" ] || fail "previous is not A"
 docker image inspect "paxoficloud-nginx:$B" >/dev/null 2>&1 && fail "old image B was not pruned"
 docker image inspect "paxoficloud-php:$A" >/dev/null 2>&1 || fail "previous image A was pruned"
-docker ps --format '{{.Names}}' | grep -q 'paxoficloud-mail-worker' || fail "mail worker did not start once a provider token was delivered"
+worker="$(docker ps --filter name=paxoficloud-mail-worker --format '{{.Names}}' | head -n1)"
+[ -n "$worker" ] || fail "mail worker did not start once an SMTP relay was delivered"
+[ "$(docker exec "$worker" php -r 'echo base64_decode(getenv("SMTP_PASSWORD_B64"), true);')" = "$password" ] \
+  || fail "the worker did not receive the exact SMTP password"
 
-echo "OK: deploy agent refuses bad input, releases, rolls back, prunes and wires the mail worker"
+echo "OK: deploy agent refuses bad input, releases, rolls back, prunes and wires the mail worker (SMTP)"

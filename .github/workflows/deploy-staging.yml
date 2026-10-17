@@ -146,22 +146,30 @@ jobs:
           docker save "paxoficloud-php:$GITHUB_SHA" "paxoficloud-nginx:$GITHUB_SHA" | gzip -1 \
             | ssh -F "$RUNNER_TEMP/ssh_config" staging load
 
-      # Email provider tokens reach the host over the Access-gated tunnel on
-      # stdin and go only to the mail worker (email threat model E-6). The
+      # Email provider tokens and SMTP credentials reach the host over the
+      # Access-gated tunnel on stdin and go only to the mail worker (email
+      # threat model E-6, E-13). The
       # staging viewers are also the only people staging may email (E-9).
       - name: Deliver mail worker secrets
         shell: bash
         env:
           POSTMARK_SERVER_TOKEN: ${{ secrets.POSTMARK_SERVER_TOKEN }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          # postmark | resend | smtp; empty = postmark when configured, else
+          # whichever provider has credentials (threat model E-1, E-13).
+          EMAIL_PROVIDER: ${{ vars.EMAIL_PROVIDER }}
           ALLOWLIST: ${{ secrets.STAGING_ALLOWED_EMAILS }}
         run: |
           set -euo pipefail
-          printf 'POSTMARK_SERVER_TOKEN=%s\nRESEND_API_KEY=%s\nEMAIL_RECIPIENT_ALLOWLIST=%s\n' \
-            "$POSTMARK_SERVER_TOKEN" "$RESEND_API_KEY" "$ALLOWLIST" \
+          printf 'POSTMARK_SERVER_TOKEN=%s\nRESEND_API_KEY=%s\nSMTP_HOST=%s\nSMTP_PORT=%s\nSMTP_USERNAME=%s\nSMTP_PASSWORD=%s\nEMAIL_PROVIDER=%s\nEMAIL_RECIPIENT_ALLOWLIST=%s\n' \
+            "$POSTMARK_SERVER_TOKEN" "$RESEND_API_KEY" "$SMTP_HOST" "$SMTP_PORT" "$SMTP_USERNAME" "$SMTP_PASSWORD" "$EMAIL_PROVIDER" "$ALLOWLIST" \
             | ssh -F "$RUNNER_TEMP/ssh_config" staging mail-secrets
-          if [ -z "$POSTMARK_SERVER_TOKEN$RESEND_API_KEY" ]; then
-            echo "::warning::No email provider token is set; the mail worker stays off until one is added."
+          if [ -z "$POSTMARK_SERVER_TOKEN$RESEND_API_KEY" ] && [ -z "$SMTP_HOST" -o -z "$SMTP_PASSWORD" ]; then
+            echo "::warning::No email provider is configured (Postmark, Resend or SMTP); the mail worker stays off until one is added."
           fi
 
       - name: Release (migrate, start, health check, automatic rollback)
