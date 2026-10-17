@@ -10,6 +10,7 @@ use PaxofiCloud\Application\Email\EmailAddress;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
+use PaxofiCloud\Infrastructure\Email\MysqlOutboxReport;
 use PaxofiCloud\Infrastructure\Email\OutboxSealer;
 use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
@@ -25,6 +26,7 @@ final class EmailOutboxIntegrationTest extends IntegrationTestCase
     private MysqlEmailOutbox $web;
     private MysqlEmailOutbox $worker;
     private OutboxSealer $opener;
+    private MysqlOutboxReport $report;
 
     protected function setUp(): void
     {
@@ -40,6 +42,25 @@ final class EmailOutboxIntegrationTest extends IntegrationTestCase
         $this->opener = OutboxSealer::forOpening($pair['public'], $pair['secret']);
         $this->web = new MysqlEmailOutbox($connection, $repository, OutboxSealer::forSealing($pair['public']), $this->clock);
         $this->worker = new MysqlEmailOutbox($connection, $repository, $this->opener, $this->clock);
+        $this->report = new MysqlOutboxReport($repository);
+    }
+
+    public function testReportShowsCountsAndFailureReasonsButNoRecipients(): void
+    {
+        $sent = $this->web->enqueue(new EmailAddress('ada@example.ng'), 'verify-email', ['token' => self::TOKEN]);
+        $dead = $this->web->enqueue(new EmailAddress('bola@example.ng'), 'verify-email', ['token' => self::TOKEN]);
+        $retry = $this->web->enqueue(new EmailAddress('chi@example.ng'), 'account-exists', []);
+        $this->worker->markSent($sent, 'smtp', 'm-1', $this->clock->now());
+        $this->worker->markDead($dead, 0, 'suppressed-not-allowlisted');
+        $this->worker->reschedule($retry, 1, $this->clock->now()->modify('+1 minute'), 'smtp: connect failed');
+
+        self::assertSame(['pending' => 1, 'sending' => 0, 'sent' => 1, 'dead' => 1], $this->report->countsByStatus());
+        $problems = $this->report->recentProblems(5);
+        self::assertCount(2, $problems);
+        self::assertEqualsCanonicalizing(['suppressed-not-allowlisted', 'smtp: connect failed'], array_column($problems, 'last_error'));
+        $dump = json_encode($problems, JSON_THROW_ON_ERROR);
+        self::assertStringNotContainsString('@example.ng', $dump);
+        self::assertStringNotContainsString((new EmailAddress('bola@example.ng'))->hash(), $dump);
     }
 
     public function testStoredRowsContainNoAddressOrToken(): void

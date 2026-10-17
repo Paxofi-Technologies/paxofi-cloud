@@ -60,7 +60,7 @@ Installed by cloud-init as `/usr/local/sbin/paxoficloud-deploy` and bound to the
 | `load` | Reads a gzip `docker save` stream from stdin. Keeps only `paxoficloud-php:<sha>` / `paxoficloud-nginx:<sha>`; anything else is removed and the command fails. |
 | `release <40-hex sha>` | Generates secrets on first run, starts MySQL/Redis, runs `bin/paxoficloud migrate`, starts the new version and waits for `/health/ready`. On success records `current`/`previous` and prunes older images; on failure restarts the previous version and exits 1. |
 | `mail-secrets` | Reads `NAME=value` lines from stdin (max 8 KiB). Accepts only `POSTMARK_SERVER_TOKEN`, `RESEND_API_KEY`, `SMTP_HOST`, `SMTP_PORT` (465/587), `SMTP_USERNAME`, `SMTP_PASSWORD` (stored base64-encoded as `SMTP_PASSWORD_B64`), `EMAIL_PROVIDER` and `EMAIL_RECIPIENT_ALLOWLIST`, each format-checked; any bad line rejects the whole update. Writes `mail-providers.env` atomically (0600) and logs names only. |
-| `status` | Prints the current and previous release SHAs. |
+| `status` | Prints the current and previous release SHAs, the containers, and a mail summary: worker enabled or disabled, `EMAIL_PROVIDER`, the number of allow-list entries, the names (never values) of the mail settings that are set, and `mail:status` (outbox counts plus the latest delivery problems with their fixed failure reason, e.g. `suppressed-not-allowlisted`). The deploy workflow runs it after every deploy. |
 
 Every run is appended to `/var/log/paxoficloud/deploy.log` (time, verb, SHA,
 result). Migrations are forward-only (MIGRATIONS.md), so rolling back code never
