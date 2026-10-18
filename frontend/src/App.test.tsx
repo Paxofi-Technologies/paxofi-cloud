@@ -31,8 +31,9 @@ describe('App routing and session (§6.11)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/sign-in'));
-    const [path, init] = fetchImpl.mock.calls[1] as [string, RequestInit];
-    expect(path).toBe('/api/v1/auth/sign-out');
+    const signOutCall = (fetchImpl.mock.calls as [string, RequestInit][]).find(([path]) => path === '/api/v1/auth/sign-out');
+    expect(signOutCall).toBeDefined();
+    const [, init] = signOutCall as [string, RequestInit];
     expect((init.headers as Record<string, string>)['X-CSRF-Token']).toBe('csrf-123');
   });
 
@@ -56,5 +57,32 @@ describe('App routing and session (§6.11)', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'correct horse battery');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/'));
+  });
+
+  it('shows the two-step banner only when it is off, and the button opens Security', async () => {
+    const fetchImpl = vi.fn((path: string) =>
+      Promise.resolve(
+        path === '/api/v1/auth/session'
+          ? json(200, SESSION)
+          : path === '/api/v1/account/mfa'
+            ? json(200, { totp_enabled: false, recovery_codes_left: 0 })
+            : json(404, {}),
+      ),
+    ) as unknown as typeof fetch;
+    render(<App path="/" fetchImpl={fetchImpl} navigate={vi.fn()} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on two-step verification' }));
+    expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
+  });
+
+  it('hides the banner when two-step verification is already on', async () => {
+    const fetchImpl = vi.fn((path: string) =>
+      Promise.resolve(path === '/api/v1/auth/session' ? json(200, SESSION) : json(200, { totp_enabled: true, recovery_codes_left: 10 })),
+    ) as unknown as typeof fetch;
+    render(<App path="/" fetchImpl={fetchImpl} navigate={vi.fn()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Welcome back, Ada' })).toBeInTheDocument();
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledWith('/api/v1/account/mfa', expect.anything()));
+    expect(screen.queryByText('Protect your account')).not.toBeInTheDocument();
   });
 });
