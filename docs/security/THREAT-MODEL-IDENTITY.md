@@ -310,6 +310,18 @@ Written before the code; it fixes how D-4, D-5 and T-13…T-17 are met in this P
 - **Limits and failure (T-54).** At most 10 sign-in alerts per identity per hour. Alerts are queued in the sealed outbox after the action, best effort: a failure to queue is logged (`notify.enqueue_failed`) and never blocks sign-in. The alert is not a substitute for the audit log, which records every event regardless.
 - **Content (T-53).** Only the first name, the device label, the location, the IP and the time are inserted, each validated against a strict pattern and HTML-escaped; the only link is `APP_URL/security`. Staging only delivers to the allow-list (E-10).
 
+### 6.16 Staff RBAC implementation notes (Sprint 1, PRs "staff RBAC core" and "staff sign-in")
+
+Scope (CEO decision 18 Oct 2026, following the SRS): staff roles and permissions for the admin API (ACC-005) and WebAuthn-only staff sign-in (IAM-008). Customer team members (ACC-008) remain Phase 2. The admin console screens arrive in Sprint 9; this sprint builds the API foundation they will use.
+
+- **Permission catalogue (T-32).** Every capability in SRS §2.2 is one named permission (for example `billing.refund.issue`, `billing.refund.approve`, `service.suspend.abuse`). Roles are fixed sets of permissions written in code, reviewed like code, and checked by a test that is a literal transcription of the SRS §2.2 table, so code and specification cannot drift silently. There is no wildcard and no "admin" permission; Super Admin is simply the role that holds every permission.
+- **Deny by default.** `StaffAuthorizer` answers only "does this staff member hold this permission now"; anything not granted is refused, the refusal is audited (`staff.permission_denied`, with the permission) and the API returns 403. Roles are loaded from the database on every request, never cached in the session, so revoking a role takes effect at the next request.
+- **Role grants and two-person rule (SEC-017, T-33).** Staff and their role assignments live in `staff_members` and `staff_role_assignments`. Granting a role needs `staff.manage`. A Super Admin grant counts only after a *different* Security Admin or Super Admin approves it (enforced by a database CHECK and by the application). Every grant, approval and revocation is audited.
+- **Suspensions carry their reason.** The SRS gives Billing, Provisioning and Abuse each their own right to suspend; they are three permissions (`service.suspend.billing`, `.operations`, `.abuse`), so a Billing Officer cannot suspend for abuse and the audit trail shows on whose authority a service was suspended.
+- **Four-eyes refunds (BR-17).** `billing.refund.approve` is separate from `billing.refund.issue`; the billing module (Sprint 3) will additionally refuse an approval by the person who issued the refund.
+- **Separation from customers (T-31, D-6).** Staff identities are a separate table from customer identities; a staff session (next PR) uses `__Host-pc_staff`, its own Redis prefix and the admin origin, and is never accepted on customer routes or vice versa.
+- **Staff sign-in (next PR, T-29, T-30, D-10, D-11).** Invitation-only enrolment (single-use 24 h link straight to WebAuthn registration, at least two authenticators), WebAuthn assertions verified by the ADR-002 library with user verification required, ES256/EdDSA only, sign-count regression rejected and alerted, no password and no fallback. The first Security Admin is created on the host with an operator CLI command; every later staff member is invited from the admin API.
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -323,7 +335,7 @@ Written before the code; it fixes how D-4, D-5 and T-13…T-17 are met in this P
 
 | ID | Item | Decision needed by |
 |---|---|---|
-| O-1 | ADR: WebAuthn library selection (D-10). Criteria: maintained, minimal dependencies, no framework, supports ES256 + EdDSA, test suite, licence compatible | Sprint 0 end (23 Oct 2026) |
+| O-1 | **Resolved 2026-10-18 (CEO):** `web-auth/webauthn-lib` 5.x behind our own contract; see `docs/architecture/ADR-002-WEBAUTHN-LIBRARY.md` | Sprint 0 end (23 Oct 2026) |
 | O-2 | ADR: where the daily audit-chain anchor is stored (object storage with object lock, or a separate append-only service) | Sprint 1 end |
 | O-3 | Choice of breached-password source (hosted range API vs. downloaded offline corpus) — privacy and availability trade-off | Sprint 1 planning |
 | O-4 | **Resolved 2026-10-14:** Postmark primary, Resend secondary; see THREAT-MODEL-TRANSACTIONAL-EMAIL.md | Sprint 1 planning |
@@ -340,4 +352,5 @@ Written before the code; it fixes how D-4, D-5 and T-13…T-17 are met in this P
 | 2026-10-18 | §6.12 Turnstile implementation notes (T-02, T-06, T-07, T-47, T-49; fail closed; challenge counter made address-independent), written before the Turnstile code | Claude (security engineering) |
 | 2026-10-18 | §6.13 TOTP two-step verification notes (D-4, D-5, T-13…T-17), written before the MFA code | Claude (security engineering) |
 | 2026-10-18 | §6.14 audit log notes, T-50 forged context, T-51 personal data in the audit trail, T-52 activity isolation; written before the audit code | Claude (security engineering) |
+| 2026-10-18 | §6.16 staff RBAC notes (ACC-005 permission catalogue from SRS §2.2, deny by default, two-person Super Admin grants, reason-scoped suspensions); O-1 resolved by ADR-002; written before the staff RBAC code | Claude (security engineering) |
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |

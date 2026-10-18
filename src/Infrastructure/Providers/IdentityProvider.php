@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\HumanVerification;
 use PaxofiCloud\Application\Contracts\MfaStore;
 use PaxofiCloud\Application\Contracts\SignInStore;
+use PaxofiCloud\Application\Contracts\StaffDirectory;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 use PaxofiCloud\Application\Identity\Mfa\CompleteMfaSignIn;
 use PaxofiCloud\Application\Identity\Mfa\MfaCrypto;
@@ -22,6 +23,8 @@ use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
+use PaxofiCloud\Application\Staff\StaffAuthorizer;
+use PaxofiCloud\Application\Staff\StaffRoles;
 use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Http\Controllers\MfaController;
 use PaxofiCloud\Infrastructure\Audit\MysqlAuditLog;
@@ -38,6 +41,7 @@ use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
 use PaxofiCloud\Infrastructure\Session\RedisMfaChallengeStore;
 use PaxofiCloud\Infrastructure\Session\RedisSessionStore;
 use PaxofiCloud\Infrastructure\Session\RedisSignInThrottle;
+use PaxofiCloud\Infrastructure\Staff\MysqlStaffDirectory;
 use PaxofiCloud\Infrastructure\Time\SystemClock;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
@@ -193,6 +197,23 @@ final class IdentityProvider implements Provider
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
             Resolve::get($c, Logger::class),
+            Resolve::get($c, AuditTrail::class),
+        ));
+
+        // Staff roles (ACC-005, §6.16); the admin API that uses them arrives with staff sign-in.
+        $container->singleton(StaffDirectory::class, static fn (Container $c): StaffDirectory => new MysqlStaffDirectory(
+            Resolve::get($c, Connection::class),
+            Resolve::get($c, Repository::class),
+        ));
+        $container->singleton(StaffAuthorizer::class, static fn (Container $c): StaffAuthorizer => new StaffAuthorizer(
+            Resolve::get($c, StaffDirectory::class),
+            Resolve::get($c, AuditTrail::class),
+        ));
+        $container->singleton(StaffRoles::class, static fn (Container $c): StaffRoles => new StaffRoles(
+            Resolve::get($c, StaffDirectory::class),
+            Resolve::get($c, StaffAuthorizer::class),
+            Resolve::get($c, TransactionManager::class),
+            new SystemClock(),
             Resolve::get($c, AuditTrail::class),
         ));
 
