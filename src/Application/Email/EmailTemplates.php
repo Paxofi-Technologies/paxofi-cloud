@@ -30,6 +30,7 @@ final readonly class EmailTemplates
     public const string SIGN_IN_ATTEMPTS_ALERT = 'sign-in-attempts-alert';
     public const string SECURITY_CHANGE = 'security-change';
     public const string STAFF_INVITATION = 'staff-invitation';
+    public const string STAFF_ACTIVATED = 'staff-activated';
 
     /** Changes the security-change email can report, with how they read. */
     public const array SECURITY_CHANGES = [
@@ -54,7 +55,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED];
     }
 
     /** @param array<string, string> $parameters */
@@ -66,6 +67,7 @@ final readonly class EmailTemplates
             self::VERIFY_EMAIL => $this->verifyEmail($to, $name, self::token($parameters), $idempotencyKey),
             self::ACCOUNT_EXISTS => $this->accountExists($to, $name, $idempotencyKey),
             self::STAFF_INVITATION => $this->staffInvitation($to, $name, self::token($parameters), $idempotencyKey),
+            self::STAFF_ACTIVATED => $this->staffActivated($to, $name, self::personName($parameters['staff_name'] ?? ''), $idempotencyKey),
             self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
@@ -122,6 +124,44 @@ final readonly class EmailTemplates
             $link,
             'This link expires in 24 hours. There is no password: you will sign in with your passkeys only. If you did not expect this invitation, ignore this email and tell the security team.',
         ), self::STAFF_INVITATION, $key);
+    }
+
+    /** §6.18: tells the other staff managers that someone finished enrolment, so a stolen invitation is noticed. */
+    private function staffActivated(EmailAddress $to, string $name, string $staffName, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff alerts cannot be sent.');
+        }
+        $link = $this->adminUrl . '/staff';
+        $text = <<<TXT
+            Hi {$name},
+
+            {$staffName} finished setting up passkeys and can now sign in to the {$this->productName} admin console.
+
+            If you did not expect this, disable this staff member now:
+
+            {$link}
+
+            {$this->productName}
+            TXT;
+
+        return new EmailMessage($to, 'A new staff member can now sign in', $text, $this->html(
+            'A new staff member can now sign in',
+            sprintf('Hi %s,', self::e($name)),
+            sprintf('%s finished setting up passkeys and can now sign in to the %s admin console.', self::e($staffName), self::e($this->productName)),
+            'Review staff',
+            $link,
+            'If you did not expect this, disable this staff member now.',
+        ), self::STAFF_ACTIVATED, $key);
+    }
+
+    /** A full name reduced to letters, spaces, apostrophes and hyphens (it came from an invitation form). */
+    private static function personName(string $raw): string
+    {
+        $clean = trim((string) preg_replace("/[^\\p{L}' -]+/u", '', $raw));
+        $clean = trim((string) preg_replace('/\\s+/u', ' ', $clean));
+
+        return $clean === '' || mb_strlen($clean) > 100 ? 'A new staff member' : $clean;
     }
 
     private static function url(string $url, string $name): string

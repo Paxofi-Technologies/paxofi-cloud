@@ -123,6 +123,65 @@ final readonly class MysqlStaffDirectory implements StaffDirectory
         return count($holders);
     }
 
+    public function members(): array
+    {
+        $rows = $this->repository->fetchAll(
+            'SELECT m.id, m.email, m.full_name, m.status,
+                    (SELECT GROUP_CONCAT(a.role ORDER BY a.role SEPARATOR \',\') FROM staff_role_assignments a
+                     WHERE a.staff_id = m.id AND a.status = \'active\') AS roles
+             FROM staff_members m ORDER BY m.created_at, m.id',
+        );
+
+        return array_map(static function (array $row): array {
+            $roles = $row['roles'] ?? null;
+
+            return [
+                'id' => Row::string($row, 'id'),
+                'email' => Row::string($row, 'email'),
+                'full_name' => Row::string($row, 'full_name'),
+                'status' => Row::string($row, 'status'),
+                'roles' => is_string($roles) && $roles !== '' ? array_map(static fn (string $r): StaffRole => StaffRole::from($r), explode(',', $roles)) : [],
+            ];
+        }, $rows);
+    }
+
+    public function pendingGrants(): array
+    {
+        $rows = $this->repository->fetchAll(
+            'SELECT id, staff_id, role, granted_by FROM staff_role_assignments WHERE status = \'pending\' ORDER BY requested_at, id',
+        );
+
+        return array_map(static function (array $row): array {
+            $by = $row['granted_by'] ?? null;
+
+            return [
+                'grant_id' => Row::string($row, 'id'),
+                'staff_id' => Row::string($row, 'staff_id'),
+                'role' => StaffRole::from(Row::string($row, 'role')),
+                'granted_by' => is_string($by) ? $by : null,
+            ];
+        }, $rows);
+    }
+
+    public function activeHoldersOf(array $roles): array
+    {
+        $holders = [];
+        foreach ($roles as $role) {
+            $rows = $this->repository->fetchAll(
+                'SELECT m.id, m.email, m.full_name FROM staff_role_assignments a
+                 JOIN staff_members m ON m.id = a.staff_id AND m.status = \'active\'
+                 WHERE a.status = \'active\' AND a.role = :role',
+                ['role' => $role->value],
+            );
+            foreach ($rows as $row) {
+                $id = Row::string($row, 'id');
+                $holders[$id] = ['id' => $id, 'email' => Row::string($row, 'email'), 'full_name' => Row::string($row, 'full_name')];
+            }
+        }
+
+        return array_values($holders);
+    }
+
     private static function time(\DateTimeImmutable $now): string
     {
         return $now->setTimezone(new \DateTimeZone('UTC'))->format(self::TIME);

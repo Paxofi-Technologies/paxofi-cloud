@@ -25,6 +25,12 @@ use PaxofiCloud\Http\Controllers\SessionController;
 use PaxofiCloud\Http\Controllers\SignInController;
 use PaxofiCloud\Http\Controllers\SignOutController;
 use PaxofiCloud\Http\Controllers\VerifyEmailController;
+use PaxofiCloud\Http\Admin\AdminGate;
+use PaxofiCloud\Http\Admin\AdminRoutes;
+use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
+use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
+use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
+use PaxofiCloud\Http\Middleware\AdminApiGuardMiddleware;
 use PaxofiCloud\Http\Middleware\ApiWriteGuardMiddleware;
 use PaxofiCloud\Http\Middleware\BodySizeLimitMiddleware;
 use PaxofiCloud\Http\Middleware\ErrorBoundaryMiddleware;
@@ -62,6 +68,12 @@ final class HttpProvider implements Provider
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('POST', '/api/v1/auth/sign-out', SignOutController::class, $dispatcher);
 
+            // The admin API: built only from AdminRoutes, every route behind the gate (§6.18).
+            $gate = static fn (): AdminGate => Resolve::get($c, AdminGate::class);
+            foreach (self::adminRoutes($c) as $route) {
+                $router->add($route->method, $route->path, static fn (HttpRequest $r): HttpResponse => $gate()->handle($route, $r));
+            }
+
             return $router;
         });
 
@@ -75,6 +87,7 @@ final class HttpProvider implements Provider
                 new ErrorBoundaryMiddleware($logger, $configuration->get('app.debug', false) === true),
                 new BodySizeLimitMiddleware(),
                 new ApiWriteGuardMiddleware(self::appUrl($configuration)),
+                new AdminApiGuardMiddleware(self::adminUrl($configuration)),
                 new RouteFallbackMiddleware(),
             );
         });
@@ -82,6 +95,23 @@ final class HttpProvider implements Provider
         $container->singleton(ProblemDetailsExceptionHandler::class, static function (Container $c): ProblemDetailsExceptionHandler {
             return new ProblemDetailsExceptionHandler(Resolve::get($c, Logger::class));
         });
+    }
+
+    /** @return list<\PaxofiCloud\Http\Admin\AdminRoute> */
+    public static function adminRoutes(Container $c): array
+    {
+        return AdminRoutes::all(
+            static fn (): AdminAuthController => Resolve::get($c, AdminAuthController::class),
+            static fn (): AdminEnrolmentController => Resolve::get($c, AdminEnrolmentController::class),
+            static fn (): AdminStaffController => Resolve::get($c, AdminStaffController::class),
+        );
+    }
+
+    private static function adminUrl(Configuration $configuration): string
+    {
+        $url = $configuration->get('app.admin_url');
+
+        return is_string($url) ? $url : '';
     }
 
     private static function appUrl(Configuration $configuration): string

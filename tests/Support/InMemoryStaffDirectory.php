@@ -17,6 +17,9 @@ final class InMemoryStaffDirectory implements StaffDirectory, TransactionManager
     /** @var array<string, array{staff_id: string, role: StaffRole, status: string, granted_by: ?string, approved_by: ?string}> */
     public array $grants = [];
 
+    /** @var array<string, array{email: string, full_name: string}> */
+    public array $profiles = [];
+
     public function add(string $staffId, string $status = 'active', StaffRole ...$roles): void
     {
         $this->members[$staffId] = match ($status) {
@@ -123,5 +126,46 @@ final class InMemoryStaffDirectory implements StaffDirectory, TransactionManager
         }
 
         return null;
+    }
+
+    public function members(): array
+    {
+        $members = [];
+        foreach ($this->members as $id => $status) {
+            $members[] = [
+                'id' => $id,
+                'email' => $this->profiles[$id]['email'] ?? '',
+                'full_name' => $this->profiles[$id]['full_name'] ?? '',
+                'status' => $status,
+                'roles' => $this->activeRoles($id),
+            ];
+        }
+
+        return $members;
+    }
+
+    public function pendingGrants(): array
+    {
+        $pending = [];
+        foreach ($this->grants as $id => $grant) {
+            if ($grant['status'] === 'pending') {
+                $pending[] = ['grant_id' => $id, 'staff_id' => $grant['staff_id'], 'role' => $grant['role'], 'granted_by' => $grant['granted_by']];
+            }
+        }
+
+        return $pending;
+    }
+
+    public function activeHoldersOf(array $roles): array
+    {
+        $holders = [];
+        foreach ($this->grants as $grant) {
+            $id = $grant['staff_id'];
+            if ($grant['status'] === 'active' && in_array($grant['role'], $roles, true) && ($this->members[$id] ?? null) === 'active') {
+                $holders[$id] = ['id' => $id, 'email' => $this->profiles[$id]['email'] ?? '', 'full_name' => $this->profiles[$id]['full_name'] ?? ''];
+            }
+        }
+
+        return array_values($holders);
     }
 }

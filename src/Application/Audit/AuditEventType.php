@@ -40,6 +40,7 @@ final class AuditEventType
     public const string STAFF_SIGNED_IN = 'staff.signed_in';
     public const string STAFF_SIGN_IN_FAILED = 'staff.sign_in.failed';
     public const string STAFF_PASSKEY_CLONE_SUSPECTED = 'staff.passkey.clone_suspected';
+    public const string STAFF_SIGNED_OUT = 'staff.signed_out';
 
     private function __construct()
     {

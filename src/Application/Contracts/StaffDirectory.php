@@ -40,4 +40,26 @@ interface StaffDirectory
      * @param list<StaffRole> $roles
      */
     public function countActiveHoldersForUpdate(array $roles): int;
+
+    /**
+     * Every staff member with their active roles, for the admin console.
+     *
+     * @return list<array{id: string, email: string, full_name: string, status: string, roles: list<StaffRole>}>
+     */
+    public function members(): array;
+
+    /**
+     * Grants waiting for a second approver (SEC-017).
+     *
+     * @return list<array{grant_id: string, staff_id: string, role: StaffRole, granted_by: ?string}>
+     */
+    public function pendingGrants(): array;
+
+    /**
+     * Active staff managers, for security alerts.
+     *
+     * @param list<StaffRole> $roles
+     * @return list<array{id: string, email: string, full_name: string}>
+     */
+    public function activeHoldersOf(array $roles): array;
 }
