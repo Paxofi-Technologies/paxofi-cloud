@@ -45,7 +45,7 @@ final class MfaSettingsTest extends TestCase
             'phone' => '+2348012345678', 'password_hash' => $hasher->hash(self::PASSWORD), 'status' => 'active', 'terms' => '2026-10-01',
             'verified_at' => null, 'account_id' => 'acct-1',
         ];
-        $this->settings = new MfaSettings($this->mfa, $this->identities, $hasher, $this->limiter, $this->clock, MfaFixtures::crypto(), AuditFixtures::trail());
+        $this->settings = new MfaSettings($this->mfa, $this->identities, $hasher, $this->limiter, $this->clock, MfaFixtures::crypto(), AuditFixtures::trail(), AuditFixtures::alerts());
     }
 
     public function testSetupConfirmAndStatusRoundTrip(): void
@@ -200,7 +200,7 @@ final class MfaSettingsTest extends TestCase
 
     public function testWithoutKeysMfaIsUnavailableNotSkipped(): void
     {
-        $settings = new MfaSettings($this->mfa, $this->identities, new CountingPasswordHasher(), $this->limiter, $this->clock, null, AuditFixtures::trail());
+        $settings = new MfaSettings($this->mfa, $this->identities, new CountingPasswordHasher(), $this->limiter, $this->clock, null, AuditFixtures::trail(), AuditFixtures::alerts());
 
         $this->expectException(MfaUnavailable::class);
         $settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());

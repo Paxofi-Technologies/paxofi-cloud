@@ -21,6 +21,7 @@ use PaxofiCloud\Application\Identity\Registration\ResendVerification;
 use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
+use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
 use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Http\Controllers\MfaController;
 use PaxofiCloud\Infrastructure\Audit\MysqlAuditLog;
@@ -29,6 +30,7 @@ use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
 use PaxofiCloud\Infrastructure\Email\OutboxSealer;
 use PaxofiCloud\Infrastructure\Identity\Argon2idPasswordHasher;
 use PaxofiCloud\Infrastructure\Identity\MysqlIdentityStore;
+use PaxofiCloud\Infrastructure\Identity\MysqlKnownDevices;
 use PaxofiCloud\Infrastructure\Identity\MysqlMfaStore;
 use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
 use PaxofiCloud\Infrastructure\Secrets\KeyRing;
@@ -135,6 +137,7 @@ final class IdentityProvider implements Provider
                 Resolve::get($c, MfaSettings::class),
                 Resolve::get($c, CompleteMfaSignIn::class),
                 Resolve::get($c, AuditTrail::class),
+                Resolve::get($c, SignInAlerts::class),
             );
         });
 
@@ -151,6 +154,7 @@ final class IdentityProvider implements Provider
             new SystemClock(),
             self::mfaCrypto($c),
             Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, SignInAlerts::class),
         ));
 
         $container->singleton(CompleteMfaSignIn::class, static fn (Container $c): CompleteMfaSignIn => new CompleteMfaSignIn(
@@ -162,6 +166,7 @@ final class IdentityProvider implements Provider
             Resolve::get($c, Logger::class),
             self::mfaCrypto($c),
             Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, SignInAlerts::class),
         ));
 
         $container->singleton(MfaController::class, static fn (Container $c): MfaController => new MfaController(
@@ -179,6 +184,16 @@ final class IdentityProvider implements Provider
             Resolve::get($c, AuditLog::class),
             new SystemClock(),
             Resolve::get($c, Logger::class),
+        ));
+
+        $container->singleton(SignInAlerts::class, static fn (Container $c): SignInAlerts => new SignInAlerts(
+            new MysqlKnownDevices(Resolve::get($c, Connection::class)),
+            Resolve::get($c, SignInStore::class),
+            Resolve::get($c, EmailOutbox::class),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+            Resolve::get($c, Logger::class),
+            Resolve::get($c, AuditTrail::class),
         ));
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));

@@ -40,6 +40,14 @@ final readonly class ClientContext
         return self::from($ip, '', null, null, null, '');
     }
 
+    /** "Ikeja, Lagos, Nigeria"; '' when Cloudflare reported nothing. */
+    public function location(): string
+    {
+        $parts = array_filter([$this->city, $this->region === $this->city ? null : $this->region, $this->country === null ? null : Countries::name($this->country)]);
+
+        return implode(', ', $parts);
+    }
+
     public function device(): DeviceSummary
     {
         return DeviceSummary::fromUserAgent($this->userAgent);

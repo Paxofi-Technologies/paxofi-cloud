@@ -88,4 +88,58 @@ final class EmailTemplatesTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $templates->render($to, 'verify-email', ['token' => 'short"><a href=x>'], 'k');
     }
+
+    public function testSignInAlertsShowDeviceLocationIpAndNigerianTime(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com');
+        $parameters = ['name' => 'Ada', 'device' => 'Safari 17 on iOS 17.6 (mobile)', 'location' => 'Ikeja, Lagos, Nigeria', 'ip' => '203.0.113.9', 'time' => '2026-10-18T08:43:00Z'];
+
+        $normal = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::SIGN_IN_ALERT, $parameters, 'k1');
+        $new = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::NEW_DEVICE_ALERT, $parameters, 'k2');
+
+        self::assertSame('You signed in to PaxofiCloud', $normal->subject);
+        self::assertSame('New device signed in to your PaxofiCloud account', $new->subject);
+        foreach ([$normal->textBody, $normal->htmlBody, $new->textBody, $new->htmlBody] as $body) {
+            self::assertStringContainsString('Safari 17 on iOS 17.6 (mobile)', $body);
+            self::assertStringContainsString('Ikeja, Lagos, Nigeria (approximate)', $body);
+            self::assertStringContainsString('203.0.113.9', $body);
+            self::assertStringContainsString('18 Oct 2026, 09:43 WAT', $body);
+            self::assertStringContainsString('https://cloud.paxofi.com/security', $body);
+        }
+        self::assertStringContainsString('have not seen before', $new->textBody);
+    }
+
+    public function testAlertParametersThatDoNotMatchTheirPatternShowAsUnknown(): void
+    {
+        $message = (new EmailTemplates('https://cloud.paxofi.com'))->render(new EmailAddress('ada@example.ng'), EmailTemplates::NEW_DEVICE_ALERT, [
+            'name' => 'Ada',
+            'device' => '<a href="https://evil.example">Chrome</a>',
+            'location' => 'evil.example',
+            'ip' => '999.1.1.1',
+            'time' => 'yesterday',
+        ], 'k');
+
+        self::assertStringNotContainsString('evil.example', $message->textBody . $message->htmlBody, 'T-53');
+        self::assertSame(4, substr_count($message->textBody, ': Unknown'));
+        self::assertSame(1, preg_match_all('/href="/', $message->htmlBody), 'one link only: the Security page');
+    }
+
+    public function testSecurityChangeAndAttemptsAlerts(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com');
+        $base = ['name' => 'Ada', 'device' => 'Chrome 129 on Windows (desktop)', 'location' => '', 'ip' => '198.51.100.7', 'time' => '2026-10-18T23:30:00Z'];
+
+        $change = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::SECURITY_CHANGE, $base + ['change' => 'mfa_disabled'], 'k1');
+        self::assertStringContainsString('Two-step verification was turned off.', $change->textBody);
+        self::assertStringContainsString('19 Oct 2026, 00:30 WAT', $change->textBody, 'shown in Nigerian time, across midnight');
+        self::assertStringContainsString('Location: Unknown', $change->textBody);
+        $city = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::SIGN_IN_ALERT, ['location' => "St. John's, Newfoundland, Canada"] + $base, 'k4');
+        self::assertStringContainsString("St. John's, Newfoundland, Canada (approximate)", $city->textBody);
+
+        $attempts = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::SIGN_IN_ATTEMPTS_ALERT, $base + ['attempts' => '11'], 'k2');
+        self::assertStringContainsString('There were 11 unsuccessful attempts', $attempts->textBody);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::SECURITY_CHANGE, $base + ['change' => 'password_changed_by_attacker'], 'k3');
+    }
 }

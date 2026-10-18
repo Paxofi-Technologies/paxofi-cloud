@@ -16,6 +16,7 @@ use PaxofiCloud\Application\Contracts\SignInStore;
 use PaxofiCloud\Application\Identity\Session\IssuedSession;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\AccountUnavailable;
+use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
 
 /**
  * The second sign-in step (SRS IAM-007; threat model T-13, T-14, T-18, §6.13):
@@ -38,6 +39,7 @@ final readonly class CompleteMfaSignIn
         private Logger $logger,
         private ?MfaCrypto $crypto,
         private AuditTrail $audit,
+        private SignInAlerts $alerts,
     ) {
     }
 
@@ -54,7 +56,7 @@ final readonly class CompleteMfaSignIn
      * @param array<array-key, mixed> $data `{code}` or `{recovery_code}`
      * @throws MfaTicketInvalid|MfaThrottled|InvalidMfaInput|MfaUnavailable|AccountUnavailable
      */
-    public function complete(#[\SensitiveParameter] ?string $ticket, #[\SensitiveParameter] array $data, ClientContext $client): IssuedSession
+    public function complete(#[\SensitiveParameter] ?string $ticket, #[\SensitiveParameter] array $data, ClientContext $client, #[\SensitiveParameter] ?string $deviceToken = null): IssuedSession
     {
         $useRecovery = !array_key_exists('code', $data);
         $field = $useRecovery ? 'recovery_code' : 'code';
@@ -102,6 +104,7 @@ final readonly class CompleteMfaSignIn
         $issued = $this->sessions->issue($identityId, $pending['account_id'], $client);
         $this->audit->record(AuditEventType::MFA_SUCCEEDED, AuditEvent::SUCCESS, $client, $identityId, $pending['account_id'], ['method' => $method]);
         $this->audit->record(AuditEventType::SIGN_IN_SUCCEEDED, AuditEvent::SUCCESS, $client, $identityId, $pending['account_id'], ['method' => 'password_' . $method]);
+        $this->alerts->signedIn($identityId, $pending['account_id'], $client, $deviceToken);
 
         return $issued;
     }

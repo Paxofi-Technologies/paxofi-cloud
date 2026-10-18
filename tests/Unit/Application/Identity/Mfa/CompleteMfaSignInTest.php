@@ -56,7 +56,7 @@ final class CompleteMfaSignInTest extends TestCase
         $this->mfa->totp['id-1'] = ['secret_envelope' => $crypto->secrets->encrypt(self::SECRET, MfaCrypto::associatedData('id-1')), 'confirmed' => true, 'last_used_step' => null];
         $this->recoveryCodes = RecoveryCodes::generate();
         $this->mfa->replaceRecoveryCodes('id-1', array_map(static fn (string $c): string => (string) $crypto->recoveryCodes->hash($c), $this->recoveryCodes));
-        $this->complete = new CompleteMfaSignIn($this->challenges, $this->mfa, $this->identities, new Sessions($this->sessions, $this->clock), $this->clock, $this->logger, $crypto, AuditFixtures::trail());
+        $this->complete = new CompleteMfaSignIn($this->challenges, $this->mfa, $this->identities, new Sessions($this->sessions, $this->clock), $this->clock, $this->logger, $crypto, AuditFixtures::trail(), AuditFixtures::alerts());
     }
 
     public function testATicketAndTheCurrentCodeGiveASessionAndEndTheTicket(): void

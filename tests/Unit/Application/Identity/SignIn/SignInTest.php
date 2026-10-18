@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\SignIn;
 
+use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
+use PaxofiCloud\Application\Email\EmailTemplates;
+use PaxofiCloud\Tests\Support\RecordingOutbox;
 use PaxofiCloud\Application\Audit\AuditEvent;
 use PaxofiCloud\Application\Audit\AuditEventType;
 use PaxofiCloud\Application\Audit\ClientContext;
@@ -58,6 +61,7 @@ final class SignInTest extends TestCase
     private SignIn $signIn;
 
     private InMemoryAuditLog $audit;
+    private RecordingOutbox $alertOutbox;
 
     protected function setUp(): void
     {
@@ -90,9 +94,10 @@ final class SignInTest extends TestCase
             $sessions,
             $this->logger,
             new ChallengeGate($this->human),
-            new MfaSettings($this->mfaStore, $this->store, $this->hasher, new ScriptedRateLimiter(), $clock, MfaFixtures::crypto(), AuditFixtures::trail()),
-            new CompleteMfaSignIn(new InMemoryMfaChallengeStore(), $this->mfaStore, $this->store, $sessions, $clock, $this->logger, MfaFixtures::crypto(), AuditFixtures::trail()),
+            new MfaSettings($this->mfaStore, $this->store, $this->hasher, new ScriptedRateLimiter(), $clock, MfaFixtures::crypto(), AuditFixtures::trail(), AuditFixtures::alerts()),
+            new CompleteMfaSignIn(new InMemoryMfaChallengeStore(), $this->mfaStore, $this->store, $sessions, $clock, $this->logger, MfaFixtures::crypto(), AuditFixtures::trail(), AuditFixtures::alerts()),
             AuditFixtures::trail($this->audit = new InMemoryAuditLog()),
+            AuditFixtures::alerts($this->store, $this->alertOutbox = new RecordingOutbox()),
         );
         $this->addIdentity('active');
     }
@@ -423,6 +428,48 @@ final class SignInTest extends TestCase
         $this->audit->fail = true;
 
         self::assertSame('id-1', $this->issued(self::form(), self::IP, '', null)->session->identityId);
+    }
+
+    public function testANewDeviceGetsTheNewDeviceEmailAndAKnownOneTheNormalOne(): void
+    {
+        $device = str_repeat('d', 43);
+        $client = AuditFixtures::client();
+        $this->signIn->signIn(self::form(), $client, null, $device);
+        $this->signIn->signIn(self::form(), $client, null, $device);
+        $this->signIn->signIn(self::form(), $client, null, null);
+
+        self::assertSame(
+            [EmailTemplates::NEW_DEVICE_ALERT, EmailTemplates::SIGN_IN_ALERT, EmailTemplates::NEW_DEVICE_ALERT],
+            array_column($this->alertOutbox->queued, 'template'),
+            'one email per sign-in; no cookie always counts as new',
+        );
+        self::assertSame([
+            'name' => 'Ada Okafor',
+            'device' => 'Chrome 129 on Windows (desktop)',
+            'location' => 'Lagos, Nigeria',
+            'ip' => '198.51.100.7',
+            'time' => '2026-10-26T09:00:00Z',
+        ], $this->alertOutbox->queued[0]['parameters']);
+        self::assertSame('ada@example.ng', $this->alertOutbox->queued[0]['to']);
+    }
+
+    public function testAlertsAreCappedPerHour(): void
+    {
+        for ($i = 0; $i < SignInAlerts::SIGN_IN_ALERTS_PER_HOUR + 3; $i++) {
+            $this->signIn->signIn(self::form(), AuditFixtures::client(), null, str_repeat('d', 43));
+        }
+
+        self::assertCount(SignInAlerts::SIGN_IN_ALERTS_PER_HOUR, $this->alertOutbox->queued, 'T-54');
+    }
+
+    public function testFailedPasswordsSendNoSignInEmail(): void
+    {
+        try {
+            $this->signIn->signIn(self::form(password: 'wrong passphrase'), AuditFixtures::client(), null, null);
+        } catch (InvalidCredentials) {
+        }
+
+        self::assertSame([], $this->alertOutbox->queued);
     }
 
     /** @param array<array-key, mixed> $form */

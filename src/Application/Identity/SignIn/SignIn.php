@@ -55,12 +55,14 @@ final readonly class SignIn
         private MfaSettings $mfa,
         private CompleteMfaSignIn $mfaSignIn,
         private AuditTrail $audit,
+        private SignInAlerts $alerts,
     ) {
     }
 
     /**
      * @param array<array-key, mixed> $data the decoded request body
      * @param string|null $previousSessionId the session cookie sent with the request, if any
+     * @param string|null $deviceToken the browser's device cookie (§6.15); it only picks which alert email is sent
      * @throws InvalidSignIn
      * @throws SignInThrottled
      * @throws ChallengeRequired
@@ -73,6 +75,7 @@ final readonly class SignIn
         #[\SensitiveParameter] array $data,
         ClientContext $client,
         #[\SensitiveParameter] ?string $previousSessionId,
+        #[\SensitiveParameter] ?string $deviceToken = null,
     ): IssuedSession|MfaPending {
         $input = SignInInput::fromArray($data);
         $lookup = $input->email->hash();
@@ -100,9 +103,10 @@ final readonly class SignIn
             // §6.14: unknown addresses are recorded without an identity (and without the address).
             $this->audit->record(AuditEventType::SIGN_IN_FAILED, AuditEvent::FAILURE, $client, $identity['id'] ?? null, $identity['account_id'] ?? null, ['reason' => $identity === null ? 'unknown_account' : 'wrong_password']);
             if ($identity !== null && $accountFailures === self::ACCOUNT_ALERT_THRESHOLD + 1) {
-                // T-07 counter (b): challenged from now on (§6.12); recorded once per window, owner email follows with notifications.
+                // T-07 counter (b): challenged from now on (§6.12); recorded and emailed once per window (§6.15).
                 $this->logger->warning('auth.sign_in.account_failures_high', ['identity_id' => $identity['id']]);
                 $this->audit->record(AuditEventType::SIGN_IN_MANY_FAILURES, AuditEvent::FAILURE, $client, $identity['id'], $identity['account_id'], ['failures' => $accountFailures]);
+                $this->alerts->manyFailedSignIns($identity['id'], $client, $accountFailures);
             }
 
             throw new InvalidCredentials();
@@ -135,6 +139,7 @@ final readonly class SignIn
 
         $issued = $this->sessions->issue($identity['id'], $identity['account_id'], $client);
         $this->audit->record(AuditEventType::SIGN_IN_SUCCEEDED, AuditEvent::SUCCESS, $client, $identity['id'], $identity['account_id'], ['method' => 'password']);
+        $this->alerts->signedIn($identity['id'], $identity['account_id'], $client, $deviceToken);
 
         return $issued;
     }

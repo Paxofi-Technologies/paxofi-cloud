@@ -14,6 +14,7 @@ use PaxofiCloud\Application\Identity\Mfa\MfaThrottled;
 use PaxofiCloud\Application\Identity\Mfa\MfaTicketInvalid;
 use PaxofiCloud\Application\Identity\Mfa\MfaUnavailable;
 use PaxofiCloud\Application\Identity\SignIn\AccountUnavailable;
+use PaxofiCloud\Http\DeviceCookie;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\MfaCookie;
 use PaxofiCloud\Http\ProblemDetails;
@@ -40,8 +41,9 @@ final readonly class SignInMfaController implements Controller
 
         $id = RequestId::of($request);
         $expired = ['set-cookie' => MfaCookie::clear()];
+        $device = DeviceCookie::readOrCreate($request);
         try {
-            $issued = $this->complete->complete(MfaCookie::read($request), $data, RequestClient::of($request));
+            $issued = $this->complete->complete(MfaCookie::read($request), $data, RequestClient::of($request), $device);
         } catch (InvalidMfaInput $e) {
             return ProblemDetails::response(422, 'validation_failed', $id, errors: $e->errors);
         } catch (MfaTicketInvalid) {
@@ -56,7 +58,7 @@ final readonly class SignInMfaController implements Controller
 
         return new Response(
             200,
-            ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => [MfaCookie::clear(), SessionCookie::issue($issued->sessionId)]],
+            ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => [MfaCookie::clear(), SessionCookie::issue($issued->sessionId), DeviceCookie::issue($device)]],
             json_encode(['status' => 'signed_in', 'csrf_token' => $issued->csrfToken], JSON_THROW_ON_ERROR),
         );
     }
