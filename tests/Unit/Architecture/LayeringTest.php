@@ -56,6 +56,26 @@ final class LayeringTest extends TestCase
         self::assertSame([], $violations, 'Application may use Paxofi\\Core\\Contracts only (ADR-001).');
     }
 
+    /** ADR-002: the WebAuthn library and its dependencies are used only behind our own contract, in src/Integration. */
+    public function testWebAuthnLibraryIsConfinedToTheIntegrationLayer(): void
+    {
+        $violations = [];
+        foreach ($this->phpFiles('src') as $file) {
+            if (str_contains($file, '/src/Integration/')) {
+                continue;
+            }
+            foreach (self::referencedNames((string) file_get_contents($file)) as $name) {
+                foreach (['Webauthn\\', 'Cose\\', 'CBOR\\', 'Symfony\\'] as $prefix) {
+                    if (str_starts_with($name, $prefix)) {
+                        $violations[] = $this->relative($file) . ' -> ' . $name;
+                    }
+                }
+            }
+        }
+
+        self::assertSame([], $violations, 'web-auth/webauthn-lib may only be used in src/Integration (ADR-002).');
+    }
+
     /** @return iterable<string, array{string, list<string>}> */
     public static function samples(): iterable
     {

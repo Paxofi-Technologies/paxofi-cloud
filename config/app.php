@@ -11,5 +11,7 @@ return static fn (Environment $env): array => [
     // exception messages when this is on.
     'debug' => $env->isDevelopment() && $env->boolean('APP_DEBUG', false),
     'url' => $env->get('APP_URL', 'http://127.0.0.1:8080'),
+    // The staff admin origin (WebAuthn relying party, §6.17). Empty = staff sign-in off.
+    'admin_url' => $env->get('ADMIN_URL', ''),
     'max_body_bytes' => $env->integer('APP_MAX_BODY_BYTES', 1_048_576),
 ];

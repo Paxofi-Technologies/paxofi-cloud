@@ -29,6 +29,7 @@ final readonly class EmailTemplates
     public const string NEW_DEVICE_ALERT = 'new-device-alert';
     public const string SIGN_IN_ATTEMPTS_ALERT = 'sign-in-attempts-alert';
     public const string SECURITY_CHANGE = 'security-change';
+    public const string STAFF_INVITATION = 'staff-invitation';
 
     /** Changes the security-change email can report, with how they read. */
     public const array SECURITY_CHANGES = [
@@ -41,22 +42,19 @@ final readonly class EmailTemplates
 
     private string $appUrl;
 
-    public function __construct(string $appUrl, private string $productName = 'PaxofiCloud')
+    /** Staff invitations link to the admin origin (§6.17); null when the admin console is not configured. */
+    private ?string $adminUrl;
+
+    public function __construct(string $appUrl, private string $productName = 'PaxofiCloud', ?string $adminUrl = null)
     {
-        $appUrl = rtrim($appUrl, '/');
-        $parts = parse_url($appUrl);
-        $local = is_array($parts) && ($parts['scheme'] ?? '') === 'http' && in_array($parts['host'] ?? '', ['127.0.0.1', 'localhost'], true);
-        if (!is_array($parts) || (($parts['scheme'] ?? '') !== 'https' && !$local) || !isset($parts['host'])
-            || isset($parts['user']) || isset($parts['query']) || isset($parts['fragment'])) {
-            throw new \InvalidArgumentException('APP_URL must be an https URL (http only for localhost).');
-        }
-        $this->appUrl = $appUrl;
+        $this->appUrl = self::url($appUrl, 'APP_URL');
+        $this->adminUrl = $adminUrl === null || $adminUrl === '' ? null : self::url($adminUrl, 'ADMIN_URL');
     }
 
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION];
     }
 
     /** @param array<string, string> $parameters */
@@ -67,6 +65,7 @@ final readonly class EmailTemplates
         return match ($template) {
             self::VERIFY_EMAIL => $this->verifyEmail($to, $name, self::token($parameters), $idempotencyKey),
             self::ACCOUNT_EXISTS => $this->accountExists($to, $name, $idempotencyKey),
+            self::STAFF_INVITATION => $this->staffInvitation($to, $name, self::token($parameters), $idempotencyKey),
             self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
@@ -95,6 +94,47 @@ final readonly class EmailTemplates
             $link,
             'This link works once and expires in 24 hours. If you did not create an account, ignore this email.',
         ), self::VERIFY_EMAIL, $key);
+    }
+
+    private function staffInvitation(EmailAddress $to, string $name, string $token, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff invitations cannot be sent.');
+        }
+        $link = $this->adminUrl . '/enrol#token=' . $token;
+        $text = <<<TXT
+            Hi {$name},
+
+            You have been invited to the {$this->productName} admin console. Set up your sign-in with two passkeys or security keys:
+
+            {$link}
+
+            This link expires in 24 hours. There is no password: you will sign in with your passkeys only. If you did not expect this invitation, ignore this email and tell the security team.
+
+            {$this->productName}
+            TXT;
+
+        return new EmailMessage($to, "Your {$this->productName} admin invitation", $text, $this->html(
+            "Your {$this->productName} admin invitation",
+            sprintf('Hi %s,', self::e($name)),
+            sprintf('You have been invited to the %s admin console. Set up your sign-in with two passkeys or security keys.', self::e($this->productName)),
+            'Set up passkeys',
+            $link,
+            'This link expires in 24 hours. There is no password: you will sign in with your passkeys only. If you did not expect this invitation, ignore this email and tell the security team.',
+        ), self::STAFF_INVITATION, $key);
+    }
+
+    private static function url(string $url, string $name): string
+    {
+        $url = rtrim($url, '/');
+        $parts = parse_url($url);
+        $local = is_array($parts) && ($parts['scheme'] ?? '') === 'http' && in_array($parts['host'] ?? '', ['127.0.0.1', 'localhost'], true);
+        if (!is_array($parts) || (($parts['scheme'] ?? '') !== 'https' && !$local) || !isset($parts['host'])
+            || isset($parts['user']) || isset($parts['query']) || isset($parts['fragment'])) {
+            throw new \InvalidArgumentException($name . ' must be an https URL (http only for localhost).');
+        }
+
+        return $url;
     }
 
     private function accountExists(EmailAddress $to, string $name, string $key): EmailMessage

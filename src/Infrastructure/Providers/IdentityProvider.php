@@ -23,6 +23,9 @@ use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
+use PaxofiCloud\Application\Staff\Passkeys\StaffEnrolment;
+use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
+use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeySignIn;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
 use PaxofiCloud\Application\Staff\StaffRoles;
 use PaxofiCloud\Http\Controllers\ChallengeController;
@@ -41,7 +44,13 @@ use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
 use PaxofiCloud\Infrastructure\Session\RedisMfaChallengeStore;
 use PaxofiCloud\Infrastructure\Session\RedisSessionStore;
 use PaxofiCloud\Infrastructure\Session\RedisSignInThrottle;
+use PaxofiCloud\Infrastructure\Session\RedisCeremonyStore;
 use PaxofiCloud\Infrastructure\Staff\MysqlStaffDirectory;
+use PaxofiCloud\Infrastructure\Staff\MysqlStaffPasskeyStore;
+use PaxofiCloud\Integration\WebAuthn\WebAuthnLibCeremonies;
+use PaxofiCloud\Application\Contracts\StaffPasskeyStore;
+use PaxofiCloud\Application\Contracts\PasskeyCeremonies;
+use PaxofiCloud\Application\Contracts\CeremonyStore;
 use PaxofiCloud\Infrastructure\Time\SystemClock;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
@@ -215,6 +224,48 @@ final class IdentityProvider implements Provider
             Resolve::get($c, TransactionManager::class),
             new SystemClock(),
             Resolve::get($c, AuditTrail::class),
+        ));
+
+        // Staff passkeys (IAM-008, §6.17). Without ADMIN_URL the ceremonies refuse to build: staff sign-in stays off.
+        $container->singleton(StaffPasskeyStore::class, static fn (Container $c): StaffPasskeyStore => new MysqlStaffPasskeyStore(
+            Resolve::get($c, Connection::class),
+            Resolve::get($c, Repository::class),
+        ));
+        $container->singleton(PasskeyCeremonies::class, static function (Container $c): PasskeyCeremonies {
+            $adminUrl = Resolve::get($c, Configuration::class)->get('app.admin_url');
+            if (!is_string($adminUrl) || $adminUrl === '') {
+                throw new \InvalidArgumentException('ADMIN_URL must be set for staff passkeys.');
+            }
+
+            return new WebAuthnLibCeremonies($adminUrl);
+        });
+        $container->singleton(CeremonyStore::class, static fn (Container $c): CeremonyStore => new RedisCeremonyStore(Resolve::get($c, RedisClient::class)));
+        $container->singleton(StaffInvitations::class, static fn (Container $c): StaffInvitations => new StaffInvitations(
+            Resolve::get($c, StaffPasskeyStore::class),
+            Resolve::get($c, StaffDirectory::class),
+            Resolve::get($c, StaffAuthorizer::class),
+            Resolve::get($c, TransactionManager::class),
+            Resolve::get($c, EmailOutbox::class),
+            new SystemClock(),
+            Resolve::get($c, AuditTrail::class),
+        ));
+        $container->singleton(StaffEnrolment::class, static fn (Container $c): StaffEnrolment => new StaffEnrolment(
+            Resolve::get($c, StaffPasskeyStore::class),
+            Resolve::get($c, PasskeyCeremonies::class),
+            Resolve::get($c, CeremonyStore::class),
+            Resolve::get($c, TransactionManager::class),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+            Resolve::get($c, AuditTrail::class),
+        ));
+        $container->singleton(StaffPasskeySignIn::class, static fn (Container $c): StaffPasskeySignIn => new StaffPasskeySignIn(
+            Resolve::get($c, StaffPasskeyStore::class),
+            Resolve::get($c, PasskeyCeremonies::class),
+            Resolve::get($c, CeremonyStore::class),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+            Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, Logger::class),
         ));
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));

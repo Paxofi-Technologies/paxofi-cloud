@@ -322,6 +322,19 @@ Scope (CEO decision 18 Oct 2026, following the SRS): staff roles and permissions
 - **Separation from customers (T-31, D-6).** Staff identities are a separate table from customer identities; a staff session (next PR) uses `__Host-pc_staff`, its own Redis prefix and the admin origin, and is never accepted on customer routes or vice versa.
 - **Staff sign-in (next PR, T-29, T-30, D-10, D-11).** Invitation-only enrolment (single-use 24 h link straight to WebAuthn registration, at least two authenticators), WebAuthn assertions verified by the ADR-002 library with user verification required, ES256/EdDSA only, sign-count regression rejected and alerted, no password and no fallback. The first Security Admin is created on the host with an operator CLI command; every later staff member is invited from the admin API.
 
+### 6.17 Staff passkey implementation notes (Sprint 1, PR "staff passkeys")
+
+WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-10, D-11). Verification is done by `web-auth/webauthn-lib` (ADR-002), wrapped in `src/Integration/WebAuthn`; the application only sees our own `PasskeyCeremonies` contract.
+
+- **Invitation (D-11).** A staff member exists first as `invited`. The invitation token is 256 bits from the CSPRNG, stored only as SHA-256, valid 24 hours, delivered by email as a link to the admin origin with the token in the URL fragment (never sent to servers in logs or `Referer`). It is never printed: not by the API, not by the operator CLI (public Actions logs). Inviting needs `staff.manage`; the very first Security Admin is invited by the operator bootstrap, which refuses once any active staff manager exists.
+- **Enrolment.** The invitation token authorises registering passkeys for that one staff member only. The member becomes `active` when the **second** passkey is registered (D-11: at least two authenticators, so losing one key is not a lock-out); the invitation is consumed in the same transaction. At most 5 passkeys per member.
+- **Registration policy.** `userVerification = required`, `residentKey = required` (discoverable, so sign-in needs no email field and cannot enumerate staff), attestation conveyance `none`, algorithms **ES256 (-7) and EdDSA (-8) only** (the options offer only these and the verifier's algorithm manager holds only these). The relying-party ID is the admin host and the only allowed origin is the admin origin (`ADMIN_URL`), so a credential phished on another origin cannot be used (T-29). Each member has a random 32-byte WebAuthn user handle, never the staff ID or email.
+- **Ceremony challenges.** 32 random bytes, stored in Redis keyed by SHA-256 of a random ceremony ID, single use (read and deleted atomically), 5-minute expiry, bound to the ceremony type (registration or sign-in) and, for registration, to the staff member.
+- **Sign-in.** Usernameless: empty `allowCredentials`. The credential ID from the response is looked up (unique index); unknown, disabled, or belonging to a non-active member ⇒ one uniform failure. The library checks challenge, origin, RP ID hash, user presence, user verification, signature and counter; the user handle must match the credential's owner.
+- **Cloned authenticators (T-30).** A sign counter that does not increase (when either value is non-zero) rejects the sign-in, **disables that credential** and is audited as `staff.passkey.clone_suspected` (alerting); passkeys that always report 0 skip the check, as the spec allows.
+- **Throttling.** Ceremony starts and finishes count against per-IP limits (Redis) before any verification work.
+- **Audit (T-34).** Invitations, passkey registrations, activation, sign-in success and failure (fixed reason codes) and clone suspicion are audited with the staff ID in details and `identity_id` NULL.
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -352,5 +365,6 @@ Scope (CEO decision 18 Oct 2026, following the SRS): staff roles and permissions
 | 2026-10-18 | §6.12 Turnstile implementation notes (T-02, T-06, T-07, T-47, T-49; fail closed; challenge counter made address-independent), written before the Turnstile code | Claude (security engineering) |
 | 2026-10-18 | §6.13 TOTP two-step verification notes (D-4, D-5, T-13…T-17), written before the MFA code | Claude (security engineering) |
 | 2026-10-18 | §6.14 audit log notes, T-50 forged context, T-51 personal data in the audit trail, T-52 activity isolation; written before the audit code | Claude (security engineering) |
+| 2026-10-18 | §6.17 staff passkey notes (invitation tokens, two-passkey activation, ES256/EdDSA only, discoverable usernameless sign-in, single-use challenges, clone detection disables the credential); written before the staff passkey code | Claude (security engineering) |
 | 2026-10-18 | §6.16 staff RBAC notes (ACC-005 permission catalogue from SRS §2.2, deny by default, two-person Super Admin grants, reason-scoped suspensions); O-1 resolved by ADR-002; written before the staff RBAC code | Claude (security engineering) |
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |

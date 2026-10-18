@@ -142,4 +142,25 @@ final class EmailTemplatesTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::SECURITY_CHANGE, $base + ['change' => 'password_changed_by_attacker'], 'k3');
     }
+
+    /** §6.17: the staff invitation links to the admin origin, token in the fragment; no admin origin, no invitation. */
+    public function testStaffInvitationLinksToTheAdminOriginWithTheTokenInTheFragment(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com/');
+        $message = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_INVITATION, ['name' => 'Ada', 'token' => self::TOKEN], 'k1');
+
+        self::assertStringContainsString('https://admin.paxofi.com/enrol#token=' . self::TOKEN, $message->textBody);
+        self::assertStringContainsString('href="https://admin.paxofi.com/enrol#token=' . self::TOKEN . '"', $message->htmlBody);
+        self::assertStringNotContainsString('cloud.paxofi.com', $message->textBody);
+        self::assertStringContainsString('passkeys', $message->textBody);
+
+        $this->expectException(\InvalidArgumentException::class);
+        (new EmailTemplates('https://cloud.paxofi.com'))->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_INVITATION, ['name' => 'Ada', 'token' => self::TOKEN], 'k2');
+    }
+
+    public function testAdminUrlMustBeHttpsToo(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'http://admin.paxofi.com');
+    }
 }
