@@ -10,6 +10,9 @@
 #   web-secrets        stdin: NAME=value lines for the PHP web tier only
 #                      (Turnstile keys, identity threat model §6.12)
 #   release <sha>      migrate, start <sha>, health-check; roll back on failure
+#   staff-bootstrap    stdin: EMAIL= and NAME= lines; invites the first staff
+#                      Security Admin (identity threat model §6.19). Refused by
+#                      the app once an active staff manager exists
 #   status             current/previous version and container health
 #
 # Runtime secrets (DB/Redis passwords, the email outbox key pair, the MFA keys) are generated
@@ -129,6 +132,34 @@ cmd_web_secrets() {
   log "web-secrets updated: $(cut -d= -f1 "$ENV_DIR/web.env" | tr '\n' ' ')(values not logged)"
 }
 
+cmd_staff_bootstrap() {
+  # stdin: exactly EMAIL= and NAME= lines (§6.19). Neither value is logged:
+  # this output reaches the public Actions log. The invitation link goes only
+  # to the address, by email; the app refuses once a staff manager is active.
+  local input line name value email="" full_name="" current status=0
+  local LC_ALL=C
+  input="$(head -c 1024)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    name="${line%%=*}"; value="${line#*=}"
+    case "$name" in
+      EMAIL) [[ "$value" =~ ^[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$ ]] || die "staff-bootstrap: EMAIL has an unexpected format"; email="$value" ;;
+      NAME)  [[ "$value" =~ ^[^[:cntrl:]\<\>\"\\\`\$]{2,100}$ ]] || die "staff-bootstrap: NAME has an unexpected format"; full_name="$value" ;;
+      *) die "staff-bootstrap: refused name" ;;
+    esac
+  done <<<"$input"
+  [ -n "$email" ] && [ -n "$full_name" ] || die "staff-bootstrap: EMAIL and NAME are required"
+  current="$(cat "$STATE_DIR/current" 2>/dev/null || true)"
+  [[ "$current" =~ ^[0-9a-f]{40}$ ]] || die "staff-bootstrap: no release is running"
+  # Arguments go to the CLI as argv (no shell); its output (staff ID) stays in the host log.
+  compose "$current" exec -T php bin/paxoficloud staff:bootstrap "$email" "$full_name" >>"$LOG_FILE" 2>&1 || status=$?
+  case "$status" in
+    0) log "staff-bootstrap: invitation queued; the link is sent by email only (valid 24 hours)" ;;
+    2) log "staff-bootstrap: refused (an active staff manager already exists, or the address is already staff)"; exit 2 ;;
+    *) die "staff-bootstrap: failed (exit $status)" ;;
+  esac
+}
+
 image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
 
 healthy() {
@@ -229,6 +260,7 @@ case "${args[0]:-}:${#args[@]}" in
   mail-secrets:1) install -d -m 0700 "$ENV_DIR"; cmd_mail_secrets ;;
   web-secrets:1)  install -d -m 0700 "$ENV_DIR"; cmd_web_secrets ;;
   release:2) cmd_release "${args[1]}" ;;
+  staff-bootstrap:1) cmd_staff_bootstrap ;;
   status:1)  cmd_status ;;
-  *)         log "refused command"; echo "usage: load | mail-secrets | web-secrets | release <sha> | status" >&2; exit 64 ;;
+  *)         log "refused command"; echo "usage: load | mail-secrets | web-secrets | release <sha> | staff-bootstrap | status" >&2; exit 64 ;;
 esac

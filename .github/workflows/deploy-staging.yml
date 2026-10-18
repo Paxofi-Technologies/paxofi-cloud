@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy = build and release this commit; status = only print the host and mail status"
+        description: "deploy = build and release this commit; status = only print the host and mail status; staff-bootstrap = invite the first staff Security Admin (STAGING_FIRST_ADMIN_EMAIL secret, STAGING_FIRST_ADMIN_NAME variable)"
         type: choice
-        options: [deploy, status]
+        options: [deploy, status, staff-bootstrap]
         default: deploy
 
 permissions:
@@ -72,7 +72,7 @@ jobs:
           exit "$missing"
 
       - name: Install runtime dependencies only (requires PCF)
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         shell: bash
         env:
           PCF_READ_TOKEN: ${{ secrets.PCF_READ_TOKEN }}
@@ -83,7 +83,7 @@ jobs:
             "$COMPOSER_IMAGE" install --no-dev --no-interaction --no-progress --prefer-dist --classmap-authoritative
 
       - name: Build images
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
@@ -91,7 +91,7 @@ jobs:
           docker build -q -f docker/production/nginx.Dockerfile --build-arg APP_REVISION="$GITHUB_SHA" -t "paxoficloud-nginx:$GITHUB_SHA" .
 
       - name: Smoke-test the exact images being deployed
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         run: APP_VERSION="$GITHUB_SHA" deploy/staging/smoke-test.sh
 
       - name: Install OpenTofu (checksum verified)
@@ -149,7 +149,7 @@ jobs:
           CONFIG
 
       - name: Ship images
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
@@ -161,7 +161,7 @@ jobs:
       # threat model E-6, E-13). The
       # staging viewers are also the only people staging may email (E-9).
       - name: Deliver mail worker secrets
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         shell: bash
         env:
           POSTMARK_SERVER_TOKEN: ${{ secrets.POSTMARK_SERVER_TOKEN }}
@@ -194,7 +194,7 @@ jobs:
       # Hosts whose agent predates `web-secrets` refuse the verb (exit 64): the
       # deploy continues with Turnstile off and asks for an infra apply.
       - name: Deliver web tier secrets
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         shell: bash
         env:
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
@@ -213,12 +213,12 @@ jobs:
           fi
 
       - name: Release (migrate, start, health check, automatic rollback)
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         run: ssh -F "$RUNNER_TEMP/ssh_config" staging release "$GITHUB_SHA"
 
       # The site is behind Access (viewers by email); CI passes with its service token.
       - name: Verify through Cloudflare
-        if: inputs.action != 'status'
+        if: inputs.action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
@@ -230,6 +230,46 @@ jobs:
           done
           echo "::error::https://cloud-staging.paxofi.com/health/ready is not healthy"
           exit 1
+
+      # The staff console host answers /health too (same nginx); CI passes its Access gate with the service token.
+      - name: Verify the staff admin host through Cloudflare
+        if: inputs.action == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if [ "$(curl -s --max-time 10 -H "CF-Access-Client-Id: $TUNNEL_SERVICE_TOKEN_ID" -H "CF-Access-Client-Secret: $TUNNEL_SERVICE_TOKEN_SECRET" https://cloud-staging-admin.paxofi.com/health/ready)" = '{"status":"healthy"}' ]; then
+              echo "Staff admin host is serving"; exit 0
+            fi
+            sleep 6
+          done
+          echo "::warning::https://cloud-staging-admin.paxofi.com is not serving yet. Run Infra Staging plan + apply (adds the admin hostname) and deploy again."
+
+      # First staff Security Admin (identity threat model §6.19). The address is
+      # a secret, so it is masked and never printed; the agent logs neither value.
+      # The invitation link goes only to that address, by email, so it must also
+      # be one of STAGING_ALLOWED_EMAILS (the staging mail allow-list). The app
+      # refuses once an active staff manager exists, so re-running is harmless.
+      - name: Invite the first staff admin
+        if: inputs.action == 'staff-bootstrap'
+        shell: bash
+        env:
+          FIRST_ADMIN_EMAIL: ${{ secrets.STAGING_FIRST_ADMIN_EMAIL }}
+          FIRST_ADMIN_NAME: ${{ vars.STAGING_FIRST_ADMIN_NAME }}
+        run: |
+          set -uo pipefail
+          if [ -z "$FIRST_ADMIN_EMAIL" ] || [ -z "$FIRST_ADMIN_NAME" ]; then
+            echo "::error::Set the STAGING_FIRST_ADMIN_EMAIL secret and the STAGING_FIRST_ADMIN_NAME variable in the staging environment."
+            exit 1
+          fi
+          printf 'EMAIL=%s\nNAME=%s\n' "$FIRST_ADMIN_EMAIL" "$FIRST_ADMIN_NAME" | ssh -F "$RUNNER_TEMP/ssh_config" staging staff-bootstrap
+          rc=$?
+          case "$rc" in
+            0) echo "Invitation queued. Open the email on a device with your passkeys and follow the link within 24 hours." ;;
+            2) echo "::error::Refused: an active staff manager already exists or the address is already staff. Invite further staff from the console."; exit 2 ;;
+            64) echo "::error::This staging host's deploy agent predates staff-bootstrap. Run Infra Staging plan + apply (replaces the server), deploy, then try again."; exit 64 ;;
+            *) exit "$rc" ;;
+          esac
 
       - name: Status
         if: always() && env.DEPLOY_SSH_HOST != ''
