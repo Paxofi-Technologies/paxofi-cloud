@@ -25,6 +25,12 @@ final class AuditEventType
     public const string MFA_DISABLED = 'mfa.disabled';
     public const string RECOVERY_CODES_REGENERATED = 'mfa.recovery_codes_regenerated';
     public const string MFA_CHANGE_REFUSED = 'mfa.change_refused';
+    public const string STAFF_PERMISSION_DENIED = 'staff.permission_denied';
+    public const string STAFF_ROLE_GRANTED = 'staff.role.granted';
+    public const string STAFF_ROLE_REQUESTED = 'staff.role.requested';
+    public const string STAFF_ROLE_APPROVED = 'staff.role.approved';
+    public const string STAFF_ROLE_REVOKED = 'staff.role.revoked';
+    public const string STAFF_ROLE_CHANGE_REFUSED = 'staff.role.change_refused';
 
     private function __construct()
     {
