@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PaxofiCloud\Infrastructure\Identity;
 
 use Paxofi\Core\Contracts\PasswordHasher;
+use PaxofiCloud\Application\Contracts\PasswordRehashPolicy;
 
 /**
  * Argon2id with explicit parameters (threat model D-3). Replaces PCF's
@@ -12,7 +13,7 @@ use Paxofi\Core\Contracts\PasswordHasher;
  * D-3, and bcrypt ignores everything after 72 bytes while IAM-003 allows 128
  * characters.
  */
-final readonly class Argon2idPasswordHasher implements PasswordHasher
+final readonly class Argon2idPasswordHasher implements PasswordHasher, PasswordRehashPolicy
 {
     public const int MEMORY_COST_KIB = 65_536;
     public const int TIME_COST = 3;

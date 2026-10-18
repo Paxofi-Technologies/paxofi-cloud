@@ -7,10 +7,11 @@ namespace PaxofiCloud\Infrastructure\Identity;
 use Paxofi\Core\Contracts\Connection;
 use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Application\Contracts\IdentityStore;
+use PaxofiCloud\Application\Contracts\SignInStore;
 use PaxofiCloud\Infrastructure\Persistence\Row;
 
-/** MySQL implementation of registration storage (migration 0003). */
-final readonly class MysqlIdentityStore implements IdentityStore
+/** MySQL implementation of registration and sign-in storage (migration 0003). */
+final readonly class MysqlIdentityStore implements IdentityStore, SignInStore
 {
     private const string TIME = 'Y-m-d H:i:s.u';
 
@@ -115,6 +116,51 @@ final readonly class MysqlIdentityStore implements IdentityStore
             'UPDATE identities SET status = \'active\', verified_at = :now WHERE id = :id AND status = \'pending_verification\'',
             ['id' => $identityId, 'now' => self::time($now)],
         ) === 1;
+    }
+
+    public function findForSignIn(string $emailLookup): ?array
+    {
+        // The personal account the identity owns; created with the identity.
+        $rows = $this->repository->fetchAll(
+            'SELECT i.id, i.status, i.password_hash, m.account_id
+             FROM identities i
+             JOIN account_members m ON m.identity_id = i.id AND m.role = \'owner\'
+             JOIN accounts a ON a.id = m.account_id AND a.type = \'personal\'
+             WHERE i.email_lookup = :lookup
+             LIMIT 1',
+            ['lookup' => $emailLookup],
+        );
+        if ($rows === []) {
+            return null;
+        }
+
+        return [
+            'id' => Row::string($rows[0], 'id'),
+            'status' => Row::string($rows[0], 'status'),
+            'password_hash' => Row::string($rows[0], 'password_hash'),
+            'account_id' => Row::string($rows[0], 'account_id'),
+        ];
+    }
+
+    public function replacePasswordHash(string $identityId, #[\SensitiveParameter] string $passwordHash): void
+    {
+        $this->connection->execute(
+            'UPDATE identities SET password_hash = :hash WHERE id = :id',
+            ['id' => $identityId, 'hash' => $passwordHash],
+        );
+    }
+
+    public function findProfile(string $identityId): ?array
+    {
+        $rows = $this->repository->fetchAll(
+            'SELECT full_name, email, status FROM identities WHERE id = :id',
+            ['id' => $identityId],
+        );
+        if ($rows === []) {
+            return null;
+        }
+
+        return ['full_name' => Row::string($rows[0], 'full_name'), 'email' => Row::string($rows[0], 'email'), 'status' => Row::string($rows[0], 'status')];
     }
 
     private static function time(\DateTimeImmutable $time): string
