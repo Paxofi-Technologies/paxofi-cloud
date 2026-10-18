@@ -1,13 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { SignInScreen } from './SignInScreen';
+import { api, formCalls } from '../test/api';
+import { fakeTurnstile } from '../test/turnstile';
 
-function api(status: number, body: unknown = {}, headers: Record<string, string> = {}) {
-  return vi.fn(() =>
-    Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })),
-  ) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
-}
 
 async function submit(user: ReturnType<typeof userEvent.setup>, password = 'correct horse battery') {
   await user.type(screen.getByLabelText('Email address'), ' ada@example.ng ');
@@ -24,7 +21,7 @@ describe('SignInScreen (IAM-005, IAM-006)', () => {
 
     expect(screen.getByLabelText('Email address')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText('Enter your password.')).toBeInTheDocument();
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(formCalls(fetchImpl)).toHaveLength(0);
     expect(onSignedIn).not.toHaveBeenCalled();
   });
 
@@ -36,7 +33,7 @@ describe('SignInScreen (IAM-005, IAM-006)', () => {
     await submit(user);
 
     expect(onSignedIn).toHaveBeenCalledOnce();
-    const [path, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const [path, init] = formCalls(fetchImpl)[0] as [string, RequestInit];
     expect(path).toBe('/api/v1/auth/sign-in');
     expect(init.credentials).toBe('same-origin');
     expect(JSON.parse(String(init.body))).toEqual({ email: 'ada@example.ng', password: 'correct horse battery' });
@@ -84,5 +81,28 @@ describe('SignInScreen (IAM-005, IAM-006)', () => {
     await submit(user);
 
     expect(await screen.findByText(/could not reach PaxofiCloud/)).toBeInTheDocument();
+  });
+});
+
+describe('SignInScreen bot check (§6.12)', () => {
+  it('shows the check only after the server asks for it, then sends the token', async () => {
+    const fake = fakeTurnstile();
+    const user = userEvent.setup();
+    const fetchImpl = api(403, { code: 'challenge_required' }, {}, '0x4AAAAAAAsite');
+    const onSignedIn = vi.fn();
+    render(<SignInScreen onSignedIn={onSignedIn} fetchImpl={fetchImpl} />);
+    await submit(user);
+
+    expect(await screen.findByText('Please complete the security check, then try again.')).toBeInTheDocument();
+    await vi.waitFor(() => expect(fake.api.render).toHaveBeenCalledOnce());
+    expect(fake.rendered[0]?.action).toBe('sign_in');
+    expect(JSON.parse(String((formCalls(fetchImpl)[0] as [string, RequestInit])[1].body))).not.toHaveProperty('turnstile_token');
+
+    act(() => fake.solve('tok-9'));
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await vi.waitFor(() => expect(formCalls(fetchImpl)).toHaveLength(2));
+    expect(JSON.parse(String((formCalls(fetchImpl)[1] as [string, RequestInit])[1].body))).toMatchObject({ turnstile_token: 'tok-9' });
+    fake.uninstall();
   });
 });

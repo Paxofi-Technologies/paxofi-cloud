@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Button, Logo, ResendVerification, TextField } from '../components';
+import { Alert, Button, Logo, ResendVerification, TextField, Turnstile } from '../components';
 import { describeWait } from '../lib/api';
+import { challengeProblem, useChallengeSiteKey } from '../lib/challenge';
 import { signIn } from '../lib/session';
 
 export interface SignInScreenProps {
@@ -25,6 +26,11 @@ export function SignInScreen({ onSignedIn, fetchImpl }: SignInScreenProps) {
   const [errors, setErrors] = useState<{ email?: string | undefined; password?: string | undefined }>({});
   const [problem, setProblem] = useState<Problem>(null);
   const [loading, setLoading] = useState(false);
+  const siteKey = useChallengeSiteKey(fetchImpl);
+  // The server asks for the bot check only after repeated failures (§6.12).
+  const [challenged, setChallenged] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -35,10 +41,15 @@ export function SignInScreen({ onSignedIn, fetchImpl }: SignInScreenProps) {
     setErrors(next);
     setProblem(null);
     if (Object.keys(next).length > 0) return;
+    if (challenged && typeof siteKey === 'string' && token === null) {
+      setProblem({ tone: 'warning', text: 'Please complete the security check, then sign in.' });
+      return;
+    }
 
     setLoading(true);
-    const result = await signIn(address, password, fetchImpl);
+    const result = await signIn(address, password, fetchImpl, token);
     setLoading(false);
+    if (token !== null) setResetSignal((n) => n + 1);
 
     switch (result.kind) {
       case 'ok':
@@ -59,7 +70,10 @@ export function SignInScreen({ onSignedIn, fetchImpl }: SignInScreenProps) {
         return;
       case 'rejected':
         setPassword('');
-        if (result.code === 'email_not_verified') {
+        if (result.code === 'challenge_required' || result.code === 'challenge_unavailable') {
+          setChallenged(true);
+          setProblem({ tone: 'warning', text: challengeProblem(result.code) ?? '' });
+        } else if (result.code === 'email_not_verified') {
           setProblem({
             tone: 'warning',
             text: 'Confirm your email address before signing in. We can send you a new link.',
@@ -106,6 +120,9 @@ export function SignInScreen({ onSignedIn, fetchImpl }: SignInScreenProps) {
             error={errors.password}
             required
           />
+          {challenged && typeof siteKey === 'string' && (
+            <Turnstile siteKey={siteKey} action="sign_in" onToken={setToken} resetSignal={resetSignal} />
+          )}
           <Button type="submit" block loading={loading}>
             Sign in
           </Button>

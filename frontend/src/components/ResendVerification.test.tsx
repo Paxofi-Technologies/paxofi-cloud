@@ -2,10 +2,8 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RESEND_COOLDOWN_SECONDS, ResendVerification } from './ResendVerification';
+import { api, formCalls } from '../test/api';
 
-function api(status: number, body: unknown = {}, headers: Record<string, string> = {}) {
-  return vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status, headers }))) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
-}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -27,7 +25,7 @@ describe('ResendVerification (IAM-002, T-49)', () => {
 
     await user.click(button);
     expect(await screen.findByText(/We have sent a new link/)).toBeInTheDocument();
-    const [path, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const [path, init] = formCalls(fetchImpl)[0] as [string, RequestInit];
     expect(path).toBe('/api/v1/auth/resend-verification');
     expect(JSON.parse(String(init.body))).toEqual({ email: 'ada@example.ng' });
     expect(screen.getByRole('button', { name: /Resend email \(\d+s\)/ })).toBeDisabled();
@@ -40,7 +38,7 @@ describe('ResendVerification (IAM-002, T-49)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Send a new link' }));
     expect(screen.getByLabelText('Email address')).toHaveAttribute('aria-invalid', 'true');
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(formCalls(fetchImpl)).toHaveLength(0);
 
     await user.type(screen.getByLabelText('Email address'), 'ada@example.ng');
     await user.click(screen.getByRole('button', { name: 'Send a new link' }));

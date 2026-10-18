@@ -150,3 +150,6 @@
 .pc-check__label { font-size: var(--pc-font-size-sm); color: var(--pc-semantic-text-secondary); line-height: 1.5; }
 .pc-check__error { grid-column: 2; margin-top: var(--pc-space-1); }
 .pc-check--invalid .pc-check__input { outline: 2px solid var(--pc-semantic-action-danger); outline-offset: 2px; }
+
+/* ---------- Bot check (Cloudflare Turnstile renders its own iframe) ---------- */
+.pc-challenge { display: grid; gap: var(--pc-space-2); min-height: 65px; }

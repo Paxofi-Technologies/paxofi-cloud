@@ -8,3 +8,4 @@ export { Checkbox } from './Checkbox';
 export { Logo } from './Logo';
 export { TextField } from './TextField';
 export { ResendVerification, RESEND_COOLDOWN_SECONDS } from './ResendVerification';
+export { Turnstile } from './Turnstile';

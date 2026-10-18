@@ -37,8 +37,9 @@ export async function fetchSession(fetchImpl: typeof fetch = fetch): Promise<Ses
   }
 }
 
-export function signIn(email: string, password: string, fetchImpl: typeof fetch = fetch): Promise<ApiResult> {
-  return postJson('/api/v1/auth/sign-in', { email, password }, fetchImpl);
+export function signIn(email: string, password: string, fetchImpl: typeof fetch = fetch, challengeToken: string | null = null): Promise<ApiResult> {
+  const body = challengeToken === null ? { email, password } : { email, password, turnstile_token: challengeToken };
+  return postJson('/api/v1/auth/sign-in', body, fetchImpl);
 }
 
 export function signOut(csrfToken: string, fetchImpl: typeof fetch = fetch): Promise<ApiResult> {

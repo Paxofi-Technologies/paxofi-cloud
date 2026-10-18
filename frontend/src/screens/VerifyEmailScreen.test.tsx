@@ -1,13 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { VerifyEmailScreen } from './VerifyEmailScreen';
+import { api, formCalls } from '../test/api';
 
 const TOKEN = 'A'.repeat(20) + 'b_-'.repeat(7) + '12';
-
-function api(status: number, body: unknown = {}) {
-  return vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status }))) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
-}
 
 describe('VerifyEmailScreen (IAM-002)', () => {
   it('posts the token from the fragment exactly once, even under StrictMode', async () => {
@@ -20,8 +17,8 @@ describe('VerifyEmailScreen (IAM-002)', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Email confirmed' })).toBeInTheDocument();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [path, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(formCalls(fetchImpl)).toHaveLength(1);
+    const [path, init] = formCalls(fetchImpl)[0] as [string, RequestInit];
     expect(path).toBe('/api/v1/auth/verify-email');
     expect(JSON.parse(String(init.body))).toEqual({ token: TOKEN });
   });
@@ -45,7 +42,7 @@ describe('VerifyEmailScreen (IAM-002)', () => {
     const fetchImpl = api(200);
     render(<VerifyEmailScreen initialHash="#token=<script>" fetchImpl={fetchImpl} />);
     expect(await screen.findByRole('heading', { name: 'This link can’t be used' })).toBeInTheDocument();
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(formCalls(fetchImpl)).toHaveLength(0);
   });
 
   it('reports outages separately from bad links', async () => {

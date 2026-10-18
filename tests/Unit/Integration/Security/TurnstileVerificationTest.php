@@ -32,6 +32,7 @@ final class TurnstileVerificationTest extends TestCase
         self::assertSame(self::SECRET, $body['secret']);
         self::assertSame('widget-token', $body['response']);
         self::assertSame('198.51.100.7', $body['remoteip']);
+        self::assertIsString($body['idempotency_key']);
         self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $body['idempotency_key']);
         self::assertSame('no-store', $sent['secret'], 'The header slot carries no credential');
         self::assertSame([], $logger->records);

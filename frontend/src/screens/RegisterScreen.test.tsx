@@ -1,11 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { RegisterScreen } from './RegisterScreen';
+import { api, formCalls } from '../test/api';
+import { fakeTurnstile } from '../test/turnstile';
 
-function api(status: number, body: unknown = {}, headers: Record<string, string> = {}) {
-  return vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status, headers }))) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
-}
 
 async function fill(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('Full name'), 'Ada Okafor');
@@ -22,7 +21,7 @@ describe('RegisterScreen (IAM-001)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
     expect(screen.getByLabelText('Full name')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText(/accept the Terms of Service/)).toBeInTheDocument();
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(formCalls(fetchImpl)).toHaveLength(0);
   });
 
   it('submits the five fields and shows the same confirmation whatever the address', async () => {
@@ -34,7 +33,7 @@ describe('RegisterScreen (IAM-001)', () => {
 
     expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
     expect(screen.getByText('ada@example.ng')).toBeInTheDocument();
-    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const [, init] = formCalls(fetchImpl)[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({
       full_name: 'Ada Okafor',
       email: 'ada@example.ng',
@@ -73,5 +72,42 @@ describe('RegisterScreen (IAM-001)', () => {
     expect(password).toHaveAttribute('type', 'password');
     await userEvent.click(screen.getByRole('button', { name: 'Show' }));
     expect(password).toHaveAttribute('type', 'text');
+  });
+});
+
+describe('RegisterScreen bot check (T-02, §6.12)', () => {
+  it('requires the security check when the server has one, and sends its token once', async () => {
+    const fake = fakeTurnstile();
+    const user = userEvent.setup();
+    const fetchImpl = api(202, { status: 'check_your_email' }, {}, '0x4AAAAAAAsite');
+    render(<RegisterScreen fetchImpl={fetchImpl} />);
+    await vi.waitFor(() => expect(fake.api.render).toHaveBeenCalledOnce());
+    expect(fake.rendered[0]?.action).toBe('register');
+
+    await fill(user);
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(screen.getByText('Please complete the security check.')).toBeInTheDocument();
+    expect(formCalls(fetchImpl)).toHaveLength(0);
+
+    act(() => fake.solve('tok-1'));
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
+    const [, init] = formCalls(fetchImpl)[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ turnstile_token: 'tok-1' });
+    fake.uninstall();
+  });
+
+  it('explains a refused or unavailable check and asks for a fresh one', async () => {
+    const fake = fakeTurnstile();
+    const user = userEvent.setup();
+    render(<RegisterScreen fetchImpl={api(503, { code: 'challenge_unavailable' }, {}, '0x4AAAAAAAsite')} />);
+    await vi.waitFor(() => expect(fake.api.render).toHaveBeenCalledOnce());
+    await fill(user);
+    act(() => fake.solve('tok-1'));
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByText(/security check is unavailable right now/)).toBeInTheDocument();
+    expect(fake.api.reset).toHaveBeenCalled();
+    fake.uninstall();
   });
 });

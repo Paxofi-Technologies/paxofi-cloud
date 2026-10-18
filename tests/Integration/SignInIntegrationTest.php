@@ -203,6 +203,15 @@ final class SignInIntegrationTest extends IntegrationTestCase
         self::assertSame(422, $this->post('/api/v1/auth/sign-in', ['email' => $email, 'password' => self::PASSWORD, 'remember' => true])->status());
     }
 
+    public function testChallengeConfigIsPublicAndOffWithoutKeys(): void
+    {
+        $response = $this->get('/api/v1/auth/challenge', null);
+
+        self::assertSame(200, $response->status());
+        self::assertSame('no-store', $response->header('cache-control'));
+        self::assertSame(['turnstile_site_key' => null], self::json($response));
+    }
+
     private function activeCustomer(): string
     {
         $email = self::uniqueEmail();
