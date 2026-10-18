@@ -17,6 +17,7 @@ use PaxofiCloud\Application\Identity\SignIn\SignInThrottled;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\MfaCookie;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 use PaxofiCloud\Http\SessionCookie;
 use Paxofi\Core\Contracts\Controller;
@@ -44,7 +45,7 @@ final readonly class SignInController implements Controller
 
         $id = RequestId::of($request);
         try {
-            $issued = $this->signIn->signIn($data, JsonBody::clientIp($request), (string) $request->header('user-agent'), SessionCookie::read($request));
+            $issued = $this->signIn->signIn($data, RequestClient::of($request), SessionCookie::read($request));
         } catch (InvalidSignIn $e) {
             return ProblemDetails::response(422, 'validation_failed', $id, errors: $e->errors);
         } catch (ChallengeRequired) {

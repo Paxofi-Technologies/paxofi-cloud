@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Registration;
 
+use PaxofiCloud\Tests\Support\AuditFixtures;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PHPUnit\Framework\TestCase;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
@@ -33,22 +35,22 @@ final class VerifyEmailTest extends TestCase
         $this->store = new InMemoryIdentityStore();
         $this->outbox = new RecordingOutbox();
         $this->clock = new MutableClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'));
-        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate(new ScriptedHumanVerification()));
-        $this->verify = new VerifyEmail($this->store, new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock);
+        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate(new ScriptedHumanVerification()), AuditFixtures::trail());
+        $this->verify = new VerifyEmail($this->store, new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, AuditFixtures::trail());
     }
 
     public function testAValidLinkActivatesTheIdentityOnce(): void
     {
         $token = $this->registerAndGetToken();
 
-        $this->verify->verify($token, '198.51.100.7');
+        $this->verify->verify($token, ClientContext::ip('198.51.100.7'));
 
         $identity = array_values($this->store->identities)[0];
         self::assertSame('active', $identity['status']);
         self::assertEquals(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'), $identity['verified_at']);
 
         $this->expectException(VerificationTokenInvalid::class);
-        $this->verify->verify($token, '198.51.100.7');
+        $this->verify->verify($token, ClientContext::ip('198.51.100.7'));
     }
 
     public function testExpiredLinkIsRefused(): void
@@ -58,7 +60,7 @@ final class VerifyEmailTest extends TestCase
 
         $this->expectException(VerificationTokenInvalid::class);
         try {
-            $this->verify->verify($token, '198.51.100.7');
+            $this->verify->verify($token, ClientContext::ip('198.51.100.7'));
         } finally {
             self::assertSame('pending_verification', array_values($this->store->identities)[0]['status']);
         }
@@ -69,7 +71,7 @@ final class VerifyEmailTest extends TestCase
         $token = $this->registerAndGetToken();
         $this->clock->advance('+86399 seconds');
 
-        $this->verify->verify($token, '198.51.100.7');
+        $this->verify->verify($token, ClientContext::ip('198.51.100.7'));
 
         self::assertSame('active', array_values($this->store->identities)[0]['status']);
     }
@@ -87,13 +89,13 @@ final class VerifyEmailTest extends TestCase
     public function testMalformedTokensFailLikeAnyOtherBadLink(mixed $token): void
     {
         $this->expectException(VerificationTokenInvalid::class);
-        $this->verify->verify($token, '198.51.100.7');
+        $this->verify->verify($token, ClientContext::ip('198.51.100.7'));
     }
 
     public function testUnknownWellFormedTokenIsRefused(): void
     {
         $this->expectException(VerificationTokenInvalid::class);
-        $this->verify->verify(RegisterCustomer::newToken(), '198.51.100.7');
+        $this->verify->verify(RegisterCustomer::newToken(), ClientContext::ip('198.51.100.7'));
     }
 
     public function testATokenForAnIdentityThatIsNoLongerPendingDoesNotReactivateIt(): void
@@ -104,7 +106,7 @@ final class VerifyEmailTest extends TestCase
 
         $this->expectException(VerificationTokenInvalid::class);
         try {
-            $this->verify->verify($token, '198.51.100.7');
+            $this->verify->verify($token, ClientContext::ip('198.51.100.7'));
         } finally {
             self::assertSame('suspended', $this->store->identities[$id]['status']);
         }
@@ -114,18 +116,18 @@ final class VerifyEmailTest extends TestCase
     {
         for ($i = 0; $i < VerifyEmail::PER_IP_LIMIT; $i++) {
             try {
-                $this->verify->verify('bad', '203.0.113.9');
+                $this->verify->verify('bad', ClientContext::ip('203.0.113.9'));
             } catch (VerificationTokenInvalid) {
             }
         }
 
         $this->expectException(RegistrationThrottled::class);
-        $this->verify->verify('bad', '203.0.113.9');
+        $this->verify->verify('bad', ClientContext::ip('203.0.113.9'));
     }
 
     private function registerAndGetToken(): string
     {
-        $this->register->register(RegistrationInputTest::valid(), '198.51.100.7');
+        $this->register->register(RegistrationInputTest::valid(), ClientContext::ip('198.51.100.7'));
 
         return $this->outbox->queued[0]['parameters']['token'];
     }

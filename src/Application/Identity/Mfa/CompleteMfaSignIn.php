@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace PaxofiCloud\Application\Identity\Mfa;
 
 use Paxofi\Core\Contracts\Logger;
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\MfaChallengeStore;
 use PaxofiCloud\Application\Contracts\MfaStore;
@@ -33,6 +37,7 @@ final readonly class CompleteMfaSignIn
         private Clock $clock,
         private Logger $logger,
         private ?MfaCrypto $crypto,
+        private AuditTrail $audit,
     ) {
     }
 
@@ -49,7 +54,7 @@ final readonly class CompleteMfaSignIn
      * @param array<array-key, mixed> $data `{code}` or `{recovery_code}`
      * @throws MfaTicketInvalid|MfaThrottled|InvalidMfaInput|MfaUnavailable|AccountUnavailable
      */
-    public function complete(#[\SensitiveParameter] ?string $ticket, #[\SensitiveParameter] array $data, string $clientIp, string $userAgent): IssuedSession
+    public function complete(#[\SensitiveParameter] ?string $ticket, #[\SensitiveParameter] array $data, ClientContext $client): IssuedSession
     {
         $useRecovery = !array_key_exists('code', $data);
         $field = $useRecovery ? 'recovery_code' : 'code';
@@ -64,18 +69,22 @@ final readonly class CompleteMfaSignIn
 
         if ($this->challenges->identityFailures($identityId) >= self::MAX_ATTEMPTS) {
             $this->challenges->delete($ticketHash);
+            $this->audit->record(AuditEventType::MFA_FAILED, AuditEvent::FAILURE, $client, $identityId, $pending['account_id'], ['reason' => 'locked']);
             throw new MfaThrottled(self::LOCK_SECONDS);
         }
         $crypto = $this->crypto ?? throw new MfaUnavailable();
 
         $factor = new SecondFactor($this->mfa, $crypto, $this->clock);
         $ok = $useRecovery ? $factor->verifyRecoveryCode($identityId, $value) : $factor->verifyCode($identityId, $value);
+        $method = $useRecovery ? 'recovery_code' : 'totp';
         if (!$ok) {
             $attempts = $this->challenges->recordAttempt($ticketHash);
             $failures = $this->challenges->recordIdentityFailure($identityId);
+            $this->audit->record(AuditEventType::MFA_FAILED, AuditEvent::FAILURE, $client, $identityId, $pending['account_id'], ['method' => $method, 'reason' => 'incorrect']);
             if ($attempts >= self::MAX_ATTEMPTS || $failures >= self::MAX_ATTEMPTS) {
                 $this->challenges->delete($ticketHash);
                 $this->logger->warning('auth.mfa.locked', ['identity_id' => $identityId]);
+                $this->audit->record(AuditEventType::MFA_LOCKED, AuditEvent::FAILURE, $client, $identityId, $pending['account_id']);
             }
 
             throw new InvalidMfaInput([$field => 'incorrect']);
@@ -90,7 +99,11 @@ final readonly class CompleteMfaSignIn
             $this->logger->info('auth.mfa.recovery_code_used', ['identity_id' => $identityId]);
         }
 
-        return $this->sessions->issue($identityId, $pending['account_id'], $clientIp, $userAgent);
+        $issued = $this->sessions->issue($identityId, $pending['account_id'], $client);
+        $this->audit->record(AuditEventType::MFA_SUCCEEDED, AuditEvent::SUCCESS, $client, $identityId, $pending['account_id'], ['method' => $method]);
+        $this->audit->record(AuditEventType::SIGN_IN_SUCCEEDED, AuditEvent::SUCCESS, $client, $identityId, $pending['account_id'], ['method' => 'password_' . $method]);
+
+        return $issued;
     }
 
     public static function hash(#[\SensitiveParameter] string $ticket): string

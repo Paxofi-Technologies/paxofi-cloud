@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace PaxofiCloud\Application\Identity\Mfa;
 
 use Paxofi\Core\Contracts\PasswordHasher;
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\MfaStore;
 use PaxofiCloud\Application\Contracts\RateLimiter;
@@ -28,6 +32,7 @@ final readonly class MfaSettings
         private RateLimiter $limiter,
         private Clock $clock,
         private ?MfaCrypto $crypto,
+        private AuditTrail $audit,
     ) {
     }
 
@@ -51,10 +56,10 @@ final readonly class MfaSettings
      * @param array<array-key, mixed> $data `{password}`
      * @throws InvalidMfaInput|MfaThrottled|MfaAlreadyEnabled|MfaUnavailable
      */
-    public function setup(string $identityId, string $email, #[\SensitiveParameter] array $data): TotpSetup
+    public function setup(string $identityId, string $email, #[\SensitiveParameter] array $data, ClientContext $client): TotpSetup
     {
         $crypto = $this->crypto();
-        $this->assertPassword($identityId, self::fields($data, ['password'])['password']);
+        $this->assertPassword($identityId, self::fields($data, ['password'])['password'], $client, 'setup');
         if ($this->isEnabled($identityId)) {
             throw new MfaAlreadyEnabled();
         }
@@ -73,7 +78,7 @@ final readonly class MfaSettings
      * @return list<string>
      * @throws InvalidMfaInput|MfaThrottled|MfaAlreadyEnabled|MfaNotEnabled|MfaUnavailable
      */
-    public function confirm(string $identityId, #[\SensitiveParameter] array $data): array
+    public function confirm(string $identityId, #[\SensitiveParameter] array $data, ClientContext $client): array
     {
         $crypto = $this->crypto();
         $code = self::fields($data, ['code'])['code'];
@@ -87,13 +92,16 @@ final readonly class MfaSettings
         $now = $this->clock->now();
         $step = Totp::match($secret, $code, $now, null);
         if ($step === null) {
+            $this->refused($client, $identityId, 'confirm', 'wrong_code');
             throw new InvalidMfaInput(['code' => 'incorrect']);
         }
         if (!$this->mfa->confirmTotp($identityId, $step, $now)) {
             throw new MfaNotEnabled();
         }
+        $codes = $this->newRecoveryCodes($identityId, $crypto);
+        $this->audit->record(AuditEventType::MFA_ENABLED, AuditEvent::SUCCESS, $client, $identityId, details: ['method' => 'totp']);
 
-        return $this->newRecoveryCodes($identityId, $crypto);
+        return $codes;
     }
 
     /**
@@ -101,15 +109,17 @@ final readonly class MfaSettings
      * @return list<string>
      * @throws InvalidMfaInput|MfaThrottled|MfaNotEnabled|MfaUnavailable
      */
-    public function regenerateRecoveryCodes(string $identityId, #[\SensitiveParameter] array $data): array
+    public function regenerateRecoveryCodes(string $identityId, #[\SensitiveParameter] array $data, ClientContext $client): array
     {
         $crypto = $this->crypto();
-        $this->assertPassword($identityId, self::fields($data, ['password'])['password']);
+        $this->assertPassword($identityId, self::fields($data, ['password'])['password'], $client, 'recovery_codes');
         if (!$this->isEnabled($identityId)) {
             throw new MfaNotEnabled();
         }
+        $codes = $this->newRecoveryCodes($identityId, $crypto);
+        $this->audit->record(AuditEventType::RECOVERY_CODES_REGENERATED, AuditEvent::SUCCESS, $client, $identityId);
 
-        return $this->newRecoveryCodes($identityId, $crypto);
+        return $codes;
     }
 
     /**
@@ -119,12 +129,12 @@ final readonly class MfaSettings
      * @param array<array-key, mixed> $data `{password, code}` or `{password, recovery_code}`
      * @throws InvalidMfaInput|MfaThrottled|MfaNotEnabled|MfaUnavailable
      */
-    public function disable(string $identityId, #[\SensitiveParameter] array $data): void
+    public function disable(string $identityId, #[\SensitiveParameter] array $data, ClientContext $client): void
     {
         $crypto = $this->crypto();
         $hasCode = array_key_exists('code', $data);
         $fields = self::fields($data, ['password', $hasCode ? 'code' : 'recovery_code']);
-        $this->assertPassword($identityId, $fields['password']);
+        $this->assertPassword($identityId, $fields['password'], $client, 'disable');
         if (!$this->isEnabled($identityId)) {
             throw new MfaNotEnabled();
         }
@@ -135,10 +145,12 @@ final readonly class MfaSettings
             ? $verifier->verifyCode($identityId, $fields['code'])
             : $verifier->verifyRecoveryCode($identityId, $fields['recovery_code']);
         if (!$ok) {
+            $this->refused($client, $identityId, 'disable', $hasCode ? 'wrong_code' : 'wrong_recovery_code');
             throw new InvalidMfaInput([$hasCode ? 'code' : 'recovery_code' => 'incorrect']);
         }
 
         $this->mfa->disable($identityId);
+        $this->audit->record(AuditEventType::MFA_DISABLED, AuditEvent::SUCCESS, $client, $identityId, details: ['method' => $hasCode ? 'totp' : 'recovery_code']);
     }
 
     /** @return list<string> */
@@ -154,13 +166,20 @@ final readonly class MfaSettings
         return $codes;
     }
 
-    private function assertPassword(string $identityId, #[\SensitiveParameter] string $password): void
+    private function assertPassword(string $identityId, #[\SensitiveParameter] string $password, ClientContext $client, string $action): void
     {
         $this->throttle('mfa:password:' . $identityId, self::PASSWORD_LIMIT);
         $hash = $this->identities->passwordHash($identityId);
         if ($hash === null || !$this->hasher->verify($password, $hash)) {
+            // A wrong password inside a live session may mean a stolen session (T-15).
+            $this->refused($client, $identityId, $action, 'wrong_password');
             throw new InvalidMfaInput(['password' => 'incorrect']);
         }
+    }
+
+    private function refused(ClientContext $client, string $identityId, string $action, string $reason): void
+    {
+        $this->audit->record(AuditEventType::MFA_CHANGE_REFUSED, AuditEvent::FAILURE, $client, $identityId, details: ['action' => $action, 'reason' => $reason]);
     }
 
     private function throttle(string $key, int $limit): void

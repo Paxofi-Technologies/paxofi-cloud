@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\SignIn;
 
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\ClientContext;
+use PaxofiCloud\Tests\Support\InMemoryAuditLog;
+use PaxofiCloud\Tests\Support\AuditFixtures;
 use PHPUnit\Framework\TestCase;
 use PaxofiCloud\Application\Contracts\HumanCheck;
 use PaxofiCloud\Application\Contracts\PasswordRehashPolicy;
@@ -52,6 +57,8 @@ final class SignInTest extends TestCase
     private bool $needsRehash = false;
     private SignIn $signIn;
 
+    private InMemoryAuditLog $audit;
+
     protected function setUp(): void
     {
         $this->store = new InMemoryIdentityStore();
@@ -83,8 +90,9 @@ final class SignInTest extends TestCase
             $sessions,
             $this->logger,
             new ChallengeGate($this->human),
-            new MfaSettings($this->mfaStore, $this->store, $this->hasher, new ScriptedRateLimiter(), $clock, MfaFixtures::crypto()),
-            new CompleteMfaSignIn(new InMemoryMfaChallengeStore(), $this->mfaStore, $this->store, $sessions, $clock, $this->logger, MfaFixtures::crypto()),
+            new MfaSettings($this->mfaStore, $this->store, $this->hasher, new ScriptedRateLimiter(), $clock, MfaFixtures::crypto(), AuditFixtures::trail()),
+            new CompleteMfaSignIn(new InMemoryMfaChallengeStore(), $this->mfaStore, $this->store, $sessions, $clock, $this->logger, MfaFixtures::crypto(), AuditFixtures::trail()),
+            AuditFixtures::trail($this->audit = new InMemoryAuditLog()),
         );
         $this->addIdentity('active');
     }
@@ -361,7 +369,7 @@ final class SignInTest extends TestCase
     {
         $this->mfaStore->totp['id-1'] = ['secret_envelope' => 'v1.x.y', 'confirmed' => true, 'last_used_step' => null];
 
-        $result = $this->signIn->signIn(self::form(), self::IP, '', null);
+        $result = $this->signIn->signIn(self::form(), ClientContext::ip(self::IP), null);
 
         self::assertInstanceOf(MfaPending::class, $result);
         self::assertMatchesRegularExpression('/^[A-Za-z0-9_-]{43}$/', $result->ticket);
@@ -375,10 +383,52 @@ final class SignInTest extends TestCase
         self::assertSame('id-1', $this->issued(self::form(), self::IP, '', null)->session->identityId);
     }
 
+    public function testSuccessIsAuditedWithWhoAndWhere(): void
+    {
+        $this->issued(self::form(), self::IP, AuditFixtures::USER_AGENT, null);
+
+        self::assertSame([AuditEventType::SIGN_IN_SUCCEEDED], $this->audit->types());
+        $event = $this->audit->events[0];
+        self::assertSame(['id-1', 'acct-1', AuditEvent::SUCCESS], [$event->identityId, $event->accountId, $event->outcome]);
+        self::assertSame(self::IP, $event->client->ip);
+        self::assertSame('Chrome 129 on Windows (desktop)', $event->client->device()->label());
+    }
+
+    public function testWrongPasswordIsAuditedAgainstTheAccountAndUnknownEmailWithoutOne(): void
+    {
+        foreach ([self::form(password: 'wrong passphrase'), self::form('nobody@example.ng')] as $form) {
+            try {
+                $this->signIn->signIn($form, ClientContext::ip(self::IP), null);
+                self::fail('Expected the sign-in to fail.');
+            } catch (InvalidCredentials) {
+            }
+        }
+
+        self::assertSame([AuditEventType::SIGN_IN_FAILED, AuditEventType::SIGN_IN_FAILED], $this->audit->types());
+        self::assertSame(['id-1', ['reason' => 'wrong_password']], [$this->audit->events[0]->identityId, $this->audit->events[0]->details]);
+        self::assertSame([null, ['reason' => 'unknown_account']], [$this->audit->events[1]->identityId, $this->audit->events[1]->details]);
+    }
+
+    public function testThePasswordStepOfATotpSignInIsAuditedAsMfaRequired(): void
+    {
+        $this->mfaStore->totp['id-1'] = ['secret_envelope' => 'v1.x.y', 'confirmed' => true, 'last_used_step' => null];
+
+        $this->signIn->signIn(self::form(), ClientContext::ip(self::IP), null);
+
+        self::assertSame([AuditEventType::SIGN_IN_MFA_REQUIRED], $this->audit->types());
+    }
+
+    public function testAnAuditOutageNeverBlocksSignIn(): void
+    {
+        $this->audit->fail = true;
+
+        self::assertSame('id-1', $this->issued(self::form(), self::IP, '', null)->session->identityId);
+    }
+
     /** @param array<array-key, mixed> $form */
     private function issued(array $form, string $ip, string $userAgent, ?string $previous): IssuedSession
     {
-        $result = $this->signIn->signIn($form, $ip, $userAgent, $previous);
+        $result = $this->signIn->signIn($form, ClientContext::from($ip, $userAgent, null, null, null, ''), $previous);
         self::assertInstanceOf(IssuedSession::class, $result);
 
         return $result;

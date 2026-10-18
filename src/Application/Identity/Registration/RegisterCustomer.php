@@ -6,6 +6,10 @@ namespace PaxofiCloud\Application\Identity\Registration;
 
 use Paxofi\Core\Contracts\PasswordHasher;
 use Paxofi\Core\Contracts\TransactionManager;
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
@@ -42,6 +46,7 @@ final readonly class RegisterCustomer
         private string $termsVersion,
         private BreachedPasswordCheck $breaches,
         private ChallengeGate $challenge,
+        private AuditTrail $audit,
     ) {
         if (preg_match('/^[A-Za-z0-9._-]{1,32}$/', $termsVersion) !== 1) {
             throw new \InvalidArgumentException('Terms version must be 1-32 safe characters.');
@@ -55,14 +60,14 @@ final readonly class RegisterCustomer
      * @throws ChallengeRequired
      * @throws ChallengeUnavailable
      */
-    public function register(#[\SensitiveParameter] array $data, string $clientIp): void
+    public function register(#[\SensitiveParameter] array $data, ClientContext $client): void
     {
         $input = RegistrationInput::fromArray($data);
 
         // Rate limits run before the expensive hash (T-11) and count only
         // well-formed attempts, so a typo does not lock a customer out.
         $retry = max(
-            $this->limiter->hit('register:ip:' . hash('sha256', $clientIp), self::PER_IP_LIMIT, self::WINDOW_SECONDS),
+            $this->limiter->hit('register:ip:' . hash('sha256', $client->ip), self::PER_IP_LIMIT, self::WINDOW_SECONDS),
             $this->limiter->hit('register:email:' . $input->email->hash(), self::PER_EMAIL_LIMIT, self::WINDOW_SECONDS),
         );
         if ($retry > 0) {
@@ -70,7 +75,7 @@ final readonly class RegisterCustomer
         }
 
         // T-02: a bot challenge, after the cheap limits and before any outward or costly work.
-        $this->challenge->assertHuman(ChallengeGate::token($data), ChallengeGate::REGISTER, $clientIp);
+        $this->challenge->assertHuman(ChallengeGate::token($data), ChallengeGate::REGISTER, $client->ip);
 
         // T-06: a password already seen in a breach is refused. The lookup fails
         // open (null) so an outage of the range API never blocks sign-up.
@@ -81,7 +86,16 @@ final readonly class RegisterCustomer
         $passwordHash = $this->hasher->hash($input->password);
         for ($attempt = 1; ; $attempt++) {
             try {
-                $this->transactions->transaction(fn () => $this->store($input, $passwordHash));
+                [$type, $identityId, $accountId] = $this->transactions->transaction(fn (): array => $this->store($input, $passwordHash));
+                // §6.14: recorded after commit, so a rolled-back attempt is never audited as done.
+                $this->audit->record(
+                    $type,
+                    $type === AuditEventType::REGISTRATION_EXISTING_ACCOUNT ? AuditEvent::FAILURE : AuditEvent::SUCCESS,
+                    $client,
+                    $identityId,
+                    $accountId,
+                    $type === AuditEventType::REGISTRATION_EXISTING_ACCOUNT ? ['reason' => 'account_exists'] : [],
+                );
 
                 return;
             } catch (\PDOException $e) {
@@ -95,7 +109,8 @@ final readonly class RegisterCustomer
         }
     }
 
-    private function store(RegistrationInput $input, string $passwordHash): void
+    /** @return array{string, string, ?string} the audit event type, identity ID and account ID */
+    private function store(RegistrationInput $input, string $passwordHash): array
     {
         $now = $this->clock->now();
         $existing = $this->identities->findByEmailLookupForUpdate($input->email->hash());
@@ -104,14 +119,16 @@ final readonly class RegisterCustomer
             // T-01: the owner learns someone tried; the caller learns nothing.
             $this->outbox->enqueue($input->email, EmailTemplates::ACCOUNT_EXISTS, ['name' => $existing['full_name']]);
 
-            return;
+            return [AuditEventType::REGISTRATION_EXISTING_ACCOUNT, $existing['id'], null];
         }
 
         if ($existing === null) {
             $identityId = bin2hex(random_bytes(16));
+            $accountId = bin2hex(random_bytes(16));
+            $type = AuditEventType::REGISTERED;
             $this->identities->createPending(
                 $identityId,
-                bin2hex(random_bytes(16)),
+                $accountId,
                 $input->email->value,
                 $input->email->hash(),
                 $input->fullName,
@@ -124,12 +141,16 @@ final readonly class RegisterCustomer
             // T-46: the newest submission replaces a pending registration and
             // every older link stops working.
             $identityId = $existing['id'];
+            $accountId = null;
+            $type = AuditEventType::REGISTRATION_REPEATED;
             $this->identities->overwritePending($identityId, $input->fullName, $input->phone, $passwordHash, $this->termsVersion, $now);
         }
 
         $token = self::newToken();
         $this->identities->replaceVerificationToken($identityId, hash('sha256', $token), $now->modify('+' . self::TOKEN_TTL_SECONDS . ' seconds'));
         $this->outbox->enqueue($input->email, EmailTemplates::VERIFY_EMAIL, ['name' => $input->fullName, 'token' => $token]);
+
+        return [$type, $identityId, $accountId];
     }
 
     /** 256 bits from the CSPRNG, base64url without padding: 43 characters (D-1). */

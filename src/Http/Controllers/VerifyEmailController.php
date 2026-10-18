@@ -13,6 +13,7 @@ use PaxofiCloud\Application\Identity\Registration\VerificationTokenInvalid;
 use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 
 /**
@@ -34,7 +35,7 @@ final readonly class VerifyEmailController implements Controller
         }
 
         try {
-            $this->verify->verify($data['token'], JsonBody::clientIp($request));
+            $this->verify->verify($data['token'], RequestClient::of($request));
         } catch (VerificationTokenInvalid) {
             return ProblemDetails::response(400, 'verification_link_invalid', RequestId::of($request), 'This link has already been used or has expired.');
         } catch (RegistrationThrottled $e) {

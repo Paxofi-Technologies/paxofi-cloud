@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Infrastructure\Providers;
 
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Contracts\AuditLog;
 use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\HumanVerification;
@@ -21,6 +23,7 @@ use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Http\Controllers\MfaController;
+use PaxofiCloud\Infrastructure\Audit\MysqlAuditLog;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
 use PaxofiCloud\Infrastructure\Email\OutboxSealer;
@@ -86,6 +89,7 @@ final class IdentityProvider implements Provider
                 is_string($terms) ? $terms : '',
                 self::breachedPasswordCheck($c),
                 Resolve::get($c, ChallengeGate::class),
+                Resolve::get($c, AuditTrail::class),
             );
         });
 
@@ -96,6 +100,7 @@ final class IdentityProvider implements Provider
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
             Resolve::get($c, ChallengeGate::class),
+            Resolve::get($c, AuditTrail::class),
         ));
 
         $container->singleton(VerifyEmail::class, static fn (Container $c): VerifyEmail => new VerifyEmail(
@@ -103,6 +108,7 @@ final class IdentityProvider implements Provider
             Resolve::get($c, TransactionManager::class),
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
+            Resolve::get($c, AuditTrail::class),
         ));
         $container->singleton(Sessions::class, static fn (Container $c): Sessions => new Sessions(
             new RedisSessionStore(Resolve::get($c, RedisClient::class)),
@@ -128,6 +134,7 @@ final class IdentityProvider implements Provider
                 Resolve::get($c, ChallengeGate::class),
                 Resolve::get($c, MfaSettings::class),
                 Resolve::get($c, CompleteMfaSignIn::class),
+                Resolve::get($c, AuditTrail::class),
             );
         });
 
@@ -143,6 +150,7 @@ final class IdentityProvider implements Provider
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
             self::mfaCrypto($c),
+            Resolve::get($c, AuditTrail::class),
         ));
 
         $container->singleton(CompleteMfaSignIn::class, static fn (Container $c): CompleteMfaSignIn => new CompleteMfaSignIn(
@@ -153,12 +161,24 @@ final class IdentityProvider implements Provider
             new SystemClock(),
             Resolve::get($c, Logger::class),
             self::mfaCrypto($c),
+            Resolve::get($c, AuditTrail::class),
         ));
 
         $container->singleton(MfaController::class, static fn (Container $c): MfaController => new MfaController(
             Resolve::get($c, MfaSettings::class),
             Resolve::get($c, Sessions::class),
             Resolve::get($c, SignInStore::class),
+        ));
+
+        $container->singleton(AuditLog::class, static fn (Container $c): AuditLog => new MysqlAuditLog(
+            Resolve::get($c, Connection::class),
+            Resolve::get($c, Repository::class),
+            Resolve::get($c, TransactionManager::class),
+        ));
+        $container->singleton(AuditTrail::class, static fn (Container $c): AuditTrail => new AuditTrail(
+            Resolve::get($c, AuditLog::class),
+            new SystemClock(),
+            Resolve::get($c, Logger::class),
         ));
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Application\Identity\Session;
 
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\SessionStore;
 
@@ -23,12 +24,12 @@ final readonly class Sessions
     {
     }
 
-    public function issue(string $identityId, string $accountId, string $clientIp, string $userAgent): IssuedSession
+    public function issue(string $identityId, string $accountId, ClientContext $client): IssuedSession
     {
         $sessionId = self::token();
         $csrf = self::token();
         $now = $this->clock->now();
-        $session = new Session(self::hash($sessionId), $identityId, $accountId, $csrf, $now, $now, $clientIp, mb_substr($userAgent, 0, 255));
+        $session = new Session(self::hash($sessionId), $identityId, $accountId, $csrf, $now, $now, $client->ip, mb_substr($client->userAgent, 0, 255));
         $this->store->save($session, self::IDLE_SECONDS);
 
         return new IssuedSession($sessionId, $csrf, $session);
