@@ -12,7 +12,7 @@
 #   release <sha>      migrate, start <sha>, health-check; roll back on failure
 #   status             current/previous version and container health
 #
-# Runtime secrets (DB/Redis passwords, the email outbox key pair) are generated
+# Runtime secrets (DB/Redis passwords, the email outbox key pair, the MFA keys) are generated
 # here on first release and never leave the host. Logs never print secret
 # values (P-11).
 set -euo pipefail
@@ -43,7 +43,7 @@ random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40;
 ensure_secrets() {
   local version="$1" f keys
   install -d -m 0700 "$ENV_DIR"
-  for f in outbox-public.env outbox-secret.env mail-providers.env web.env; do
+  for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env; do
     [ -e "$ENV_DIR/$f" ] || install -m 0600 /dev/null "$ENV_DIR/$f"
   done
   if [ ! -s "$ENV_DIR/app.env" ]; then
@@ -53,6 +53,13 @@ ensure_secrets() {
     printf 'MYSQL_RANDOM_ROOT_PASSWORD=yes\nMYSQL_DATABASE=paxoficloud\nMYSQL_USER=paxoficloud\nMYSQL_PASSWORD=%s\n' "$db" > "$ENV_DIR/mysql.env"
     printf 'REDIS_PASSWORD=%s\n' "$redis" > "$ENV_DIR/redis.env"
     log "generated runtime secrets (values not logged)"
+  fi
+  if [ ! -s "$ENV_DIR/identity-keys.env" ]; then
+    # TOTP secret key ring and recovery-code key (identity threat model §6.13):
+    # 32 random bytes each, generated here, mounted into the php container only.
+    printf 'MFA_SECRET_KEYS=k1:%s\nMFA_SECRET_ACTIVE_KEY=k1\nMFA_RECOVERY_KEY=%s\n' \
+      "$(head -c 32 /dev/urandom | base64 -w0)" "$(head -c 32 /dev/urandom | base64 -w0)" > "$ENV_DIR/identity-keys.env"
+    log "generated MFA keys (values not logged)"
   fi
   if [ ! -s "$ENV_DIR/outbox-public.env" ]; then
     # Email outbox key pair (E-3): the web tier gets the public half only.

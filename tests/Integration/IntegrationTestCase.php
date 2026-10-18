@@ -24,6 +24,12 @@ abstract class IntegrationTestCase extends TestCase
         if (getenv('BREACHED_PASSWORD_CHECK') === false) {
             putenv('BREACHED_PASSWORD_CHECK=off');
         }
+        // Fixed, test-only MFA keys (§6.13) unless the run provides its own.
+        if (getenv('MFA_RECOVERY_KEY') === false) {
+            putenv('MFA_SECRET_KEYS=t1:' . base64_encode(str_repeat("\x11", 32)));
+            putenv('MFA_SECRET_ACTIVE_KEY=t1');
+            putenv('MFA_RECOVERY_KEY=' . base64_encode(str_repeat("\x22", 32)));
+        }
     }
 
     protected static function env(string $key): string
@@ -46,6 +52,8 @@ abstract class IntegrationTestCase extends TestCase
     protected static function resetDatabase(): void
     {
         $pdo = self::pdo();
+        $pdo->exec('DROP TABLE IF EXISTS identity_recovery_codes');
+        $pdo->exec('DROP TABLE IF EXISTS identity_totp');
         $pdo->exec('DROP TABLE IF EXISTS email_verification_tokens');
         $pdo->exec('DROP TABLE IF EXISTS account_members');
         $pdo->exec('DROP TABLE IF EXISTS accounts');

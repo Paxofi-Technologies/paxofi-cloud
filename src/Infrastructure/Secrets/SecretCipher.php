@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Infrastructure\Secrets;
 
+use PaxofiCloud\Application\Contracts\SecretEncryption;
+
 /**
  * Authenticated encryption for secrets at rest using libsodium's
  * XChaCha20-Poly1305 (IETF) with a random 192-bit nonce per message
@@ -16,7 +18,7 @@ namespace PaxofiCloud\Infrastructure\Secrets;
  * ciphertext copied into another row (for example from a read-only token to
  * a read/write one) fails to decrypt (threat model V-01).
  */
-final class SecretCipher
+final class SecretCipher implements SecretEncryption
 {
     private const string VERSION = 'v1';
 

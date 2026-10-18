@@ -15,4 +15,7 @@ interface SignInStore
 
     /** @return array{full_name: string, email: string, status: string}|null */
     public function findProfile(string $identityId): ?array;
+
+    /** For re-checking the password before MFA changes (T-17). */
+    public function passwordHash(string $identityId): ?string;
 }

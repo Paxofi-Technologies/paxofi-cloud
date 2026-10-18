@@ -6,6 +6,8 @@ namespace PaxofiCloud\Http\Controllers;
 
 use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
+use PaxofiCloud\Application\Identity\Mfa\CompleteMfaSignIn;
+use PaxofiCloud\Application\Identity\Mfa\MfaPending;
 use PaxofiCloud\Application\Identity\SignIn\AccountUnavailable;
 use PaxofiCloud\Application\Identity\SignIn\EmailNotVerified;
 use PaxofiCloud\Application\Identity\SignIn\InvalidCredentials;
@@ -13,6 +15,7 @@ use PaxofiCloud\Application\Identity\SignIn\InvalidSignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignInThrottled;
 use PaxofiCloud\Http\JsonBody;
+use PaxofiCloud\Http\MfaCookie;
 use PaxofiCloud\Http\ProblemDetails;
 use PaxofiCloud\Http\RequestId;
 use PaxofiCloud\Http\SessionCookie;
@@ -56,6 +59,15 @@ final readonly class SignInController implements Controller
             return ProblemDetails::response(403, 'email_not_verified', $id);
         } catch (AccountUnavailable) {
             return ProblemDetails::response(403, 'account_unavailable', $id);
+        }
+
+        if ($issued instanceof MfaPending) {
+            // §6.13: no session yet, only the short-lived second-step ticket.
+            return new Response(
+                200,
+                ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => [SessionCookie::clear(), MfaCookie::issue($issued->ticket, CompleteMfaSignIn::TICKET_TTL_SECONDS)]],
+                '{"status":"mfa_required"}',
+            );
         }
 
         return new Response(

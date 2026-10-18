@@ -7,20 +7,30 @@ namespace PaxofiCloud\Infrastructure\Providers;
 use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\HumanVerification;
+use PaxofiCloud\Application\Contracts\MfaStore;
 use PaxofiCloud\Application\Contracts\SignInStore;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
+use PaxofiCloud\Application\Identity\Mfa\CompleteMfaSignIn;
+use PaxofiCloud\Application\Identity\Mfa\MfaCrypto;
+use PaxofiCloud\Application\Identity\Mfa\MfaSettings;
+use PaxofiCloud\Application\Identity\Mfa\RecoveryCodes;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\ResendVerification;
 use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Http\Controllers\ChallengeController;
+use PaxofiCloud\Http\Controllers\MfaController;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
 use PaxofiCloud\Infrastructure\Email\OutboxSealer;
 use PaxofiCloud\Infrastructure\Identity\Argon2idPasswordHasher;
 use PaxofiCloud\Infrastructure\Identity\MysqlIdentityStore;
+use PaxofiCloud\Infrastructure\Identity\MysqlMfaStore;
 use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
+use PaxofiCloud\Infrastructure\Secrets\KeyRing;
+use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
+use PaxofiCloud\Infrastructure\Session\RedisMfaChallengeStore;
 use PaxofiCloud\Infrastructure\Session\RedisSessionStore;
 use PaxofiCloud\Infrastructure\Session\RedisSignInThrottle;
 use PaxofiCloud\Infrastructure\Time\SystemClock;
@@ -116,8 +126,40 @@ final class IdentityProvider implements Provider
                 Resolve::get($c, Sessions::class),
                 Resolve::get($c, Logger::class),
                 Resolve::get($c, ChallengeGate::class),
+                Resolve::get($c, MfaSettings::class),
+                Resolve::get($c, CompleteMfaSignIn::class),
             );
         });
+
+        $container->singleton(MfaStore::class, static fn (Container $c): MfaStore => new MysqlMfaStore(
+            Resolve::get($c, Connection::class),
+            Resolve::get($c, Repository::class),
+        ));
+
+        $container->singleton(MfaSettings::class, static fn (Container $c): MfaSettings => new MfaSettings(
+            Resolve::get($c, MfaStore::class),
+            Resolve::get($c, SignInStore::class),
+            new Argon2idPasswordHasher(),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+            self::mfaCrypto($c),
+        ));
+
+        $container->singleton(CompleteMfaSignIn::class, static fn (Container $c): CompleteMfaSignIn => new CompleteMfaSignIn(
+            new RedisMfaChallengeStore(Resolve::get($c, RedisClient::class)),
+            Resolve::get($c, MfaStore::class),
+            Resolve::get($c, SignInStore::class),
+            Resolve::get($c, Sessions::class),
+            new SystemClock(),
+            Resolve::get($c, Logger::class),
+            self::mfaCrypto($c),
+        ));
+
+        $container->singleton(MfaController::class, static fn (Container $c): MfaController => new MfaController(
+            Resolve::get($c, MfaSettings::class),
+            Resolve::get($c, Sessions::class),
+            Resolve::get($c, SignInStore::class),
+        ));
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));
         $container->singleton(ChallengeGate::class, static fn (Container $c): ChallengeGate => new ChallengeGate(Resolve::get($c, HumanVerification::class)));
@@ -126,6 +168,30 @@ final class IdentityProvider implements Provider
 
             return new ChallengeController(Resolve::get($c, HumanVerification::class)->enabled() && is_string($key) ? $key : null);
         });
+    }
+
+    /**
+     * §6.13: MFA keys come from the process environment at use (never the
+     * config cache, DP-4). None set = MFA unavailable; production refuses that.
+     */
+    private static function mfaCrypto(Container $c): ?MfaCrypto
+    {
+        $ring = KeyRing::fromNamedProcessEnvironment('MFA_SECRET_KEYS', 'MFA_SECRET_ACTIVE_KEY');
+        $recovery = getenv('MFA_RECOVERY_KEY');
+        $recovery = is_string($recovery) ? $recovery : '';
+        if ($ring === null && $recovery === '') {
+            if (Resolve::get($c, Configuration::class)->get('app.env') === 'production') {
+                throw new \InvalidArgumentException('MFA_SECRET_KEYS, MFA_SECRET_ACTIVE_KEY and MFA_RECOVERY_KEY are required in production.');
+            }
+
+            return null;
+        }
+        $recoveryKey = base64_decode($recovery, true);
+        if ($ring === null || $recoveryKey === false) {
+            throw new \InvalidArgumentException('MFA_SECRET_KEYS, MFA_SECRET_ACTIVE_KEY and MFA_RECOVERY_KEY must all be set and well-formed.');
+        }
+
+        return new MfaCrypto(new SecretCipher($ring), new RecoveryCodes($recoveryKey));
     }
 
     /** §6.12: Turnstile when both keys are set; off otherwise, never in production. */

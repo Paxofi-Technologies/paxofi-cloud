@@ -273,6 +273,19 @@ Written before the code; it fixes how T-02, T-06 and T-07 use Cloudflare Turnsti
 - **Browser.** The Turnstile script is loaded only on the three forms, from `https://challenges.cloudflare.com` (CSP `script-src` and `frame-src` allow exactly that origin). Cloudflare does not support SRI for this script; accepted because Cloudflare already terminates our TLS and is in the trust boundary.
 - **Residual.** An attacker who solves challenges (human farms) is still limited by the per-IP, per-pair and per-email limits; owner notification for counter (b) arrives with the audit/notification PR.
 
+### 6.13 TOTP two-step verification implementation notes (Sprint 1, PR "MFA API")
+
+Written before the code; it fixes how D-4, D-5 and T-13…T-17 are met in this PR and what is deferred.
+
+- **Endpoints (all need a session, the session's CSRF token and the Origin + JSON guard).** `GET /api/v1/account/mfa` (status: TOTP on/off, recovery codes left); `POST /api/v1/account/mfa/totp/setup {password}` → a new 160-bit secret, returned once as base32 and as an `otpauth://totp/PaxofiCloud:<email>?secret=…&issuer=PaxofiCloud&algorithm=SHA1&digits=6&period=30` URI; `POST …/totp/confirm {code}` → turns TOTP on and returns 10 recovery codes once; `POST …/recovery-codes {password}` → a new set (the old set stops working); `POST …/disable {password, code | recovery_code}`.
+- **Step-up (T-17).** Setup, new recovery codes and disable each require the current password in the same request (verified with Argon2id; 5 wrong passwords per identity per 15 min → 429). The general 5-minute step-up of T-22 comes with the first high-impact action that needs it.
+- **Secrets at rest (D-4, T-15).** `identity_totp.secret` holds a `SecretCipher` envelope (XChaCha20-Poly1305, key ID for rotation) with associated data `totp:<identity id>`, so a ciphertext copied to another row does not decrypt. Keys: `MFA_SECRET_KEYS` / `MFA_SECRET_ACTIVE_KEY`, separate from the provider-credential KEK (which the web tier never holds, P-6). A setup that is never confirmed is replaced by the next setup; a confirmed TOTP must be disabled before a new setup.
+- **Verification (D-4, T-13).** RFC 6238 over `hash_hmac('sha1')` (no own primitive), 6 digits, 30 s step, ±1 step, compared with `hash_equals`. The accepted step is stored; a code for that step or an earlier one is refused, so a code works once. RFC 6238 test vectors are unit tests.
+- **Recovery codes (D-1, D-5).** 10 codes of 16 base32 characters (80 bits), shown as `XXXX-XXXX-XXXX-XXXX`; only `BLAKE2b(code, MFA_RECOVERY_KEY)` is stored; single use; input is case- and dash-insensitive.
+- **Sign-in second step (T-14, T-18).** When TOTP is on, a correct password no longer creates a session: it creates an MFA ticket (256-bit, Redis `pc:mfa:{SHA-256}`, 5 min, bound to identity and account) in a `__Host-pc_mfa` HttpOnly cookie, and the API answers `200 {"status":"mfa_required"}`. `POST /api/v1/auth/sign-in/mfa {code | recovery_code}` then issues the session (new ID, as in §6.11) and deletes the ticket. 5 wrong codes delete the ticket and lock the second step for that identity for 15 min (logged; the owner email arrives with notifications). The ticket can only finish sign-in; it grants nothing else.
+- **Keys on the host.** The deploy agent generates `MFA_SECRET_KEYS`, `MFA_SECRET_ACTIVE_KEY` and `MFA_RECOVERY_KEY` on first release into `identity-keys.env` (0600), mounted into the php container only; values never leave the host or reach logs. Without keys TOTP setup answers `503 mfa_unavailable` (sign-in unaffected); production refuses to start without them.
+- **Deferred:** support-assisted MFA removal with 24 h delay (T-16, needs the admin console); owner email on MFA changes and lockouts (notifications); revoking other sessions on MFA changes (needs the session list, T-23); WebAuthn for customers (Phase 2).
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -301,3 +314,4 @@ Written before the code; it fixes how T-02, T-06 and T-07 use Cloudflare Turnsti
 | 2026-10-17 | T-06 breached-password check at registration (k-anonymity range API, padding, fail-open + log), written before the code | Claude (security engineering) |
 | 2026-10-17 | §6.11 sign-in and session implementation notes (T-06…T-12, T-18…T-24), written before the sign-in code | Claude (security engineering) |
 | 2026-10-18 | §6.12 Turnstile implementation notes (T-02, T-06, T-07, T-47, T-49; fail closed; challenge counter made address-independent), written before the Turnstile code | Claude (security engineering) |
+| 2026-10-18 | §6.13 TOTP two-step verification notes (D-4, D-5, T-13…T-17), written before the MFA code | Claude (security engineering) |
