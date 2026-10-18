@@ -13,6 +13,7 @@ use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\MfaStore;
 use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Contracts\SignInStore;
+use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
 
 /**
  * Turning TOTP on and off for the signed-in customer (SRS IAM-007, IAM-013,
@@ -33,6 +34,7 @@ final readonly class MfaSettings
         private Clock $clock,
         private ?MfaCrypto $crypto,
         private AuditTrail $audit,
+        private SignInAlerts $alerts,
     ) {
     }
 
@@ -100,6 +102,7 @@ final readonly class MfaSettings
         }
         $codes = $this->newRecoveryCodes($identityId, $crypto);
         $this->audit->record(AuditEventType::MFA_ENABLED, AuditEvent::SUCCESS, $client, $identityId, details: ['method' => 'totp']);
+        $this->alerts->securityChanged($identityId, $client, 'mfa_enabled');
 
         return $codes;
     }
@@ -118,6 +121,7 @@ final readonly class MfaSettings
         }
         $codes = $this->newRecoveryCodes($identityId, $crypto);
         $this->audit->record(AuditEventType::RECOVERY_CODES_REGENERATED, AuditEvent::SUCCESS, $client, $identityId);
+        $this->alerts->securityChanged($identityId, $client, 'recovery_codes_regenerated');
 
         return $codes;
     }
@@ -151,6 +155,7 @@ final readonly class MfaSettings
 
         $this->mfa->disable($identityId);
         $this->audit->record(AuditEventType::MFA_DISABLED, AuditEvent::SUCCESS, $client, $identityId, details: ['method' => $hasCode ? 'totp' : 'recovery_code']);
+        $this->alerts->securityChanged($identityId, $client, 'mfa_disabled');
     }
 
     /** @return list<string> */

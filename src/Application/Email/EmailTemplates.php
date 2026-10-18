@@ -16,11 +16,28 @@ namespace PaxofiCloud\Application\Email;
  * - The only customer-supplied value is the first name. It is reduced to
  *   letters, spaces, apostrophes and hyphens (no URLs or markup can survive)
  *   and HTML-escaped (M-05).
+ * - Security alerts (threat model §6.15, T-53) add the device, location, IP
+ *   and time of the request; each is checked against a strict pattern
+ *   (anything else shows as "Unknown") and escaped. Their only link is the
+ *   Security page, where the customer signs in as usual.
  */
 final readonly class EmailTemplates
 {
     public const string VERIFY_EMAIL = 'verify-email';
     public const string ACCOUNT_EXISTS = 'account-exists';
+    public const string SIGN_IN_ALERT = 'sign-in-alert';
+    public const string NEW_DEVICE_ALERT = 'new-device-alert';
+    public const string SIGN_IN_ATTEMPTS_ALERT = 'sign-in-attempts-alert';
+    public const string SECURITY_CHANGE = 'security-change';
+
+    /** Changes the security-change email can report, with how they read. */
+    public const array SECURITY_CHANGES = [
+        'mfa_enabled' => 'Two-step verification was turned on',
+        'mfa_disabled' => 'Two-step verification was turned off',
+        'recovery_codes_regenerated' => 'New recovery codes were created; the old ones no longer work',
+    ];
+
+    private const string DISPLAY_TIMEZONE = 'Africa/Lagos';
 
     private string $appUrl;
 
@@ -39,7 +56,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE];
     }
 
     /** @param array<string, string> $parameters */
@@ -50,6 +67,7 @@ final readonly class EmailTemplates
         return match ($template) {
             self::VERIFY_EMAIL => $this->verifyEmail($to, $name, self::token($parameters), $idempotencyKey),
             self::ACCOUNT_EXISTS => $this->accountExists($to, $name, $idempotencyKey),
+            self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
     }
@@ -106,15 +124,71 @@ final readonly class EmailTemplates
         ), self::ACCOUNT_EXISTS, $key);
     }
 
-    private function html(string $title, string $greeting, string $lead, string $button, string $link, string $footer): string
+    /** @param array<string, string> $parameters */
+    private function securityAlert(EmailAddress $to, string $template, string $name, array $parameters, string $key): EmailMessage
+    {
+        $product = $this->productName;
+        [$subject, $lead, $footer] = match ($template) {
+            self::SIGN_IN_ALERT => [
+                "You signed in to {$product}",
+                "Your {$product} account was just signed in to.",
+                'If this was you, you do not need to do anything. If it was not, change your password and turn on two-step verification now.',
+            ],
+            self::NEW_DEVICE_ALERT => [
+                "New device signed in to your {$product} account",
+                "Your {$product} account was signed in to from a device or browser we have not seen before.",
+                'If this was you, you do not need to do anything. If it was not, someone may know your password: change it and turn on two-step verification now.',
+            ],
+            self::SIGN_IN_ATTEMPTS_ALERT => [
+                "Unsuccessful sign-in attempts on your {$product} account",
+                sprintf('There were %s unsuccessful attempts to sign in to your %s account in the last hour. The latest one is below.', self::count($parameters['attempts'] ?? ''), $product),
+                'Your account is safe as long as your password is not known. If you do not recognise these attempts, change your password and turn on two-step verification.',
+            ],
+            default => [
+                "Security settings changed on your {$product} account",
+                (self::SECURITY_CHANGES[$parameters['change'] ?? ''] ?? throw new \InvalidArgumentException('Template parameter "change" is missing or unknown.')) . '.',
+                'If you made this change, you do not need to do anything. If you did not, change your password now and contact support.',
+            ],
+        };
+        $details = [
+            'Device' => self::device($parameters['device'] ?? ''),
+            'Location' => self::location($parameters['location'] ?? ''),
+            'IP address' => self::ip($parameters['ip'] ?? ''),
+            'Time' => self::time($parameters['time'] ?? ''),
+        ];
+        $link = $this->appUrl . '/security';
+        $lines = '';
+        foreach ($details as $label => $value) {
+            $lines .= "{$label}: {$value}\n";
+        }
+        $text = "Hi {$name},\n\n{$lead}\n\n{$lines}\n{$footer}\n\nReview your security settings: {$link}\n\n{$product}\n";
+
+        return new EmailMessage($to, $subject, $text, $this->html(
+            $subject,
+            sprintf('Hi %s,', self::e($name)),
+            self::e($lead),
+            'Review security settings',
+            $link,
+            $footer,
+            $details,
+        ), $template, $key);
+    }
+
+    /** @param array<string, string> $details label => value, escaped here */
+    private function html(string $title, string $greeting, string $lead, string $button, string $link, string $footer, array $details = []): string
     {
         $href = self::e($link);
+        $rows = '';
+        foreach ($details as $label => $value) {
+            $rows .= '<tr><td style="padding:4px 16px 4px 0;color:#4a5568;white-space:nowrap">' . self::e($label) . '</td><td style="padding:4px 0">' . self::e($value) . '</td></tr>';
+        }
+        $table = $rows === '' ? '' : '<table role="presentation" style="margin:16px 0;font-size:14px">' . $rows . '</table>';
 
         return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' . self::e($title) . '</title></head>'
             . '<body style="margin:0;padding:24px;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#0B1F3A">'
             . '<table role="presentation" width="100%" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px">'
             . '<tr><td><p style="font-size:18px;font-weight:bold;margin:0 0 24px">' . self::e($this->productName) . '</p>'
-            . '<p>' . $greeting . '</p><p>' . $lead . '</p>'
+            . '<p>' . $greeting . '</p><p>' . $lead . '</p>' . $table
             . '<p style="margin:32px 0"><a href="' . $href . '" style="background:#2F6BFF;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;display:inline-block">' . self::e($button) . '</a></p>'
             . '<p style="font-size:13px;color:#4a5568">Or paste this link into your browser:<br>' . $href . '</p>'
             . '<p style="font-size:13px;color:#4a5568">' . self::e($footer) . '</p>'
@@ -138,6 +212,42 @@ final readonly class EmailTemplates
         }
 
         return $token;
+    }
+
+    /** e.g. "Chrome 129 on Windows (desktop)" — see DeviceSummary::label(). */
+    private static function device(string $value): string
+    {
+        return preg_match('/^[A-Za-z0-9 .()\/_-]{1,100}$/', $value) === 1 ? $value : 'Unknown';
+    }
+
+    /** e.g. "Ikeja, Lagos, Nigeria"; Cloudflare's own approximation. */
+    private static function location(string $value): string
+    {
+        // A dot followed by a letter looks like a domain; mail clients would turn it into a link (T-53).
+        return preg_match("/^[\\p{L}\\p{M}\\p{N} ,.'()-]{1,200}\$/u", $value) === 1 && preg_match('/\\.\\p{L}/u', $value) !== 1
+            ? $value . ' (approximate)'
+            : 'Unknown';
+    }
+
+    private static function ip(string $value): string
+    {
+        return filter_var($value, FILTER_VALIDATE_IP) !== false ? $value : 'Unknown';
+    }
+
+    /** ISO 8601 UTC in, Nigerian time out: "18 Oct 2026, 09:43 WAT". */
+    private static function time(string $value): string
+    {
+        $time = \DateTimeImmutable::createFromFormat('!Y-m-d\\TH:i:s\\Z', $value, new \DateTimeZone('UTC'));
+        if ($time === false) {
+            return 'Unknown';
+        }
+
+        return $time->setTimezone(new \DateTimeZone(self::DISPLAY_TIMEZONE))->format('j M Y, H:i') . ' WAT';
+    }
+
+    private static function count(string $value): string
+    {
+        return preg_match('/^[1-9][0-9]{0,5}$/', $value) === 1 ? $value : 'several';
     }
 
     private static function e(string $value): string

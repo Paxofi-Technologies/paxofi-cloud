@@ -69,7 +69,7 @@ final class SignInIntegrationTest extends IntegrationTestCase
         $signedIn = $this->post('/api/v1/auth/sign-in', ['email' => $email, 'password' => self::PASSWORD]);
         self::assertSame(200, $signedIn->status());
         self::assertSame('no-store', $signedIn->header('cache-control'));
-        $cookie = (string) $signedIn->header('set-cookie');
+        $cookie = (string) (((array) ($signedIn->headers()['set-cookie'] ?? []))[0] ?? '');
         self::assertMatchesRegularExpression('/^__Host-pc_sid=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Lax$/', $cookie);
         $sessionId = substr(explode(';', $cookie)[0], strlen(SessionCookie::NAME) + 1);
         $csrf = self::json($signedIn)['csrf_token'] ?? null;

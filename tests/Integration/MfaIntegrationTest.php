@@ -101,7 +101,8 @@ final class MfaIntegrationTest extends IntegrationTestCase
         self::assertSame(200, $first->status());
         self::assertSame('{"status":"mfa_required"}', $first->body());
         $cookies = $first->headers()['set-cookie'] ?? [];
-        self::assertCount(2, $cookies);
+        self::assertCount(3, $cookies);
+        self::assertStringStartsWith('__Host-pc_dev=', $cookies[2], 'the device cookie arrives with the password step (§6.15)');
         self::assertStringStartsWith(SessionCookie::NAME . '=; ', $cookies[0], 'No session cookie yet');
         self::assertMatchesRegularExpression('/^__Host-pc_mfa=[A-Za-z0-9_-]{43}; Path=\/; Max-Age=300; Secure; HttpOnly; SameSite=Strict$/', $cookies[1]);
         $ticket = substr(explode(';', $cookies[1])[0], strlen(MfaCookie::NAME) + 1);

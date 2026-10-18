@@ -4,7 +4,7 @@
 |---|---|
 | Epic | Identity & access (SEC-01 / SEC-02 / BE-06) |
 | Method | STRIDE per element of the data-flow diagram |
-| Requirements | IAM-001…016, ACC-001…003, ACC-005, AUD-001…004, API-002…008, SEC-011 |
+| Requirements | IAM-001…016, IAM-017 (sign-in notifications; new, pending SRS change record), ACC-001…003, ACC-005, AUD-001…004, API-002…008, SEC-011 |
 | Standard | OWASP ASVS 5.0 — Level 2; Level 3 for staff authentication and the admin console |
 | Status | Baseline for Sprint 1. Must be re-reviewed at Sprint 1 planning and updated at sprint end. |
 
@@ -216,6 +216,9 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale; risk = L × I.
 | T-50 | S | Client forges location or device details (fake `cf-ipcity`, `User-Agent`) to mislead an investigation | 2 | 1 | The IP comes only from `CF-Connecting-IP` via nginx `real_ip` from the tunnel hop; location and device are recorded as *reported* (approximate), validated (length, characters, country `^[A-Z0-9]{2}$`) and never used for any security decision | AUD-001 | `ClientContextTest` |
 | T-51 | I | The audit trail becomes a store of personal data kept forever (NDPA 2023 minimisation) | 2 | 2 | Personal request context (full IP, location, user agent) lives in a separate, purgeable table, committed to the chain only by a salted hash; deleted after 180 days by `audit:purge-context`; events themselves hold IDs and fixed reason codes only, never emails, names, passwords, codes or tokens | AUD-004 | `AuditContextPurgeTest`, `AuditEventDetailsTest` |
 | T-52 | I | A customer sees another customer's activity | 1 | 3 | `GET /api/v1/account/activity` reads only events whose subject is the session's identity; no ID parameter exists | ACC-002 | `AccountActivityTest` |
+| T-53 | S | A sign-in alert email is used for phishing, or carries attacker-controlled text (user agent, city) | 2 | 2 | Alerts contain no action links except the fixed `APP_URL/security` page (the customer signs in normally); device, location and IP are rendered only from validated parameters (label, location and IP patterns) and HTML-escaped; no reply-to | IAM-017 | `EmailTemplatesTest` |
+| T-54 | D | Repeated sign-ins flood the owner's inbox with alerts | 2 | 1 | At most 10 sign-in alerts per identity per hour (counted in Redis); further sign-ins are still audited, the email is skipped and logged | IAM-017 | `SignInAlertsTest` |
+| T-55 | S | A copied or forged device cookie makes a new device look known | 2 | 1 | The device cookie only chooses between the "new device" and the normal sign-in email: it never skips the password, MFA or any check; it is a 256-bit random value stored as SHA-256 per identity, `__Host-`, HttpOnly, Secure, SameSite=Lax | IAM-017 | `SignInAlertsTest` |
 
 ### 6.9 Edge and transport (API-004…006, SEC-007)
 
@@ -299,6 +302,14 @@ Written before the code; it fixes how D-4, D-5 and T-13…T-17 are met in this P
 - **Customer view (T-52).** `GET /api/v1/account/activity` (session required) returns the 20 most recent events about the signed-in identity with time, event, outcome, location, browser, OS, device and IP, so the owner can spot sign-in attempts from elsewhere.
 - **Deferred / residual.** Database-level append-only enforcement needs a separate runtime MySQL user without `UPDATE`/`DELETE` on `audit_events` (D-14 grants): MySQL with binary logging refuses triggers for a non-SUPER user, so this lands with the deploy-agent change that creates that user (until then tampering is *detected* by `audit:verify`, not prevented). Daily external anchor (O-2). Scheduled purge and verification (needs the job runner, Sprint 4). Owner emails (notifications PR, CEO decision 18 Oct 2026): an email on every successful sign-in, and a distinct "new device" email instead of it when the device is not yet known (known devices are recognised by a long-lived random device cookie whose hash is stored per identity); both carry browser, OS, device type, approximate location, IP and time. Also many failed sign-ins with the same details, and MFA changes. Staff events (T-34) arrive with the admin console.
 
+### 6.15 Sign-in notification implementation notes (Sprint 1, PR "sign-in notifications")
+
+- **Every sign-in emails the owner (CEO decision 18 Oct 2026).** When a session is issued (password only, or after the second step) the owner gets "You signed in to PaxofiCloud" with the device (browser, OS, type), approximate location (city, region, country), IP address and time in WAT. If the device is not yet known for this identity, the same details arrive instead as "New device signed in to your PaxofiCloud account", worded as a warning, and an `auth.sign_in.new_device` audit event is recorded. One sign-in never sends both.
+- **Known devices (T-55).** Every sign-in response sets `__Host-pc_dev` (256-bit random, HttpOnly, Secure, SameSite=Lax, 400 days) unless the browser already has one; `identity_devices` stores SHA-256(device token) per identity with the device label and first/last seen. Clearing cookies or a new browser profile counts as a new device, which errs on the side of warning. The cookie grants nothing.
+- **Other security emails.** More than 10 failed sign-ins in an hour on one account (T-07 counter (b)) sends "Unsuccessful sign-in attempts" with the latest attempt's device, location, IP and time, once per window. Turning two-step verification on or off and regenerating recovery codes each send "Security settings changed" with the same details.
+- **Limits and failure (T-54).** At most 10 sign-in alerts per identity per hour. Alerts are queued in the sealed outbox after the action, best effort: a failure to queue is logged (`notify.enqueue_failed`) and never blocks sign-in. The alert is not a substitute for the audit log, which records every event regardless.
+- **Content (T-53).** Only the first name, the device label, the location, the IP and the time are inserted, each validated against a strict pattern and HTML-escaped; the only link is `APP_URL/security`. Staging only delivers to the allow-list (E-10).
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -329,3 +340,4 @@ Written before the code; it fixes how D-4, D-5 and T-13…T-17 are met in this P
 | 2026-10-18 | §6.12 Turnstile implementation notes (T-02, T-06, T-07, T-47, T-49; fail closed; challenge counter made address-independent), written before the Turnstile code | Claude (security engineering) |
 | 2026-10-18 | §6.13 TOTP two-step verification notes (D-4, D-5, T-13…T-17), written before the MFA code | Claude (security engineering) |
 | 2026-10-18 | §6.14 audit log notes, T-50 forged context, T-51 personal data in the audit trail, T-52 activity isolation; written before the audit code | Claude (security engineering) |
+| 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |

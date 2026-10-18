@@ -11,6 +11,7 @@ use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Cli\AuditVerifyCommand;
 use PaxofiCloud\Cli\Console;
+use PaxofiCloud\Http\DeviceCookie;
 use PaxofiCloud\Http\HttpRuntime;
 use PaxofiCloud\Http\RequestFactory;
 use PaxofiCloud\Http\SessionCookie;
@@ -72,7 +73,7 @@ final class AuditIntegrationTest extends IntegrationTestCase
         $activity = self::json($this->get('/api/v1/account/activity', $sid));
         self::assertIsArray($activity['events']);
         $types = array_map(static fn (mixed $e): mixed => is_array($e) ? $e['type'] : null, $activity['events']);
-        self::assertSame(['auth.sign_in.succeeded', 'auth.sign_in.failed', 'identity.email_verified', 'identity.registered'], $types, 'newest first');
+        self::assertSame(['auth.sign_in.new_device', 'auth.sign_in.succeeded', 'auth.sign_in.failed', 'identity.email_verified', 'identity.registered'], $types, 'newest first');
 
         $latest = $activity['events'][0];
         self::assertIsArray($latest);
@@ -81,7 +82,7 @@ final class AuditIntegrationTest extends IntegrationTestCase
         self::assertIsArray($latest['device']);
         self::assertSame('Safari 17 on iOS 17.6 (mobile)', $latest['device']['label']);
         self::assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/', is_string($latest['occurred_at']) ? $latest['occurred_at'] : '');
-        $failed = $activity['events'][1];
+        $failed = $activity['events'][2];
         self::assertIsArray($failed);
         self::assertSame(['failure', ['reason' => 'wrong_password']], [$failed['outcome'], $failed['details']]);
     }
@@ -96,7 +97,7 @@ final class AuditIntegrationTest extends IntegrationTestCase
 
         $events = self::json($this->get('/api/v1/account/activity', $sid))['events'];
         self::assertIsArray($events);
-        self::assertCount(3, $events, 'T-52: registered, verified and signed in — the second customer only');
+        self::assertCount(4, $events, 'T-52: registered, verified, signed in, new device — the second customer only');
     }
 
     public function testTheChainVerifiesAndAnyEditIsDetected(): void
@@ -104,7 +105,7 @@ final class AuditIntegrationTest extends IntegrationTestCase
         $this->signIn($this->activeCustomer(), self::PASSWORD);
         $ok = $this->chain->verify();
         self::assertTrue($ok->ok());
-        self::assertSame(3, $ok->events);
+        self::assertSame(4, $ok->events);
         self::assertSame(self::query('SELECT hash FROM audit_chain_head')->fetchColumn(), $ok->headHash);
 
         self::pdo()->exec("UPDATE audit_events SET outcome = 'failure' WHERE seq = 2");
@@ -140,8 +141,8 @@ final class AuditIntegrationTest extends IntegrationTestCase
         self::assertSame(2, $this->chain->purgeContext(new \DateTimeImmutable('-180 days')));
         $result = $this->chain->verify();
         self::assertTrue($result->ok());
-        self::assertSame([3, 2], [$result->events, $result->contextsPurged]);
-        self::assertSame(1, (int) self::query('SELECT COUNT(*) FROM audit_event_context')->fetchColumn());
+        self::assertSame([4, 2], [$result->events, $result->contextsPurged]);
+        self::assertSame(2, (int) self::query('SELECT COUNT(*) FROM audit_event_context')->fetchColumn());
     }
 
     public function testNothingPersonalOrSecretIsStoredInEvents(): void
@@ -154,6 +155,55 @@ final class AuditIntegrationTest extends IntegrationTestCase
         foreach ([$email, self::PASSWORD, 'not the password', 'Ada', $this->ip] as $secret) {
             self::assertStringNotContainsString($secret, $dump, 'T-51');
         }
+    }
+
+    public function testEverySignInQueuesOneAlertAndANewDeviceIsCalledOut(): void
+    {
+        $email = $this->activeCustomer();
+        $first = $this->signIn($email, self::PASSWORD);
+        $device = self::cookie($first, DeviceCookie::NAME);
+        self::assertMatchesRegularExpression('/^[A-Za-z0-9_-]{43}$/', $device);
+        self::assertStringContainsString('Max-Age=34560000; Secure; HttpOnly; SameSite=Lax', implode("\n", (array) ($first->headers()['set-cookie'] ?? [])));
+
+        $again = $this->send('POST', '/api/v1/auth/sign-in', ['email' => $email, 'password' => self::PASSWORD], ['HTTP_COOKIE' => DeviceCookie::NAME . '=' . $device]);
+        self::assertSame($device, self::cookie($again, DeviceCookie::NAME), 'the same device keeps its token');
+        self::assertSame(401, $this->signIn($email, 'not the password')->status());
+
+        self::assertSame(['new-device-alert', 'sign-in-alert'], $this->alerts(), 'one email per successful sign-in, none for a failed one');
+        $alert = $this->latestPayload('new-device-alert');
+        self::assertSame($email, $alert['to']);
+        self::assertSame(['name' => 'Ada Okafor', 'device' => 'Safari 17 on iOS 17.6 (mobile)', 'location' => 'Ikeja, Lagos, Nigeria', 'ip' => $this->ip], array_diff_key($alert['parameters'], ['time' => 1]));
+        self::assertSame([hash('sha256', $device)], self::query('SELECT device_hash FROM identity_devices')->fetchAll(\PDO::FETCH_COLUMN), 'T-55: only the hash');
+    }
+
+    /** @return list<mixed> alert templates queued, oldest first */
+    private function alerts(): array
+    {
+        return array_values(self::query("SELECT template FROM email_outbox WHERE template LIKE '%alert' ORDER BY created_at, id")->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /** @return array{to: string, parameters: array<string, string>} */
+    private function latestPayload(string $template): array
+    {
+        $statement = self::pdo()->prepare('SELECT payload FROM email_outbox WHERE template = :template ORDER BY created_at DESC LIMIT 1');
+        $statement->execute(['template' => $template]);
+        $sealed = $statement->fetchColumn();
+        self::assertIsString($sealed);
+        $payload = json_decode($this->opener->open($sealed), true, 8, JSON_THROW_ON_ERROR);
+        self::assertIsArray($payload);
+
+        /** @var array{to: string, parameters: array<string, string>} $payload */
+        return $payload;
+    }
+
+    private static function cookie(HttpResponse $response, string $name): string
+    {
+        foreach ((array) ($response->headers()['set-cookie'] ?? []) as $cookie) {
+            if (str_starts_with($cookie, $name . '=')) {
+                return substr(explode(';', $cookie)[0], strlen($name) + 1);
+            }
+        }
+        self::fail('No ' . $name . ' cookie set');
     }
 
     private static function query(string $sql): \PDOStatement
@@ -188,7 +238,7 @@ final class AuditIntegrationTest extends IntegrationTestCase
     {
         self::assertSame(200, $response->status());
 
-        return substr(explode(';', (string) $response->header('set-cookie'))[0], strlen(SessionCookie::NAME) + 1);
+        return self::cookie($response, SessionCookie::NAME);
     }
 
     private function get(string $path, string $sid): HttpResponse

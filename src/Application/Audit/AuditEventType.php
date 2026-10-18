@@ -16,6 +16,7 @@ final class AuditEventType
     public const string SIGN_IN_FAILED = 'auth.sign_in.failed';
     public const string SIGN_IN_MFA_REQUIRED = 'auth.sign_in.mfa_required';
     public const string SIGN_IN_MANY_FAILURES = 'auth.sign_in.many_failures';
+    public const string SIGN_IN_NEW_DEVICE = 'auth.sign_in.new_device';
     public const string MFA_SUCCEEDED = 'auth.mfa.succeeded';
     public const string MFA_FAILED = 'auth.mfa.failed';
     public const string MFA_LOCKED = 'auth.mfa.locked';

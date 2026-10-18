@@ -14,6 +14,7 @@ use PaxofiCloud\Application\Identity\SignIn\InvalidCredentials;
 use PaxofiCloud\Application\Identity\SignIn\InvalidSignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignInThrottled;
+use PaxofiCloud\Http\DeviceCookie;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\MfaCookie;
 use PaxofiCloud\Http\ProblemDetails;
@@ -44,8 +45,9 @@ final readonly class SignInController implements Controller
         }
 
         $id = RequestId::of($request);
+        $device = DeviceCookie::readOrCreate($request);
         try {
-            $issued = $this->signIn->signIn($data, RequestClient::of($request), SessionCookie::read($request));
+            $issued = $this->signIn->signIn($data, RequestClient::of($request), SessionCookie::read($request), $device);
         } catch (InvalidSignIn $e) {
             return ProblemDetails::response(422, 'validation_failed', $id, errors: $e->errors);
         } catch (ChallengeRequired) {
@@ -66,14 +68,14 @@ final readonly class SignInController implements Controller
             // §6.13: no session yet, only the short-lived second-step ticket.
             return new Response(
                 200,
-                ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => [SessionCookie::clear(), MfaCookie::issue($issued->ticket, CompleteMfaSignIn::TICKET_TTL_SECONDS)]],
+                ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => [SessionCookie::clear(), MfaCookie::issue($issued->ticket, CompleteMfaSignIn::TICKET_TTL_SECONDS), DeviceCookie::issue($device)]],
                 '{"status":"mfa_required"}',
             );
         }
 
         return new Response(
             200,
-            ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => SessionCookie::issue($issued->sessionId)],
+            ['content-type' => 'application/json', 'cache-control' => 'no-store', 'set-cookie' => [SessionCookie::issue($issued->sessionId), DeviceCookie::issue($device)]],
             json_encode(['status' => 'signed_in', 'csrf_token' => $issued->csrfToken], JSON_THROW_ON_ERROR),
         );
     }

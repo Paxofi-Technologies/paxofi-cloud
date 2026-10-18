@@ -34,4 +34,14 @@ Country comes from the `CF-IPCountry` header, which Cloudflare always sends. Reg
 
 - Rows are tamper-*evident*, not tamper-*proof*: the application's database user can still change or delete them. A separate runtime database user without `UPDATE`/`DELETE` on `audit_events` comes with the deploy-agent change (MySQL with binary logging refuses triggers for non-SUPER users).
 - Verification and purge are run by hand until the job runner (Sprint 4) schedules them.
-- Owner emails (every sign-in, new device, many failed sign-ins, MFA changes) arrive in the notifications PR.
+
+## Owner emails (threat model §6.15)
+
+| Event | Email | Limit |
+|---|---|---|
+| Successful sign-in from a known device | "You signed in to PaxofiCloud" | 10 sign-in emails per account per hour |
+| Successful sign-in from a new device (no or unknown `__Host-pc_dev` cookie) | "New device signed in to your PaxofiCloud account", instead of the one above; audited as `auth.sign_in.new_device` | same |
+| More than 10 failed sign-ins on one account in an hour | "Unsuccessful sign-in attempts" with the latest attempt | once per window |
+| Two-step verification on/off, recovery codes regenerated | "Security settings changed" | none |
+
+Each email shows the device (browser, OS, type), approximate location, IP address and time in WAT, and links only to `/security`. Emails are queued in the sealed outbox after the action; a queueing failure is logged as `notify.enqueue_failed` and never blocks the sign-in. On staging only addresses in `STAGING_ALLOWED_EMAILS` receive them.
