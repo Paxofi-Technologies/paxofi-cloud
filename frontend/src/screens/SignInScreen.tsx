@@ -1,124 +1,119 @@
-import { useState, type FormEvent } from 'react';
-import { Alert, Button, Logo, TextField } from '../components';
-
-type Step = 'credentials' | 'mfa';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import { Alert, Button, Logo, ResendVerification, TextField } from '../components';
+import { describeWait } from '../lib/api';
+import { signIn } from '../lib/session';
 
 export interface SignInScreenProps {
-  onSignedIn: (email: string) => void;
+  /** Called after the server has set the session cookie. */
+  onSignedIn: () => void;
+  fetchImpl?: typeof fetch | undefined;
 }
+
+type Problem = { tone: 'danger' | 'warning'; text: string; extra?: ReactNode } | null;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Prototype of the sign-in flow (IAM-005/007). No request leaves the browser.
- * Mirrors the real behaviour the threat model requires: one generic error for
- * wrong email or password (D-7) and a separate TOTP step (IAM-007).
+ * Customer sign-in (SRS IAM-005, IAM-006). The server gives one answer for a
+ * wrong email or a wrong password (threat model T-09), and so does this
+ * screen. "Confirm your email first" and "account unavailable" only come back
+ * after the correct password, so showing them reveals nothing new.
  */
-export function SignInScreen({ onSignedIn }: SignInScreenProps) {
-  const [step, setStep] = useState<Step>('credentials');
+export function SignInScreen({ onSignedIn, fetchImpl }: SignInScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [code, setCode] = useState('');
-  const [errors, setErrors] = useState<{ email?: string; password?: string; code?: string }>({});
+  const [errors, setErrors] = useState<{ email?: string | undefined; password?: string | undefined }>({});
+  const [problem, setProblem] = useState<Problem>(null);
   const [loading, setLoading] = useState(false);
 
-  function submitCredentials(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
+    const address = email.trim();
     const next: typeof errors = {};
-    if (!EMAIL.test(email.trim())) next.email = 'Enter the email address you registered with.';
+    if (!EMAIL.test(address)) next.email = 'Enter the email address you registered with.';
     if (password.length === 0) next.password = 'Enter your password.';
     setErrors(next);
+    setProblem(null);
     if (Object.keys(next).length > 0) return;
-    setLoading(true);
-    window.setTimeout(() => {
-      setLoading(false);
-      setStep('mfa');
-    }, 300);
-  }
 
-  function submitCode(event: FormEvent) {
-    event.preventDefault();
-    if (!/^\d{6}$/.test(code)) {
-      setErrors({ code: 'Enter the 6-digit code from your authenticator app.' });
-      return;
+    setLoading(true);
+    const result = await signIn(address, password, fetchImpl);
+    setLoading(false);
+
+    switch (result.kind) {
+      case 'ok':
+        setPassword('');
+        onSignedIn();
+        return;
+      case 'throttled':
+        setProblem({ tone: 'warning', text: `Too many sign-in attempts. Please try again in ${describeWait(result.retryAfterSeconds)}.` });
+        return;
+      case 'invalid':
+        setErrors({
+          email: result.errors.email ? 'Enter the email address you registered with.' : undefined,
+          password: result.errors.password ? 'Enter your password.' : undefined,
+        });
+        return;
+      case 'unavailable':
+        setProblem({ tone: 'danger', text: 'We could not reach PaxofiCloud. Check your connection and try again.' });
+        return;
+      case 'rejected':
+        setPassword('');
+        if (result.code === 'email_not_verified') {
+          setProblem({
+            tone: 'warning',
+            text: 'Confirm your email address before signing in. We can send you a new link.',
+            extra: <ResendVerification email={address} fetchImpl={fetchImpl} />,
+          });
+        } else if (result.code === 'account_unavailable') {
+          setProblem({ tone: 'danger', text: 'This account is not available. Please contact PaxofiCloud support.' });
+        } else {
+          setProblem({ tone: 'danger', text: 'The email address or password is incorrect.' });
+        }
     }
-    setErrors({});
-    onSignedIn(email.trim());
   }
 
   return (
     <div className="pc-auth">
       <div className="pc-auth__panel">
         <Logo />
-        {step === 'credentials' ? (
-          <form className="pc-auth__form" onSubmit={submitCredentials} noValidate>
-            <div>
-              <h1>Sign in</h1>
-              <p className="pc-muted">Manage your domains, hosting and servers.</p>
-            </div>
-            <TextField
-              label="Email address"
-              type="email"
-              autoComplete="username"
-              inputMode="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              error={errors.email}
-              required
-            />
-            <TextField
-              label="Password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              error={errors.password}
-              required
-            />
-            <div className="pc-auth__row">
-              <a href="#forgot">Forgot password?</a>
-            </div>
-            <Button type="submit" block loading={loading}>
-              Continue
-            </Button>
-            <p className="pc-auth__footer">
-              New to PaxofiCloud? <a href="/register">Create an account</a>
-            </p>
-          </form>
-        ) : (
-          <form className="pc-auth__form" onSubmit={submitCode} noValidate>
-            <div>
-              <h1>Two-step verification</h1>
-              <p className="pc-muted">Open your authenticator app and enter the 6-digit code for PaxofiCloud.</p>
-            </div>
-            <TextField
-              label="Verification code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-              error={errors.code}
-              hint="Lost your device? Use one of your recovery codes."
-              required
-            />
-            <Button type="submit" block>
-              Verify and sign in
-            </Button>
-            <Button
-              variant="ghost"
-              block
-              onClick={() => {
-                setStep('credentials');
-                setCode('');
-                setErrors({});
-              }}
-            >
-              Back
-            </Button>
-          </form>
-        )}
-        <Alert tone="info">Prototype only: no real accounts. Any email, password and 6-digit code will work.</Alert>
+        <form className="pc-auth__form" onSubmit={submit} noValidate>
+          <div>
+            <h1>Sign in</h1>
+            <p className="pc-muted">Manage your domains, hosting and servers.</p>
+          </div>
+          {problem && (
+            <Alert tone={problem.tone}>
+              {problem.text}
+            </Alert>
+          )}
+          <TextField
+            label="Email address"
+            type="email"
+            autoComplete="username"
+            inputMode="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            error={errors.email}
+            required
+          />
+          <TextField
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            error={errors.password}
+            required
+          />
+          <Button type="submit" block loading={loading}>
+            Sign in
+          </Button>
+          <p className="pc-auth__footer">
+            New to PaxofiCloud? <a href="/register">Create an account</a>
+          </p>
+        </form>
+        {problem?.extra}
       </div>
       <div className="pc-auth__aside" aria-hidden="true">
         <div className="pc-auth__aside-inner">
@@ -127,7 +122,7 @@ export function SignInScreen({ onSignedIn }: SignInScreenProps) {
           <ul className="pc-auth__points">
             <li>.ng and .com.ng domains in minutes</li>
             <li>Pay in naira or dollars</li>
-            <li>Every account protected with two-step verification</li>
+            <li>Your account protected by strong security</li>
           </ul>
         </div>
       </div>
