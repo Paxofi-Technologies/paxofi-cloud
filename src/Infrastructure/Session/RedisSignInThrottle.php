@@ -91,6 +91,14 @@ final readonly class RedisSignInThrottle implements SignInThrottle
         return (int) $count;
     }
 
+    public function failures(string $pair, string $emailLookup): array
+    {
+        return [
+            'pair' => (int) ($this->redis->get($this->key('fail', $pair)) ?? 0),
+            'account' => (int) ($this->redis->get($this->key('acct', $emailLookup)) ?? 0),
+        ];
+    }
+
     public function clear(string $pair): void
     {
         $this->redis->delete($this->key('fail', $pair));

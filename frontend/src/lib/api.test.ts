@@ -36,4 +36,9 @@ describe('postJson', () => {
     expect(describeWait(3600)).toBe('about an hour');
     expect(describeWait(7200)).toBe('about 2 hours');
   });
+
+  it('passes the fail-closed bot check refusal to the form instead of a generic outage', async () => {
+    expect(await postJson('/x', {}, respond(503, { code: 'challenge_unavailable' }))).toEqual({ kind: 'rejected', code: 'challenge_unavailable' });
+    expect(await postJson('/x', {}, respond(503, { code: 'maintenance' }))).toEqual({ kind: 'unavailable' });
+  });
 });

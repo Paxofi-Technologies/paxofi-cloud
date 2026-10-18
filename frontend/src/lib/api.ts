@@ -33,7 +33,11 @@ export async function postJson(
     const retry = Number.parseInt(response.headers.get('retry-after') ?? '', 10);
     return { kind: 'throttled', retryAfterSeconds: Number.isFinite(retry) && retry > 0 ? retry : 3600 };
   }
-  if (response.status >= 500) return { kind: 'unavailable' };
+  if (response.status >= 500) {
+    // A fail-closed bot check (threat model §6.12) is the only 5xx the forms explain.
+    const problem = await readProblem(response);
+    return problem.code === 'challenge_unavailable' ? { kind: 'rejected', code: problem.code } : { kind: 'unavailable' };
+  }
 
   const problem = await readProblem(response);
   if (response.status === 422 && problem.errors) return { kind: 'invalid', errors: problem.errors };

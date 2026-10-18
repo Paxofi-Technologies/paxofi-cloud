@@ -12,4 +12,8 @@ return static fn (Environment $env): array => [
     // Breached-password check at sign-up (T-06): "pwnedpasswords" or "off".
     // "off" is refused in production; tests and offline development use it.
     'breached_password_check' => $env->get('BREACHED_PASSWORD_CHECK', 'pwnedpasswords'),
+    // Cloudflare Turnstile (T-02, §6.12). Both empty = challenge off, which
+    // is refused in production. The secret reaches only the web container.
+    'turnstile_site_key' => $env->get('TURNSTILE_SITE_KEY', ''),
+    'turnstile_secret_key' => $env->get('TURNSTILE_SECRET_KEY', ''),
 ];

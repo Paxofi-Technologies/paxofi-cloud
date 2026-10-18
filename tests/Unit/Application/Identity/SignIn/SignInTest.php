@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\SignIn;
 
+use PHPUnit\Framework\TestCase;
+use PaxofiCloud\Application\Contracts\HumanCheck;
 use PaxofiCloud\Application\Contracts\PasswordRehashPolicy;
 use PaxofiCloud\Application\Email\EmailAddress;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\AccountUnavailable;
 use PaxofiCloud\Application\Identity\SignIn\EmailNotVerified;
@@ -20,8 +25,8 @@ use PaxofiCloud\Tests\Support\InMemorySessionStore;
 use PaxofiCloud\Tests\Support\InMemorySignInThrottle;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\RecordingLogger;
+use PaxofiCloud\Tests\Support\ScriptedHumanVerification;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
-use PHPUnit\Framework\TestCase;
 
 /** SRS IAM-005, IAM-006, IAM-009; threat model §6.11, T-07, T-08, T-09, T-11, T-18, D-3, D-7. */
 final class SignInTest extends TestCase
@@ -35,6 +40,7 @@ final class SignInTest extends TestCase
     private InMemorySignInThrottle $throttle;
     private InMemorySessionStore $sessionStore;
     private RecordingLogger $logger;
+    private ScriptedHumanVerification $human;
     private bool $needsRehash = false;
     private SignIn $signIn;
 
@@ -46,6 +52,7 @@ final class SignInTest extends TestCase
         $this->throttle = new InMemorySignInThrottle();
         $this->sessionStore = new InMemorySessionStore();
         $this->logger = new RecordingLogger();
+        $this->human = new ScriptedHumanVerification();
         $rehash = new class ($this) implements PasswordRehashPolicy {
             public function __construct(private SignInTest $test)
             {
@@ -64,6 +71,7 @@ final class SignInTest extends TestCase
             $this->throttle,
             new Sessions($this->sessionStore, new MutableClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'))),
             $this->logger,
+            new ChallengeGate($this->human),
         );
         $this->addIdentity('active');
     }
@@ -203,14 +211,80 @@ final class SignInTest extends TestCase
         self::assertSame([['level' => 'warning', 'message' => 'auth.sign_in.account_failures_high', 'context' => ['identity_id' => 'id-1']]], $this->logger->records);
     }
 
-    public function testUnknownEmailFailuresDoNotGrowAccountCounters(): void
+    public function testNoChallengeIsAskedForBeforeTheThirdFailure(): void
     {
+        $this->human->result = HumanCheck::Failed;
+        for ($i = 0; $i < 2; $i++) {
+            try {
+                $this->signIn->signIn(self::form(password: 'wrong'), self::IP, '', null);
+            } catch (InvalidCredentials) {
+            }
+        }
+        $this->signIn->signIn(self::form(), self::IP, '', null);
+
+        self::assertSame([], $this->human->calls);
+    }
+
+    public function testFromTheThirdFailureAPairMustPassTheChallengeBeforeAnyHash(): void
+    {
+        for ($i = 0; $i < 3; $i++) {
+            try {
+                $this->signIn->signIn(self::form(password: 'wrong'), self::IP, '', null);
+            } catch (InvalidCredentials) {
+            }
+        }
+        $this->human->result = HumanCheck::Failed;
+        $verifies = count($this->hasher->verified);
+
         try {
-            $this->signIn->signIn(self::form('nobody@example.ng'), self::IP, '', null);
-        } catch (InvalidCredentials) {
+            $this->signIn->signIn(['turnstile_token' => 'tok'] + self::form(), self::IP, '', null);
+            self::fail('Expected a challenge.');
+        } catch (ChallengeRequired) {
+        }
+        self::assertSame($verifies, count($this->hasher->verified), 'T-11: no hash without a passed challenge');
+        self::assertSame(['token' => 'tok', 'action' => 'sign_in', 'ip' => self::IP], end($this->human->calls));
+
+        $this->human->result = HumanCheck::Passed;
+        self::assertSame('id-1', $this->signIn->signIn(['turnstile_token' => 'tok2'] + self::form(), self::IP, '', null)->session->identityId);
+    }
+
+    public function testAccountWideFailuresRequireAChallengeFromEveryNetwork(): void
+    {
+        for ($i = 0; $i <= SignIn::ACCOUNT_ALERT_THRESHOLD; $i++) {
+            try {
+                $this->signIn->signIn(self::form(password: 'wrong'), '192.0.' . $i . '.1', '', null);
+            } catch (InvalidCredentials) {
+            }
+        }
+        $this->human->result = HumanCheck::Unavailable;
+
+        $this->expectException(ChallengeUnavailable::class);
+        $this->signIn->signIn(self::form(), '203.0.113.9', '', null);
+    }
+
+    public function testWhetherAChallengeIsNeededDoesNotRevealIfTheAccountExists(): void
+    {
+        $outcomes = [];
+        foreach (['ada@example.ng', 'nobody@example.ng'] as $email) {
+            for ($i = 0; $i <= SignIn::ACCOUNT_ALERT_THRESHOLD; $i++) {
+                try {
+                    $this->signIn->signIn(self::form($email, 'wrong'), '192.0.' . $i . '.1', '', null);
+                } catch (InvalidCredentials) {
+                }
+            }
+            $this->human->result = HumanCheck::Failed;
+            try {
+                $this->signIn->signIn(self::form($email, 'wrong'), '203.0.113.9', '', null);
+                $outcomes[] = 'no challenge';
+            } catch (ChallengeRequired) {
+                $outcomes[] = 'challenge';
+            } catch (InvalidCredentials) {
+                $outcomes[] = 'no challenge';
+            }
+            $this->human->result = HumanCheck::Passed;
         }
 
-        self::assertSame([], $this->throttle->accountFailures);
+        self::assertSame(['challenge', 'challenge'], $outcomes, 'T-09: same for a known and an unknown address');
     }
 
     public function testOutdatedHashIsReplacedAfterSuccessOnly(): void

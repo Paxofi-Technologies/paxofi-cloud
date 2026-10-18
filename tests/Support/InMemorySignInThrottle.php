@@ -37,6 +37,11 @@ final class InMemorySignInThrottle implements SignInThrottle
         return $this->accountFailures[$emailLookup] = ($this->accountFailures[$emailLookup] ?? 0) + 1;
     }
 
+    public function failures(string $pair, string $emailLookup): array
+    {
+        return ['pair' => $this->failures[$pair] ?? 0, 'account' => $this->accountFailures[$emailLookup] ?? 0];
+    }
+
     public function clear(string $pair): void
     {
         unset($this->failures[$pair], $this->locks[$pair]);

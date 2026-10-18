@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { describeWait, postJson } from '../lib/api';
+import { challengeProblem, useChallengeSiteKey } from '../lib/challenge';
 import { Alert } from './Alert';
 import { Button } from './Button';
 import { TextField } from './TextField';
+import { Turnstile } from './Turnstile';
 
 export const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -27,6 +29,9 @@ export function ResendVerification({ email, initialCooldown = 0, fetchImpl }: Re
   const [cooldown, setCooldown] = useState(initialCooldown);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const siteKey = useChallengeSiteKey(fetchImpl);
+  const [token, setToken] = useState<string | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
 
   useEffect(() => {
     if (cooldown <= 0) return undefined;
@@ -43,9 +48,15 @@ export function ResendVerification({ email, initialCooldown = 0, fetchImpl }: Re
     }
     setFieldError(undefined);
     setNotice(null);
+    if (typeof siteKey === 'string' && token === null) {
+      setNotice({ tone: 'warning', text: 'Please complete the security check.' });
+      return;
+    }
     setLoading(true);
-    const result = await postJson('/api/v1/auth/resend-verification', { email: address }, fetchImpl);
+    const body = token === null ? { email: address } : { email: address, turnstile_token: token };
+    const result = await postJson('/api/v1/auth/resend-verification', body, fetchImpl);
     setLoading(false);
+    setResetSignal((n) => n + 1);
 
     switch (result.kind) {
       case 'ok':
@@ -66,6 +77,8 @@ export function ResendVerification({ email, initialCooldown = 0, fetchImpl }: Re
         setNotice({ tone: 'warning', text: `Too many emails requested. Please try again in ${describeWait(result.retryAfterSeconds)}.` });
         return;
       case 'rejected':
+        setNotice({ tone: 'danger', text: challengeProblem(result.code) ?? 'We could not send the email right now. Please try again in a few minutes.' });
+        return;
       case 'unavailable':
         setNotice({ tone: 'danger', text: 'We could not send the email right now. Please try again in a few minutes.' });
     }
@@ -87,6 +100,7 @@ export function ResendVerification({ email, initialCooldown = 0, fetchImpl }: Re
         />
       )}
       {email !== undefined && fieldError && <Alert tone="danger">{fieldError}</Alert>}
+      {typeof siteKey === 'string' && <Turnstile siteKey={siteKey} action="resend" onToken={setToken} resetSignal={resetSignal} />}
       <Button type="submit" variant={email === undefined ? 'primary' : 'secondary'} block loading={loading} disabled={cooldown > 0}>
         {label}
       </Button>

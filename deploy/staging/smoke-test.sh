@@ -38,6 +38,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
   printf 'EMAIL_OUTBOX_SECRET_KEY=%s\n' "${keys#* }" > "$env_dir/outbox-secret.env"
   printf 'POSTMARK_SERVER_TOKEN=smoke-%s\nRESEND_API_KEY=\nSMTP_HOST=mail.example.invalid\nSMTP_PORT=587\nSMTP_PASSWORD_B64=%s\nEMAIL_RECIPIENT_ALLOWLIST=@example.invalid\n' \
     "$(openssl rand -hex 8)" "$(printf 'smoke-%s' "$(openssl rand -hex 8)" | base64 -w0)" > "$env_dir/mail-providers.env"
+  # Cloudflare's documented always-pass test keys (§6.12); never real ones.
+  printf 'TURNSTILE_SITE_KEY=1x00000000000000000000AA\nTURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA\n' > "$env_dir/web.env"
 )
 
 echo "== start"
@@ -61,7 +63,8 @@ echo "== web app"
 web="$(curl -s -D - "$base/" | tr -d '\r')"
 grep -q '^HTTP/1.1 200' <<<"$web" || fail "/ is not 200"
 grep -q '<div id="root"></div>' <<<"$web" || fail "/ does not serve the web app"
-grep -qi "^content-security-policy: default-src 'self'; script-src 'self';" <<<"$web" || fail "web CSP missing"
+# Same-origin code only, plus Cloudflare Turnstile's script and iframe (identity threat model §6.12).
+grep -qi "^content-security-policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com;" <<<"$web" || fail "web CSP missing"
 grep -qi '^x-frame-options: DENY' <<<"$web" || fail "web X-Frame-Options missing"
 grep -qi '^cache-control: no-cache' <<<"$web" || fail "index.html must not be cached"
 grep -q '<script>' <<<"$web" && fail "inline script in index.html breaks the CSP"
@@ -83,6 +86,9 @@ echo "== mail worker"
 web_env="$("${compose[@]}" exec -T php env)"
 grep -q '^EMAIL_OUTBOX_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the outbox public key"
 grep -qE '^(EMAIL_OUTBOX_SECRET_KEY|POSTMARK_SERVER_TOKEN|RESEND_API_KEY|SMTP_[A-Z_]+)=' <<<"$web_env" && fail "email secrets present in the php container"
+# §6.12: the Turnstile secret reaches the web tier and nothing else.
+grep -q '^TURNSTILE_SECRET_KEY=.' <<<"$web_env" || fail "web tier lacks the Turnstile secret"
+"${compose[@]}" run --rm -T mail-worker env | grep -q '^TURNSTILE_' && fail "Turnstile keys present in the mail worker"
 
 echo "== hardening"
 for service in php nginx redis; do
@@ -103,7 +109,7 @@ for service in php nginx mysql redis; do
   while IFS='=' read -r _ value; do
     [ -n "$value" ] || continue
     grep -qF -- "$value" <<<"$config" && fail "a secret value appears in the $service container definition"
-  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=" "$env_dir"/*.env)
+  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=|^TURNSTILE_SECRET_KEY=" "$env_dir"/*.env)
 done
 # Code inside the image is not writable by the PHP user.
 "${compose[@]}" exec -T php sh -c 'test ! -w /app/src && test ! -w /app/vendor' || fail "application code is writable"

@@ -8,8 +8,9 @@
 # - MySQL and Redis sit on an internal network with no published ports (P-9).
 # - The web tier never receives the provider-credential KEK (P-6), email
 #   provider tokens or the outbox secret key; it gets only the outbox PUBLIC
-#   key (email threat model E-3/E-6). The mail worker runs only when a
-#   provider token has been delivered (profile "mail").
+#   key (email threat model E-3/E-6), plus the Turnstile keys (identity
+#   threat model §6.12). The mail worker runs only when a provider token has
+#   been delivered (profile "mail").
 
 name: paxoficloud
 
@@ -26,6 +27,8 @@ services:
     env_file:
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-public.env"
+      # Turnstile keys (identity threat model §6.12): the web tier only.
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/web.env"
     environment: &app-environment
       APP_ENV: staging
       APP_URL: https://cloud-staging.paxofi.com

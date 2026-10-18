@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Registration;
 
+use PHPUnit\Framework\TestCase;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\RegistrationThrottled;
 use PaxofiCloud\Application\Identity\Registration\VerificationTokenInvalid;
@@ -14,8 +16,8 @@ use PaxofiCloud\Tests\Support\InMemoryIdentityStore;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
 use PaxofiCloud\Tests\Support\ScriptedBreachCheck;
+use PaxofiCloud\Tests\Support\ScriptedHumanVerification;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
-use PHPUnit\Framework\TestCase;
 
 /** SRS IAM-002; threat model T-03 (EmailVerificationTokenTest). */
 final class VerifyEmailTest extends TestCase
@@ -31,7 +33,7 @@ final class VerifyEmailTest extends TestCase
         $this->store = new InMemoryIdentityStore();
         $this->outbox = new RecordingOutbox();
         $this->clock = new MutableClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'));
-        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, '2026-10-01', new ScriptedBreachCheck());
+        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock, '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate(new ScriptedHumanVerification()));
         $this->verify = new VerifyEmail($this->store, new ImmediateTransactions(), new ScriptedRateLimiter(), $this->clock);
     }
 

@@ -50,7 +50,7 @@ run "release $A" 2>/dev/null || fail "release A failed"
 [ "$(current)" = "$A" ] || fail "current is not A"
 grep -qiE 'password=' "$root/var/log/paxoficloud/deploy.log" && fail "a password reached the deploy log"
 [ "$(stat -c %a "$root/etc/paxoficloud/app.env")" = 600 ] || fail "app.env is not 0600"
-for f in outbox-public.env outbox-secret.env mail-providers.env; do
+for f in outbox-public.env outbox-secret.env mail-providers.env web.env; do
   [ "$(stat -c %a "$root/etc/paxoficloud/$f")" = 600 ] || fail "$f is not 0600"
 done
 grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/outbox-public.env" || fail "outbox public key not generated"
@@ -91,6 +91,16 @@ providers="$root/etc/paxoficloud/mail-providers.env"
 grep -qxF "SMTP_PASSWORD_B64=$(printf '%s' "$password" | base64 -w0)" "$providers" || fail "SMTP password not stored base64-encoded"
 grep -qF -- "$password" "$providers" && fail "SMTP password stored in plain text"
 grep -qF -- "$password" "$root/var/log/paxoficloud/deploy.log" && fail "the SMTP password reached the deploy log"
+
+echo "== web secrets"
+printf 'EMAIL_PROVIDER=smtp\n' | run web-secrets 2>/dev/null && fail "web-secrets accepted a mail setting"
+printf 'TURNSTILE_SECRET_KEY=abc def;id\n' | run web-secrets 2>/dev/null && fail "web-secrets accepted a malformed key"
+[ -s "$root/etc/paxoficloud/web.env" ] && fail "a refused web update was written"
+turnstile="0x4AAAAAAA$(openssl rand -hex 12)"
+printf 'TURNSTILE_SITE_KEY=0x4AAAAAAAsitekey01\nTURNSTILE_SECRET_KEY=%s\n' "$turnstile" | run web-secrets 2>/dev/null || fail "web-secrets refused valid keys"
+[ "$(stat -c %a "$root/etc/paxoficloud/web.env")" = 600 ] || fail "web.env is not 0600"
+grep -qxF "TURNSTILE_SECRET_KEY=$turnstile" "$root/etc/paxoficloud/web.env" || fail "Turnstile secret not stored"
+grep -qF -- "$turnstile" "$root/var/log/paxoficloud/deploy.log" && fail "the Turnstile secret reached the deploy log"
 
 echo "== second release and pruning"
 for repo in paxoficloud-php paxoficloud-nginx; do docker tag "$repo:$A" "$repo:$C"; done

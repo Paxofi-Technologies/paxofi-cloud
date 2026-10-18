@@ -5,16 +5,18 @@ declare(strict_types=1);
 namespace PaxofiCloud\Application\Identity\SignIn;
 
 use PaxofiCloud\Application\Email\EmailAddress;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 
 /**
- * The sign-in form: exactly `email` and `password`. Only shape is checked here;
+ * The sign-in form: exactly `email` and `password`, plus the challenge token
+ * when one is required. Only shape is checked here;
  * a password that could never have been registered (too short, say) simply
  * fails verification, so the response does not hint at the policy. The upper
  * bound stops oversized input reaching Argon2id (T-11).
  */
 final readonly class SignInInput
 {
-    public const array FIELDS = ['email', 'password'];
+    public const array FIELDS = ['email', 'password', ChallengeGate::FIELD];
     public const int PASSWORD_MAX_BYTES = 1024;
 
     private function __construct(public EmailAddress $email, #[\SensitiveParameter] public string $password)

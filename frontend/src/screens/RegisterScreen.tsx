@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { Alert, AuthLayout, Button, Checkbox, RESEND_COOLDOWN_SECONDS, ResendVerification, TextField } from '../components';
+import { Alert, AuthLayout, Button, Checkbox, RESEND_COOLDOWN_SECONDS, ResendVerification, TextField, Turnstile } from '../components';
 import { describeWait, postJson } from '../lib/api';
+import { challengeProblem, useChallengeSiteKey } from '../lib/challenge';
 import { fromServerErrors, PASSWORD_MIN, toRequest, validate, type FieldErrors, type RegistrationForm } from '../lib/registration';
 
 export interface RegisterScreenProps {
@@ -22,6 +23,9 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
   const [loading, setLoading] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const siteKey = useChallengeSiteKey(fetchImpl);
+  const [token, setToken] = useState<string | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
 
   function update<K extends keyof RegistrationForm>(key: K, value: RegistrationForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -33,10 +37,17 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
     const local = validate(form);
     setErrors(local);
     if (Object.keys(local).length > 0) return;
+    if (typeof siteKey === 'string' && token === null) {
+      setProblem('Please complete the security check.');
+      return;
+    }
 
     setLoading(true);
-    const result = await postJson('/api/v1/auth/register', toRequest(form), fetchImpl);
+    const body = token === null ? toRequest(form) : { ...toRequest(form), turnstile_token: token };
+    const result = await postJson('/api/v1/auth/register', body, fetchImpl);
     setLoading(false);
+    // Each token can be verified once; get a fresh one for any next attempt.
+    setResetSignal((n) => n + 1);
 
     switch (result.kind) {
       case 'ok':
@@ -53,6 +64,8 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
         setProblem(`Too many sign-up attempts. Please try again in ${describeWait(result.retryAfterSeconds)}.`);
         return;
       case 'rejected':
+        setProblem(challengeProblem(result.code) ?? 'We could not create your account right now. Please try again in a few minutes.');
+        return;
       case 'unavailable':
         setProblem('We could not create your account right now. Please try again in a few minutes.');
     }
@@ -144,6 +157,7 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
           error={errors.acceptTerms}
           label="I agree to the PaxofiCloud Terms of Service and Privacy Policy."
         />
+        {typeof siteKey === 'string' && <Turnstile siteKey={siteKey} action="register" onToken={setToken} resetSignal={resetSignal} />}
         <Button type="submit" block loading={loading}>
           Create account
         </Button>

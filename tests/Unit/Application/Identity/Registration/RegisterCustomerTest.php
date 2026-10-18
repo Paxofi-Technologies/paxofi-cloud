@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Registration;
 
+use PHPUnit\Framework\TestCase;
+use PaxofiCloud\Application\Contracts\HumanCheck;
 use PaxofiCloud\Application\Email\EmailAddress;
 use PaxofiCloud\Application\Email\EmailTemplates;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
 use PaxofiCloud\Application\Identity\Registration\InvalidRegistration;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\RegistrationThrottled;
@@ -15,8 +20,8 @@ use PaxofiCloud\Tests\Support\ImmediateTransactions;
 use PaxofiCloud\Tests\Support\InMemoryIdentityStore;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
 use PaxofiCloud\Tests\Support\ScriptedBreachCheck;
+use PaxofiCloud\Tests\Support\ScriptedHumanVerification;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
-use PHPUnit\Framework\TestCase;
 
 /** SRS IAM-001, IAM-003; threat model T-01, T-02, T-03, T-06, T-46, T-47. */
 final class RegisterCustomerTest extends TestCase
@@ -35,7 +40,7 @@ final class RegisterCustomerTest extends TestCase
         $this->hasher = new CountingPasswordHasher();
         $this->transactions = new ImmediateTransactions();
         $this->limiter = new ScriptedRateLimiter();
-        $this->register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck());
+        $this->register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate(new ScriptedHumanVerification()));
     }
 
     public function testNewAddressCreatesAPendingIdentityAndQueuesAVerificationLink(): void
@@ -59,7 +64,7 @@ final class RegisterCustomerTest extends TestCase
 
     public function testABreachedPasswordIsRefusedBeforeHashingOrStoringAnything(): void
     {
-        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(true));
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(true), new ChallengeGate(new ScriptedHumanVerification()));
 
         try {
             $register->register(RegistrationInputTest::valid(), '198.51.100.7');
@@ -75,7 +80,7 @@ final class RegisterCustomerTest extends TestCase
     public function testRegistrationContinuesWhenTheBreachCheckIsUnavailable(): void
     {
         $check = new ScriptedBreachCheck(null);
-        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', $check);
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', $check, new ChallengeGate(new ScriptedHumanVerification()));
 
         $register->register(RegistrationInputTest::valid(), '198.51.100.7');
 
@@ -86,7 +91,7 @@ final class RegisterCustomerTest extends TestCase
     public function testThrottledAttemptsNeverReachTheBreachCheck(): void
     {
         $check = new ScriptedBreachCheck();
-        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', $check);
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', $check, new ChallengeGate(new ScriptedHumanVerification()));
         for ($i = 0; $i < RegisterCustomer::PER_EMAIL_LIMIT; $i++) {
             $register->register(RegistrationInputTest::valid(), "198.51.100.{$i}");
         }
@@ -218,5 +223,43 @@ final class RegisterCustomerTest extends TestCase
         (new \ReflectionProperty(\Exception::class, 'code'))->setValue($e, $sqlState);
 
         return $e;
+    }
+
+    public function testAFailedChallengeStopsRegistrationBeforeHashingOrStoring(): void
+    {
+        $human = new ScriptedHumanVerification(HumanCheck::Failed);
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate($human));
+
+        try {
+            $register->register(['turnstile_token' => 'tok-1'] + RegistrationInputTest::valid(), '198.51.100.7');
+            self::fail('Expected the challenge to be required.');
+        } catch (ChallengeRequired) {
+        }
+        self::assertSame([['token' => 'tok-1', 'action' => 'register', 'ip' => '198.51.100.7']], $human->calls);
+        self::assertSame(0, $this->hasher->hashes);
+        self::assertSame([], $this->store->identities);
+        self::assertSame([], $this->outbox->queued);
+    }
+
+    public function testAnUnreachableChallengeProviderFailsClosed(): void
+    {
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate(new ScriptedHumanVerification(HumanCheck::Unavailable)));
+
+        $this->expectException(ChallengeUnavailable::class);
+        $register->register(RegistrationInputTest::valid(), '198.51.100.7');
+    }
+
+    public function testRateLimitsRunBeforeTheChallengeIsVerified(): void
+    {
+        $human = new ScriptedHumanVerification();
+        $register = new RegisterCustomer($this->store, $this->outbox, $this->hasher, $this->transactions, $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate($human));
+        $this->limiter->hits['register:ip:' . hash('sha256', '198.51.100.7')] = RegisterCustomer::PER_IP_LIMIT;
+
+        try {
+            $register->register(RegistrationInputTest::valid(), '198.51.100.7');
+            self::fail('Expected the IP limit to apply.');
+        } catch (RegistrationThrottled) {
+        }
+        self::assertSame([], $human->calls, 'No outbound verification for throttled requests');
     }
 }

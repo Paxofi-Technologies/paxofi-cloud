@@ -190,6 +190,28 @@ jobs:
             echo "::warning::No email provider is configured (Postmark, Resend or SMTP); the mail worker stays off until one is added."
           fi
 
+      # Turnstile keys (identity threat model §6.12) go to the PHP web tier only.
+      # Hosts whose agent predates `web-secrets` refuse the verb (exit 64): the
+      # deploy continues with Turnstile off and asks for an infra apply.
+      - name: Deliver web tier secrets
+        if: inputs.action != 'status'
+        shell: bash
+        env:
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          set -uo pipefail
+          printf 'TURNSTILE_SITE_KEY=%s\nTURNSTILE_SECRET_KEY=%s\n' "$TURNSTILE_SITE_KEY" "$TURNSTILE_SECRET_KEY" \
+            | ssh -F "$RUNNER_TEMP/ssh_config" staging web-secrets
+          rc=$?
+          if [ "$rc" -eq 64 ]; then
+            echo "::warning::This staging host's deploy agent predates Turnstile. Run Infra Staging plan + apply (replaces the server) and deploy again; until then the challenge is off."
+          elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          elif [ -z "$TURNSTILE_SITE_KEY" ] || [ -z "$TURNSTILE_SECRET_KEY" ]; then
+            echo "::warning::TURNSTILE_SITE_KEY (variable) or TURNSTILE_SECRET_KEY (secret) is missing in the staging environment; the challenge is off."
+          fi
+
       - name: Release (migrate, start, health check, automatic rollback)
         if: inputs.action != 'status'
         run: ssh -F "$RUNNER_TEMP/ssh_config" staging release "$GITHUB_SHA"
