@@ -58,6 +58,8 @@ describe('SecurityScreen (IAM-007, IAM-013, IAM-014, §6.13)', () => {
     expect(await screen.findByText('On')).toBeInTheDocument();
     expect(screen.queryByText(CODES[0] as string)).not.toBeInTheDocument();
     expect(onStatusChange).toHaveBeenLastCalledWith({ totpEnabled: true, recoveryCodesLeft: 10 });
+    const activityLoads = (fetchImpl.mock.calls as [string, RequestInit?][]).filter(([p]) => p === '/api/v1/account/activity');
+    expect(activityLoads.length).toBeGreaterThanOrEqual(2); // reloaded after the change
 
     const [setup] = calls(fetchImpl, '/api/v1/account/mfa/totp/setup');
     expect((setup?.headers as Record<string, string>)['X-CSRF-Token']).toBe('csrf-1');
@@ -121,5 +123,67 @@ describe('SecurityScreen (IAM-007, IAM-013, IAM-014, §6.13)', () => {
     await user.type(screen.getByLabelText('Password'), 'pw');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByRole('heading', { name: 'Save your recovery codes' })).toBeInTheDocument();
+  });
+});
+
+describe('Recent security activity (§6.14, T-52)', () => {
+  it('lists events with where, device and IP, newest first, and flags failures', async () => {
+    let calls = 0;
+    const fetchImpl = server({
+      'GET /api/v1/account/mfa': () => json(200, { totp_enabled: false, recovery_codes_left: 0 }),
+      'GET /api/v1/account/activity': () => {
+        calls += 1;
+        return json(200, {
+          events: [
+            {
+              id: 'b'.repeat(32),
+              occurred_at: '2026-10-18T09:12:00Z',
+              type: 'auth.sign_in.failed',
+              outcome: 'failure',
+              details: { reason: 'wrong_password' },
+              ip: '203.0.113.9',
+              location: { country: 'NG', region: 'Lagos', city: 'Ikeja' },
+              device: { label: 'Safari 17 on iOS 17.6 (mobile)' },
+            },
+            { id: 'c'.repeat(32), occurred_at: '2026-10-17T08:00:00Z', type: 'identity.registered', outcome: 'success', details: {}, ip: null, location: { country: null, region: null, city: null }, device: null },
+          ],
+        });
+      },
+    });
+    render(<SecurityScreen csrfToken="csrf-1" fetchImpl={fetchImpl} />);
+
+    expect(await screen.findByRole('heading', { name: 'Recent security activity' })).toBeInTheDocument();
+    const rows = await screen.findAllByRole('row');
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toHaveTextContent('18 Oct 2026, 10:12 WAT');
+    expect(rows[1]).toHaveTextContent('Sign-in failed (wrong password)');
+    expect(rows[1]).toHaveTextContent('Failed');
+    expect(rows[1]).toHaveTextContent('Ikeja, Lagos, Nigeria');
+    expect(rows[1]).toHaveTextContent('Safari 17 on iOS 17.6 (mobile)');
+    expect(rows[1]).toHaveTextContent('203.0.113.9');
+    expect(rows[2]).toHaveTextContent('Account created');
+    expect(rows[2]).toHaveTextContent('Unknown');
+    expect(screen.getByText(/Don't recognise something here/)).toBeInTheDocument();
+    expect(calls).toBe(1);
+  });
+
+  it('shows text, never markup, from the API', async () => {
+    const fetchImpl = server({
+      'GET /api/v1/account/mfa': () => json(200, { totp_enabled: false, recovery_codes_left: 0 }),
+      'GET /api/v1/account/activity': () =>
+        json(200, { events: [{ id: 'd'.repeat(32), occurred_at: '2026-10-18T09:12:00Z', type: 'auth.signed_out', outcome: 'success', details: {}, ip: '198.51.100.1', location: { city: '<img src=x onerror=alert(1)>' }, device: { label: '<b>bold</b>' } }] }),
+    });
+    const { container } = render(<SecurityScreen csrfToken="csrf-1" fetchImpl={fetchImpl} />);
+
+    expect(await screen.findByText('<b>bold</b>')).toBeInTheDocument();
+    expect(container.querySelector('img[src="x"]')).toBeNull();
+    expect(container.querySelector('b')).toBeNull();
+  });
+
+  it('says so when the activity cannot be loaded', async () => {
+    const fetchImpl = server({ 'GET /api/v1/account/mfa': () => json(200, { totp_enabled: false, recovery_codes_left: 0 }) });
+    render(<SecurityScreen csrfToken="csrf-1" fetchImpl={fetchImpl} />);
+
+    expect(await screen.findByText('We could not load your recent activity. Please reload the page.')).toBeInTheDocument();
   });
 });

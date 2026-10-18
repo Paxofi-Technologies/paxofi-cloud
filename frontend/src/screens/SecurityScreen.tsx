@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Card, Checkbox, TextField } from '../components';
+import { Alert, Badge, Button, Card, Checkbox, RecentActivity, TextField } from '../components';
 import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
 import {
@@ -36,8 +36,11 @@ type View =
 export function SecurityScreen({ csrfToken, fetchImpl, onStatusChange }: SecurityScreenProps) {
   const [status, setStatus] = useState<MfaStatus | null | 'loading'>('loading');
   const [view, setView] = useState<View>({ kind: 'overview' });
+  // Bumped after every change so the activity list shows it straight away.
+  const [activityKey, setActivityKey] = useState(0);
 
   async function refresh() {
+    setActivityKey((key) => key + 1);
     const next = await fetchMfaStatus(fetchImpl);
     setStatus(next);
     if (next) onStatusChange?.(next);
@@ -114,6 +117,7 @@ export function SecurityScreen({ csrfToken, fetchImpl, onStatusChange }: Securit
           </>
         )}
       </Card>
+      <RecentActivity fetchImpl={fetchImpl} refreshKey={activityKey} />
     </div>
   );
 }

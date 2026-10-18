@@ -71,3 +71,7 @@
 .pc-secret { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--pc-font-size-lg); letter-spacing: 0.05em; word-break: break-all; }
 .pc-recovery-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--pc-space-2) var(--pc-space-6); margin: 0; padding-left: var(--pc-space-6); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--pc-font-size-md); }
 @media (max-width: 480px) { .pc-recovery-codes { grid-template-columns: 1fr; } }
+
+/* Wide tables scroll inside their card on small screens instead of widening the page. */
+.pc-table-scroll { overflow-x: auto; }
+.pc-table-scroll .pc-table td { white-space: nowrap; }
