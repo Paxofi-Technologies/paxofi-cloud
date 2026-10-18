@@ -6,9 +6,12 @@ export interface DashboardScreenProps {
   onFindDomain: () => void;
   /** The signed-in customer's name; the services below are still sample data. */
   fullName?: string;
+  /** Real two-step verification state; the banner shows only when it is off. */
+  mfaEnabled?: boolean;
+  onSetUpMfa?: () => void;
 }
 
-export function DashboardScreen({ onFindDomain, fullName = sampleCustomer.name }: DashboardScreenProps) {
+export function DashboardScreen({ onFindDomain, fullName = sampleCustomer.name, mfaEnabled = sampleCustomer.mfaEnrolled, onSetUpMfa }: DashboardScreenProps) {
   const firstName = fullName.split(' ')[0] ?? fullName;
   const counts = {
     domains: sampleServices.filter((s) => s.kind === 'Domain').length,
@@ -26,8 +29,16 @@ export function DashboardScreen({ onFindDomain, fullName = sampleCustomer.name }
         <Button onClick={onFindDomain}>Register a domain</Button>
       </div>
 
-      {!sampleCustomer.mfaEnrolled && (
-        <Alert tone="warning" title="Protect your account" action={<Button size="sm" variant="secondary">Turn on two-step verification</Button>}>
+      {!mfaEnabled && (
+        <Alert
+          tone="warning"
+          title="Protect your account"
+          action={
+            <Button size="sm" variant="secondary" onClick={onSetUpMfa}>
+              Turn on two-step verification
+            </Button>
+          }
+        >
           Your domains and servers are only as safe as your password. Two-step verification takes two minutes to set up.
         </Alert>
       )}

@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { SignInScreen } from './SignInScreen';
-import { api, formCalls } from '../test/api';
+import { api, formCalls, type FetchMock } from '../test/api';
 import { fakeTurnstile } from '../test/turnstile';
 
 
@@ -104,5 +104,76 @@ describe('SignInScreen bot check (§6.12)', () => {
     await vi.waitFor(() => expect(formCalls(fetchImpl)).toHaveLength(2));
     expect(JSON.parse(String((formCalls(fetchImpl)[1] as [string, RequestInit])[1].body))).toMatchObject({ turnstile_token: 'tok-9' });
     fake.uninstall();
+  });
+});
+
+describe('SignInScreen two-step verification (IAM-007, §6.13)', () => {
+  function flow(second: Response) {
+    return vi.fn((path: string) =>
+      Promise.resolve(
+        path === '/api/v1/auth/challenge'
+          ? new Response(JSON.stringify({ turnstile_site_key: null }), { status: 200, headers: { 'content-type': 'application/json' } })
+          : path === '/api/v1/auth/sign-in'
+            ? new Response('{"status":"mfa_required"}', { status: 200, headers: { 'content-type': 'application/json' } })
+            : second,
+      ),
+    ) as unknown as FetchMock;
+  }
+
+  it('asks for a code after the password and signs in with it', async () => {
+    const user = userEvent.setup();
+    const onSignedIn = vi.fn();
+    const fetchImpl = flow(new Response('{"status":"signed_in","csrf_token":"x"}', { status: 200, headers: { 'content-type': 'application/json' } }));
+    render(<SignInScreen onSignedIn={onSignedIn} fetchImpl={fetchImpl} />);
+    await submit(user);
+
+    expect(await screen.findByRole('heading', { name: 'Two-step verification' })).toBeInTheDocument();
+    expect(onSignedIn).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText('Verification code'), '12a3456');
+    expect(screen.getByLabelText('Verification code')).toHaveValue('123456');
+    await user.click(screen.getByRole('button', { name: 'Verify and sign in' }));
+
+    await vi.waitFor(() => expect(onSignedIn).toHaveBeenCalledOnce());
+    const call = formCalls(fetchImpl).find(([path]) => path === '/api/v1/auth/sign-in/mfa');
+    expect(JSON.parse(String(call?.[1].body))).toEqual({ code: '123456' });
+  });
+
+  it('accepts a recovery code instead', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = flow(new Response('{"status":"signed_in","csrf_token":"x"}', { status: 200, headers: { 'content-type': 'application/json' } }));
+    render(<SignInScreen onSignedIn={vi.fn()} fetchImpl={fetchImpl} />);
+    await submit(user);
+    await user.click(await screen.findByRole('button', { name: 'Use a recovery code instead' }));
+    await user.type(screen.getByLabelText('Recovery code'), 'abcd-efgh-ijkl-mnop');
+    await user.click(screen.getByRole('button', { name: 'Verify and sign in' }));
+
+    await vi.waitFor(() => expect(formCalls(fetchImpl).some(([path]) => path === '/api/v1/auth/sign-in/mfa')).toBe(true));
+    const call = formCalls(fetchImpl).find(([path]) => path === '/api/v1/auth/sign-in/mfa');
+    expect(JSON.parse(String(call?.[1].body))).toEqual({ recovery_code: 'abcd-efgh-ijkl-mnop' });
+  });
+
+  it('explains a wrong code and lets the customer retry', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = flow(new Response('{"code":"validation_failed","errors":{"code":"incorrect"}}', { status: 422, headers: { 'content-type': 'application/problem+json' } }));
+    render(<SignInScreen onSignedIn={vi.fn()} fetchImpl={fetchImpl} />);
+    await submit(user);
+    await user.type(await screen.findByLabelText('Verification code'), '000000');
+    await user.click(screen.getByRole('button', { name: 'Verify and sign in' }));
+
+    expect(await screen.findByText(/That code is not right/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verify and sign in' })).toBeInTheDocument();
+  });
+
+  it('sends the customer back to the password after a lockout', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = flow(new Response('{"code":"too_many_attempts"}', { status: 429, headers: { 'content-type': 'application/problem+json', 'retry-after': '900' } }));
+    render(<SignInScreen onSignedIn={vi.fn()} fetchImpl={fetchImpl} />);
+    await submit(user);
+    await user.type(await screen.findByLabelText('Verification code'), '000000');
+    await user.click(screen.getByRole('button', { name: 'Verify and sign in' }));
+
+    expect(await screen.findByText(/paused for 15 minutes/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Sign in again' }));
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
   });
 });
