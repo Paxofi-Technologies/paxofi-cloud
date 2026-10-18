@@ -45,6 +45,12 @@
   `frontend/` (built in a pinned Node stage; nothing else from that stage
   ships). Nginx serves it at `/` with its own CSP and security headers, and
   routes only `/health/*` and `/api/*` to PHP.
+- **Staff console:** the same image carries `admin.html`, served only on the
+  admin host (`cloud-staging-admin.paxofi.com`, `ADMIN_URL` in
+  `compose.yaml`), which routes only `/health/*` and `/admin-api/*` to PHP and
+  has a stricter CSP. The customer host refuses `/admin-api` and `admin.html`
+  (identity threat model §6.19). Both hosts sit behind the same Cloudflare
+  Access email gate; staff then sign in with a passkey.
 - **Exposure:** only Nginx is published, on `127.0.0.1:8080`. `cloudflared` on
   the host forwards to it. MySQL and Redis sit on an internal network.
 
@@ -65,7 +71,7 @@ Installed by cloud-init as `/usr/local/sbin/paxoficloud-deploy` and bound to the
 `deploy` user's key as a forced command. Because cloud-init installs it, a
 change to this script (or to `compose.yaml`) reaches the host only when the
 infrastructure workflow replaces the instance (plan, then apply); a deploy alone
-keeps the old copy. It accepts exactly four verbs:
+keeps the old copy. It accepts exactly these verbs:
 
 | Verb | Does |
 |---|---|
@@ -73,6 +79,7 @@ keeps the old copy. It accepts exactly four verbs:
 | `release <40-hex sha>` | Generates secrets on first run, starts MySQL/Redis, runs `bin/paxoficloud migrate`, starts the new version and waits for `/health/ready`. On success records `current`/`previous` and prunes older images; on failure restarts the previous version and exits 1. |
 | `mail-secrets` | Reads `NAME=value` lines from stdin (max 8 KiB). Accepts only `POSTMARK_SERVER_TOKEN`, `RESEND_API_KEY`, `SMTP_HOST`, `SMTP_PORT` (465/587), `SMTP_USERNAME`, `SMTP_PASSWORD` (stored base64-encoded as `SMTP_PASSWORD_B64`), `SMTP_TLS_NAME` (optional; must be `SMTP_HOST` or a parent domain of it), `EMAIL_PROVIDER` and `EMAIL_RECIPIENT_ALLOWLIST`, each format-checked; any bad line rejects the whole update. Writes `mail-providers.env` atomically (0600) and logs names only. |
 | `web-secrets` | Reads `NAME=value` lines from stdin (max 4 KiB). Accepts only `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (8–128 of `A-Z a-z 0-9 _ -`, or empty to turn the challenge off); any bad line rejects the whole update. Writes `web.env` atomically (0600) and logs names only. Hosts installed before this verb existed answer exit 64; the workflow then warns and deploys with the challenge off until an infra apply replaces the host. |
+| `staff-bootstrap` | Reads `EMAIL=` and `NAME=` from stdin (max 1 KiB; fixed formats, no shell metacharacters) and runs `bin/paxoficloud staff:bootstrap` in the running release with them as arguments (no shell). Logs neither value. Exit 2 when the app refuses (an active staff manager already exists, or the address is already staff). Used by the workflow action `staff-bootstrap`. |
 | `status` | Prints the current and previous release SHAs, the containers, and a mail summary: worker enabled or disabled, `EMAIL_PROVIDER`, the number of allow-list entries, the names (never values) of the mail settings that are set, and `mail:status` (outbox counts plus the latest delivery problems with their fixed failure reason, e.g. `suppressed-not-allowlisted`). The deploy workflow runs it after every deploy; run the workflow with `action: status` to print it without deploying. |
 
 Every run is appended to `/var/log/paxoficloud/deploy.log` (time, verb, SHA,
@@ -82,3 +89,16 @@ needs a schema rollback.
 `host/test-deploy-agent.sh` exercises the agent against the real images (bad
 input, a release, a broken release that rolls back, pruning). CI runs it after
 the smoke test.
+
+## First staff Security Admin
+
+1. In the `staging` environment add the secret `STAGING_FIRST_ADMIN_EMAIL`
+   (also listed in `STAGING_ALLOWED_EMAILS`, so Access lets you in and the mail
+   worker may send to it) and the variable `STAGING_FIRST_ADMIN_NAME`.
+2. Run **PaxofiCloud Staging Deploy** with `action: staff-bootstrap`.
+3. Open the "staff invitation" email on the device that has your passkeys and
+   follow the link within 24 hours: `https://cloud-staging-admin.paxofi.com/enrol`.
+   Register **two** passkeys (for example a security key and the computer's own
+   passkey); the account becomes active with the second.
+4. Sign in at `https://cloud-staging-admin.paxofi.com/` and invite further
+   staff from the console. The bootstrap action refuses from now on.

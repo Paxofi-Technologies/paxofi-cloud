@@ -33,6 +33,9 @@ services:
     environment: &app-environment
       APP_ENV: staging
       APP_URL: https://cloud-staging.paxofi.com
+      # Staff admin console origin: WebAuthn relying party (§6.17) and the only
+      # host that answers /admin-api (§6.18).
+      ADMIN_URL: https://cloud-staging-admin.paxofi.com
       DB_DSN: mysql:host=mysql;port=3306;dbname=paxoficloud;charset=utf8mb4
       REDIS_HOST: redis
       REDIS_PORT: "6379"

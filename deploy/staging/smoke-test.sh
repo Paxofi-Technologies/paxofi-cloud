@@ -78,6 +78,24 @@ test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/")" = 403 || fail 
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/nope")" = 404 || fail "/api is not routed to PHP"
 curl -s "$base/api/nope" | grep -q '"code":"route_not_found"' || fail "/api 404 is not the API's problem+json"
 test "$(head -c 2000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' --data-binary @- "$base/health/live")" = 413 || fail "body size limit not enforced"
+echo "== admin host"
+# §6.18/§6.19: the staff console and /admin-api answer only on the admin host.
+admin=(-H 'Host: cloud-staging-admin.paxofi.com')
+admin_page="$(curl -s -D - "${admin[@]}" "$base/enrol" | tr -d '\r')"
+grep -q '^HTTP/1.1 200' <<<"$admin_page" || fail "admin host does not serve the console"
+grep -q '<title>PaxofiCloud Staff</title>' <<<"$admin_page" || fail "admin host does not serve admin.html"
+grep -qi '^content-security-policy: .*frame-ancestors' <<<"$admin_page" || fail "admin console lacks CSP"
+grep -qi '^content-security-policy: .*challenges.cloudflare.com' <<<"$admin_page" && fail "admin CSP allows third-party script"
+grep -qi '^permissions-policy: .*publickey-credentials-get=(self)' <<<"$admin_page" || fail "admin Permissions-Policy missing"
+test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/admin-api/v1/auth/session")" = 401 || fail "admin API not reachable on the admin host"
+test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/api/v1/auth/session")" = 404 || fail "customer API served on the admin host"
+test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/index.html")" = 404 || fail "customer portal served on the admin host"
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "${admin[@]}" --data '{}' "$base/admin-api/v1/auth/passkey/options")" = 403 || fail "admin write accepted without Origin"
+curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{}' "$base/admin-api/v1/auth/passkey/options" \
+  | grep -q '"rpId":"cloud-staging-admin.paxofi.com"' || fail "passkey sign-in options not issued"
+test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin-api/v1/auth/session")" = 404 || fail "admin API reachable on the customer host"
+test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin.html")" = 404 || fail "admin console served on the customer host"
+curl -s "$base/" | grep -q '<title>PaxofiCloud</title>' || fail "customer host does not serve the portal"
 "${compose[@]}" exec -T php php -r 'exit(ini_get("expose_php") || ini_get("opcache.validate_timestamps") ? 1 : 0);' || fail "production php.ini not applied"
 
 echo "== mail worker"

@@ -5,6 +5,9 @@
 #   - The Vultr firewall accepts NO inbound traffic (P-12). cloudflared on the
 #     host dials out to Cloudflare; the origin IP is useless to an attacker.
 #   - cloud-staging.<zone>      -> tunnel -> nginx on 127.0.0.1:8080
+#   - cloud-staging-admin.<zone> -> tunnel -> the same nginx; the staff admin
+#     console and /admin-api (identity threat model §6.18, §6.19). Same email
+#     gate as the web host in front of the passkey sign-in.
 #   - cloud-staging-ssh.<zone>  -> tunnel -> sshd on 127.0.0.1:22, behind a
 #     Cloudflare Access policy that admits only the CI service token (D-01).
 #   - The deploy user can only run the deploy agent (P-4). The Vultr web console
@@ -17,6 +20,7 @@ locals {
   account_id     = data.cloudflare_zone.this.account.id
   web_host       = "${var.hostname}.${var.zone_name}"
   ssh_host       = "${var.hostname}-ssh.${var.zone_name}"
+  admin_host     = "${var.hostname}-admin.${var.zone_name}"
   # Pinned by digest; the same image is used by CI to reach the host.
   cloudflared_image = "cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07"
 }
@@ -48,6 +52,8 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "staging" {
   config = {
     ingress = [
       { hostname = local.web_host, service = "http://127.0.0.1:8080" },
+      # cloudflared keeps the original Host header, which the admin API checks.
+      { hostname = local.admin_host, service = "http://127.0.0.1:8080" },
       { hostname = local.ssh_host, service = "ssh://127.0.0.1:22" },
       { service = "http_status:404" },
     ]
@@ -67,6 +73,16 @@ resource "cloudflare_dns_record" "web" {
   proxied = true
   ttl     = 1
   comment = "PaxofiCloud staging web (managed by OpenTofu; do not edit by hand)"
+}
+
+resource "cloudflare_dns_record" "admin" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = local.admin_host
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.staging.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "PaxofiCloud staging staff admin console, Access-protected (managed by OpenTofu)"
 }
 
 resource "cloudflare_dns_record" "ssh" {
@@ -125,6 +141,20 @@ resource "cloudflare_zero_trust_access_application" "web" {
   type                 = "self_hosted"
   domain               = local.web_host
   session_duration     = "24h"
+  app_launcher_visible = false
+  policies = [
+    { id = cloudflare_zero_trust_access_policy.deploy.id, precedence = 1 },
+    { id = cloudflare_zero_trust_access_policy.staging_viewers.id, precedence = 2 },
+  ]
+}
+
+# The staff admin console: the same viewers, then a passkey sign-in in the app.
+resource "cloudflare_zero_trust_access_application" "admin" {
+  account_id           = local.account_id
+  name                 = "${local.name}-admin"
+  type                 = "self_hosted"
+  domain               = local.admin_host
+  session_duration     = "8h"
   app_launcher_visible = false
   policies = [
     { id = cloudflare_zero_trust_access_policy.deploy.id, precedence = 1 },

@@ -17,6 +17,7 @@ FROM nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451
 RUN rm -f /etc/nginx/conf.d/*.conf
 COPY docker/production/nginx.conf /etc/nginx/conf.d/paxoficloud.conf
 COPY docker/production/web-security-headers.conf /etc/nginx/snippets/web-security-headers.conf
+COPY docker/production/admin-security-headers.conf /etc/nginx/snippets/admin-security-headers.conf
 COPY public/ /app/public/
 COPY --from=web /web/dist/ /app/web/
 

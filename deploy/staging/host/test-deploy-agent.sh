@@ -34,7 +34,7 @@ trap cleanup EXIT
 for repo in paxoficloud-php paxoficloud-nginx; do docker tag "$repo:$BASE_TAG" "$repo:$A"; done
 
 echo "== refused commands"
-for bad in "" "rm -rf /" "release" "release ../../etc/passwd" "release $A extra" "status now"; do
+for bad in "" "rm -rf /" "release" "release ../../etc/passwd" "release $A extra" "status now" "staff-bootstrap now"; do
   if run "$bad" 2>/dev/null; then fail "accepted: '$bad'"; fi
 done
 
@@ -106,6 +106,18 @@ printf 'TURNSTILE_SITE_KEY=0x4AAAAAAAsitekey01\nTURNSTILE_SECRET_KEY=%s\n' "$tur
 grep -qxF "TURNSTILE_SECRET_KEY=$turnstile" "$root/etc/paxoficloud/web.env" || fail "Turnstile secret not stored"
 grep -qF -- "$turnstile" "$root/var/log/paxoficloud/deploy.log" && fail "the Turnstile secret reached the deploy log"
 
+echo "== staff bootstrap (§6.19)"
+printf 'EMAIL=ada@example.invalid\nNAME=Ada $(id)\n' | run staff-bootstrap 2>/dev/null && fail "staff-bootstrap accepted a shell-looking name"
+printf 'EMAIL=not-an-email\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>/dev/null && fail "staff-bootstrap accepted a malformed email"
+printf 'EMAIL=ada@example.invalid\nROLE=super_admin\n' | run staff-bootstrap 2>/dev/null && fail "staff-bootstrap accepted an unknown setting"
+printf 'NAME=Ada Lovelace\n' | run staff-bootstrap 2>/dev/null && fail "staff-bootstrap ran without an email"
+bootstrap_out="$(printf 'EMAIL=first-admin@example.invalid\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>&1)" || fail "staff-bootstrap refused a valid first admin"
+grep -q 'invitation queued' <<<"$bootstrap_out" || fail "staff-bootstrap did not report the invitation"
+status=0; printf 'EMAIL=first-admin@example.invalid\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>/dev/null || status=$?
+[ "$status" = 2 ] || fail "a second bootstrap for the same address was not refused (exit $status)"
+grep -qF 'first-admin@example.invalid' <<<"$bootstrap_out" && fail "staff-bootstrap printed the email address"
+grep -qF 'first-admin@example.invalid' "$root/var/log/paxoficloud/deploy.log" && fail "the email address reached the deploy log"
+
 echo "== second release and pruning"
 for repo in paxoficloud-php paxoficloud-nginx; do docker tag "$repo:$A" "$repo:$C"; done
 run "release $C" 2>/dev/null || fail "release C failed"
@@ -129,4 +141,4 @@ for leak in "$password" "$(printf '%s' "$password" | base64 -w0)" example.invali
   grep -qF -- "$leak" <<<"$status_out" && fail "status printed a mail setting value"
 done
 
-echo "OK: deploy agent refuses bad input, releases, rolls back, prunes and wires the mail worker (SMTP) and reports mail status without values"
+echo "OK: deploy agent refuses bad input, releases, rolls back, prunes, bootstraps the first staff admin without logging the address, wires the mail worker (SMTP) and reports mail status without values"
