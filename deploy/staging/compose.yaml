@@ -27,8 +27,9 @@ services:
     env_file:
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-public.env"
-      # Turnstile keys (identity threat model §6.12): the web tier only.
+      # Turnstile keys (§6.12) and MFA keys (§6.13): the web tier only.
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/web.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/identity-keys.env"
     environment: &app-environment
       APP_ENV: staging
       APP_URL: https://cloud-staging.paxofi.com

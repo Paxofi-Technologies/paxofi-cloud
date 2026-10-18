@@ -50,10 +50,14 @@ run "release $A" 2>/dev/null || fail "release A failed"
 [ "$(current)" = "$A" ] || fail "current is not A"
 grep -qiE 'password=' "$root/var/log/paxoficloud/deploy.log" && fail "a password reached the deploy log"
 [ "$(stat -c %a "$root/etc/paxoficloud/app.env")" = 600 ] || fail "app.env is not 0600"
-for f in outbox-public.env outbox-secret.env mail-providers.env web.env; do
+for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env; do
   [ "$(stat -c %a "$root/etc/paxoficloud/$f")" = 600 ] || fail "$f is not 0600"
 done
 grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/outbox-public.env" || fail "outbox public key not generated"
+grep -qE '^MFA_SECRET_KEYS=k1:[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA key ring not generated"
+grep -qE '^MFA_RECOVERY_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA recovery key not generated"
+mfa_key="$(sed -n 's/^MFA_RECOVERY_KEY=//p' "$root/etc/paxoficloud/identity-keys.env")"
+grep -qF -- "$mfa_key" "$root/var/log/paxoficloud/deploy.log" && fail "an MFA key reached the deploy log"
 secret_key="$(cut -d= -f2- "$root/etc/paxoficloud/outbox-secret.env")"
 grep -qF -- "$secret_key" "$root/var/log/paxoficloud/deploy.log" && fail "the outbox secret key reached the deploy log"
 docker ps --format '{{.Names}}' | grep -q mail-worker && fail "mail worker started without a provider token"

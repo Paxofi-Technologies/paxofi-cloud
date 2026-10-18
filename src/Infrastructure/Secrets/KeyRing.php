@@ -73,10 +73,23 @@ final class KeyRing
      */
     public static function fromProcessEnvironment(): self
     {
-        $keys = getenv('PROVIDER_CREDENTIAL_KEYS');
-        $active = getenv('PROVIDER_CREDENTIAL_ACTIVE_KEY');
+        return self::fromNamedProcessEnvironment('PROVIDER_CREDENTIAL_KEYS', 'PROVIDER_CREDENTIAL_ACTIVE_KEY', '(workers and operator CLI only)')
+            ?? throw new InvalidKeyRing('PROVIDER_CREDENTIAL_KEYS and PROVIDER_CREDENTIAL_ACTIVE_KEY must be set (workers and operator CLI only).');
+    }
+
+    /**
+     * The same, for another key ring (e.g. MFA_SECRET_KEYS / MFA_SECRET_ACTIVE_KEY).
+     * Null when neither variable is set; a half-set or malformed pair is an error.
+     */
+    public static function fromNamedProcessEnvironment(string $listVariable, string $activeVariable, string $hint = ''): ?self
+    {
+        $keys = getenv($listVariable);
+        $active = getenv($activeVariable);
+        if (($keys === false || $keys === '') && ($active === false || $active === '')) {
+            return null;
+        }
         if (!is_string($keys) || $keys === '' || !is_string($active) || $active === '') {
-            throw new InvalidKeyRing('PROVIDER_CREDENTIAL_KEYS and PROVIDER_CREDENTIAL_ACTIVE_KEY must be set (workers and operator CLI only).');
+            throw new InvalidKeyRing(trim(sprintf('%s and %s must both be set %s', $listVariable, $activeVariable, $hint)) . '.');
         }
 
         return self::fromEnvironment($keys, $active);

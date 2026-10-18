@@ -97,4 +97,9 @@ final class InMemoryIdentityStore implements IdentityStore, SignInStore
 
         return $identity === null ? null : ['full_name' => $identity['full_name'], 'email' => $identity['email'], 'status' => $identity['status']];
     }
+
+    public function passwordHash(string $identityId): ?string
+    {
+        return $this->identities[$identityId]['password_hash'] ?? null;
+    }
 }

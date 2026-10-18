@@ -163,6 +163,13 @@ final readonly class MysqlIdentityStore implements IdentityStore, SignInStore
         return ['full_name' => Row::string($rows[0], 'full_name'), 'email' => Row::string($rows[0], 'email'), 'status' => Row::string($rows[0], 'status')];
     }
 
+    public function passwordHash(string $identityId): ?string
+    {
+        $rows = $this->repository->fetchAll('SELECT password_hash FROM identities WHERE id = :id', ['id' => $identityId]);
+
+        return $rows === [] ? null : Row::string($rows[0], 'password_hash');
+    }
+
     private static function time(\DateTimeImmutable $time): string
     {
         return $time->setTimezone(new \DateTimeZone('UTC'))->format(self::TIME);

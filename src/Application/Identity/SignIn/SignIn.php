@@ -13,11 +13,15 @@ use PaxofiCloud\Application\Contracts\SignInThrottle;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
+use PaxofiCloud\Application\Identity\Mfa\CompleteMfaSignIn;
+use PaxofiCloud\Application\Identity\Mfa\MfaPending;
+use PaxofiCloud\Application\Identity\Mfa\MfaSettings;
 use PaxofiCloud\Application\Identity\Session\IssuedSession;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 
 /**
- * Customer sign-in with email and password (SRS IAM-005, IAM-006; threat model §6.11,
+ * Customer sign-in with email and password, then TOTP when it is on (SRS
+ * IAM-005..007; threat model §6.11, §6.13,
  * T-07..T-12, T-18, D-3, D-7).
  */
 final readonly class SignIn
@@ -44,6 +48,8 @@ final readonly class SignIn
         private Sessions $sessions,
         private Logger $logger,
         private ChallengeGate $challenge,
+        private MfaSettings $mfa,
+        private CompleteMfaSignIn $mfaSignIn,
     ) {
     }
 
@@ -63,7 +69,7 @@ final readonly class SignIn
         string $clientIp,
         string $userAgent,
         #[\SensitiveParameter] ?string $previousSessionId,
-    ): IssuedSession {
+    ): IssuedSession|MfaPending {
         $input = SignInInput::fromArray($data);
         $lookup = $input->email->hash();
 
@@ -110,6 +116,11 @@ final readonly class SignIn
 
         // T-18: a new ID every time; whatever the browser held before is destroyed.
         $this->sessions->end($previousSessionId);
+
+        // §6.13: with TOTP on, the password only earns a short ticket for the second step.
+        if ($this->mfa->isEnabled($identity['id'])) {
+            return $this->mfaSignIn->start($identity['id'], $identity['account_id']);
+        }
 
         return $this->sessions->issue($identity['id'], $identity['account_id'], $clientIp, $userAgent);
     }
