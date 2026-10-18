@@ -11,7 +11,7 @@ is released by the **PaxofiCloud Staging Deploy** workflow
 
 | Resource | Purpose |
 |---|---|
-| `vultr_instance.staging` | Ubuntu 24.04 host (default plan `vc2-2c-4gb`, region `jnb`), IPv6 on, configured by `cloud-init.yaml.tftpl`: Docker, `cloudflared`, the deploy agent and the runtime `compose.yaml` |
+| `vultr_instance.staging` | Ubuntu 24.04 host (default plan `vhp-2c-4gb-amd`, region `jnb`; override the plan with the `staging` environment variable `STAGING_VULTR_PLAN` if a size sells out), IPv6 on, configured by `cloud-init.yaml.tftpl`: Docker, `cloudflared`, the deploy agent and the runtime `compose.yaml` |
 | `vultr_firewall_group.staging` | **No rules: every inbound packet is dropped.** The host only dials out. |
 | `vultr_ssh_key.admin` | Admin public key on the instance record (break-glass via the Vultr console only; sshd listens on loopback) |
 | `cloudflare_zero_trust_tunnel_cloudflared.staging` + `_config` | Outbound-only tunnel: `cloud-staging.<zone>` → Nginx on `127.0.0.1:8080`; `cloud-staging-ssh.<zone>` → sshd on `127.0.0.1:22`; everything else 404 |

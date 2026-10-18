@@ -89,6 +89,8 @@ jobs:
       TF_VAR_admin_ssh_public_key: ${{ vars.STAGING_ADMIN_SSH_PUBLIC_KEY }}
       TF_VAR_deploy_ssh_public_key: ${{ vars.STAGING_DEPLOY_SSH_PUBLIC_KEY }}
       TF_VAR_staging_allowed_emails: ${{ secrets.STAGING_ALLOWED_EMAILS }}
+      # Optional: overrides the default Vultr plan when a size sells out in the region.
+      STAGING_VULTR_PLAN: ${{ vars.STAGING_VULTR_PLAN }}
       STATE_BUCKET: ${{ vars.STATE_BUCKET }}
       # A secret (not a variable) so the account-specific endpoint is masked in
       # this public repository's logs.
@@ -120,6 +122,18 @@ jobs:
             if [ -z "${!name:-}" ]; then echo "::error::$name is not set in the staging environment"; missing=1; fi
           done
           exit "$missing"
+
+      - name: Apply optional plan override
+        if: env.STAGING_VULTR_PLAN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$STAGING_VULTR_PLAN" =~ ^[a-z0-9.-]+$ ]]; then
+            echo "::error::STAGING_VULTR_PLAN must be a Vultr plan ID such as vhp-2c-4gb-amd"
+            exit 1
+          fi
+          echo "TF_VAR_plan=$STAGING_VULTR_PLAN" >> "$GITHUB_ENV"
+          echo "Vultr plan override: $STAGING_VULTR_PLAN"
 
       - name: Confirm destroy
         if: inputs.action == 'destroy'
