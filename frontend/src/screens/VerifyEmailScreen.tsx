@@ -5,7 +5,7 @@ import { describeWait, postJson } from '../lib/api';
 export interface VerifyEmailScreenProps {
   /** Injected in tests; the browser's location and fetch otherwise. */
   initialHash?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: typeof fetch | undefined;
 }
 
 type State = { kind: 'verifying' } | { kind: 'verified' } | { kind: 'invalid' } | { kind: 'throttled'; wait: string } | { kind: 'error' };
@@ -63,7 +63,7 @@ export function VerifyEmailScreen({ initialHash, fetchImpl }: VerifyEmailScreenP
             </div>
             <Alert tone="success">You can now sign in with your email address and password.</Alert>
             <p className="pc-auth__footer">
-              <a href="/">Continue to sign in</a>
+              <a href="/sign-in">Continue to sign in</a>
             </p>
           </>
         )}
@@ -76,7 +76,7 @@ export function VerifyEmailScreen({ initialHash, fetchImpl }: VerifyEmailScreenP
             <Alert tone="info">If you have already confirmed your email, just sign in. Otherwise, enter your email to get a new link.</Alert>
             <ResendVerification fetchImpl={fetchImpl} />
             <p className="pc-auth__footer">
-              <a href="/">Sign in</a> · <a href="/register">Register again</a>
+              <a href="/sign-in">Sign in</a> · <a href="/register">Register again</a>
             </p>
           </>
         )}

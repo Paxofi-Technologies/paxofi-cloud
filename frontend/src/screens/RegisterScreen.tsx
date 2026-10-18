@@ -5,7 +5,7 @@ import { fromServerErrors, PASSWORD_MIN, toRequest, validate, type FieldErrors, 
 
 export interface RegisterScreenProps {
   /** Injected in tests; the browser's fetch otherwise. */
-  fetchImpl?: typeof fetch;
+  fetchImpl?: typeof fetch | undefined;
 }
 
 const EMPTY: RegistrationForm = { fullName: '', email: '', phone: '', password: '', acceptTerms: false };
@@ -75,7 +75,7 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
           </Alert>
           <ResendVerification email={sentTo} initialCooldown={RESEND_COOLDOWN_SECONDS} fetchImpl={fetchImpl} />
           <p className="pc-auth__footer">
-            <a href="/">Back to sign in</a>
+            <a href="/sign-in">Back to sign in</a>
           </p>
         </div>
       </AuthLayout>
@@ -148,7 +148,7 @@ export function RegisterScreen({ fetchImpl }: RegisterScreenProps) {
           Create account
         </Button>
         <p className="pc-auth__footer">
-          Already have an account? <a href="/">Sign in</a>
+          Already have an account? <a href="/sign-in">Sign in</a>
         </p>
       </form>
     </AuthLayout>

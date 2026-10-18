@@ -4,10 +4,12 @@ import { sampleBalance, sampleCustomer, sampleNextInvoice, sampleServices } from
 
 export interface DashboardScreenProps {
   onFindDomain: () => void;
+  /** The signed-in customer's name; the services below are still sample data. */
+  fullName?: string;
 }
 
-export function DashboardScreen({ onFindDomain }: DashboardScreenProps) {
-  const firstName = sampleCustomer.name.split(' ')[0] ?? sampleCustomer.name;
+export function DashboardScreen({ onFindDomain, fullName = sampleCustomer.name }: DashboardScreenProps) {
+  const firstName = fullName.split(' ')[0] ?? fullName;
   const counts = {
     domains: sampleServices.filter((s) => s.kind === 'Domain').length,
     hosting: sampleServices.filter((s) => s.kind === 'Hosting').length,

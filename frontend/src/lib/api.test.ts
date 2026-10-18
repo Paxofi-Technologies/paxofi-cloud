@@ -18,7 +18,7 @@ describe('postJson', () => {
   });
 
   it('classifies responses', async () => {
-    expect(await postJson('/x', {}, respond(202))).toEqual({ kind: 'ok', status: 202 });
+    expect(await postJson('/x', {}, respond(202))).toEqual({ kind: 'ok', status: 202, data: null });
     expect(await postJson('/x', {}, respond(422, { code: 'validation_failed', errors: { email: 'invalid', bad: 3 } }))).toEqual({
       kind: 'invalid',
       errors: { email: 'invalid' },
