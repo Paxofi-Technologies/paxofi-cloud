@@ -10,6 +10,9 @@ use PaxofiCloud\Application\Contracts\PasswordRehashPolicy;
 use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Contracts\SignInStore;
 use PaxofiCloud\Application\Contracts\SignInThrottle;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
 use PaxofiCloud\Application\Identity\Session\IssuedSession;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 
@@ -22,6 +25,8 @@ final readonly class SignIn
     public const int PER_IP_LIMIT = 30;
     public const int PER_IP_WINDOW_SECONDS = 60;
     public const int ACCOUNT_ALERT_THRESHOLD = 10;
+    /** §6.12: a challenge is required from this many failures for the pair. */
+    public const int CHALLENGE_AFTER_PAIR_FAILURES = 3;
 
     /**
      * D-7: verified against when the email is unknown so both paths cost one
@@ -38,6 +43,7 @@ final readonly class SignIn
         private SignInThrottle $throttle,
         private Sessions $sessions,
         private Logger $logger,
+        private ChallengeGate $challenge,
     ) {
     }
 
@@ -46,6 +52,8 @@ final readonly class SignIn
      * @param string|null $previousSessionId the session cookie sent with the request, if any
      * @throws InvalidSignIn
      * @throws SignInThrottled
+     * @throws ChallengeRequired
+     * @throws ChallengeUnavailable
      * @throws InvalidCredentials
      * @throws EmailNotVerified
      * @throws AccountUnavailable
@@ -67,12 +75,20 @@ final readonly class SignIn
             throw new SignInThrottled($retry);
         }
 
+        // §6.12: risky attempts must pass a challenge before any hash. Counter (b)
+        // counts every address, so this never depends on the account existing.
+        $failures = $this->throttle->failures($pair, $lookup);
+        if ($failures['pair'] >= self::CHALLENGE_AFTER_PAIR_FAILURES || $failures['account'] > self::ACCOUNT_ALERT_THRESHOLD) {
+            $this->challenge->assertHuman(ChallengeGate::token($data), ChallengeGate::SIGN_IN, $clientIp);
+        }
+
         $identity = $this->identities->findForSignIn($lookup);
         $matches = $this->hasher->verify($input->password, $identity['password_hash'] ?? self::DUMMY_HASH);
         if ($identity === null || !$matches) {
             $this->throttle->recordFailure($pair);
-            if ($identity !== null && $this->throttle->recordAccountFailure($lookup) > self::ACCOUNT_ALERT_THRESHOLD) {
-                // T-08 counter (b). Turnstile and the owner email follow in their own PRs.
+            $accountFailures = $this->throttle->recordAccountFailure($lookup);
+            if ($identity !== null && $accountFailures > self::ACCOUNT_ALERT_THRESHOLD) {
+                // T-07 counter (b): challenged from now on (§6.12); owner email follows with notifications.
                 $this->logger->warning('auth.sign_in.account_failures_high', ['identity_id' => $identity['id']]);
             }
 

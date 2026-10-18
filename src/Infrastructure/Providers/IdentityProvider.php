@@ -6,12 +6,15 @@ namespace PaxofiCloud\Infrastructure\Providers;
 
 use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
+use PaxofiCloud\Application\Contracts\HumanVerification;
 use PaxofiCloud\Application\Contracts\SignInStore;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\ResendVerification;
 use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
+use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\MysqlEmailOutbox;
 use PaxofiCloud\Infrastructure\Email\OutboxSealer;
@@ -23,7 +26,9 @@ use PaxofiCloud\Infrastructure\Session\RedisSignInThrottle;
 use PaxofiCloud\Infrastructure\Time\SystemClock;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
+use PaxofiCloud\Integration\Security\DisabledHumanVerification;
 use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
+use PaxofiCloud\Integration\Security\TurnstileVerification;
 use Paxofi\Core\Application;
 use Paxofi\Core\Contracts\Configuration;
 use Paxofi\Core\Contracts\Connection;
@@ -70,6 +75,7 @@ final class IdentityProvider implements Provider
                 new SystemClock(),
                 is_string($terms) ? $terms : '',
                 self::breachedPasswordCheck($c),
+                Resolve::get($c, ChallengeGate::class),
             );
         });
 
@@ -79,6 +85,7 @@ final class IdentityProvider implements Provider
             Resolve::get($c, TransactionManager::class),
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
+            Resolve::get($c, ChallengeGate::class),
         ));
 
         $container->singleton(VerifyEmail::class, static fn (Container $c): VerifyEmail => new VerifyEmail(
@@ -108,8 +115,49 @@ final class IdentityProvider implements Provider
                 new RedisSignInThrottle(Resolve::get($c, RedisClient::class)),
                 Resolve::get($c, Sessions::class),
                 Resolve::get($c, Logger::class),
+                Resolve::get($c, ChallengeGate::class),
             );
         });
+
+        $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));
+        $container->singleton(ChallengeGate::class, static fn (Container $c): ChallengeGate => new ChallengeGate(Resolve::get($c, HumanVerification::class)));
+        $container->singleton(ChallengeController::class, static function (Container $c): ChallengeController {
+            $key = Resolve::get($c, Configuration::class)->get('identity.turnstile_site_key');
+
+            return new ChallengeController(Resolve::get($c, HumanVerification::class)->enabled() && is_string($key) ? $key : null);
+        });
+    }
+
+    /** §6.12: Turnstile when both keys are set; off otherwise, never in production. */
+    private static function humanVerification(Container $c): HumanVerification
+    {
+        $config = Resolve::get($c, Configuration::class);
+        $site = $config->get('identity.turnstile_site_key');
+        $secret = $config->get('identity.turnstile_secret_key');
+        $site = is_string($site) ? $site : '';
+        $secret = is_string($secret) ? $secret : '';
+        if ($site === '' && $secret === '') {
+            if ($config->get('app.env') === 'production') {
+                throw new \InvalidArgumentException('TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are required in production.');
+            }
+
+            return new DisabledHumanVerification();
+        }
+        if ($site === '' || $secret === '' || preg_match('/^[A-Za-z0-9_-]{8,128}$/', $site) !== 1) {
+            throw new \InvalidArgumentException('TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must both be set and well-formed.');
+        }
+        $url = $config->get('app.url');
+        $host = is_string($url) ? parse_url($url, PHP_URL_HOST) : null;
+        if (!is_string($host) || $host === '') {
+            throw new \InvalidArgumentException('APP_URL must be an absolute URL for Turnstile hostname checks.');
+        }
+
+        return new TurnstileVerification(
+            new ProviderHttpClient([TurnstileVerification::endpoint()], connectTimeoutMs: 2_000, totalTimeoutMs: 4_000, maxResponseBytes: 16_384),
+            $secret,
+            strtolower($host),
+            Resolve::get($c, Logger::class),
+        );
     }
 
     private static function breachedPasswordCheck(Container $c): BreachedPasswordCheck

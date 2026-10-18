@@ -17,8 +17,16 @@ interface SignInThrottle
     /** Counts a failure; returns the lock (seconds) it caused, 0 for none. */
     public function recordFailure(string $pair): int;
 
-    /** Counts a failure for the account across all networks; returns the hourly total. */
+    /** Counts a failure for the address across all networks, known or not; returns the hourly total. */
     public function recordAccountFailure(string $emailLookup): int;
+
+    /**
+     * Current failures for the pair (15 min) and for the address across all
+     * networks (hour), for deciding whether a challenge is needed (§6.12).
+     *
+     * @return array{pair: int, account: int}
+     */
+    public function failures(string $pair, string $emailLookup): array;
 
     public function clear(string $pair): void;
 }

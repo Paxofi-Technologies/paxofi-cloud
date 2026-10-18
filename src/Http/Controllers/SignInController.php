@@ -4,10 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Http\Controllers;
 
-use Paxofi\Core\Contracts\Controller;
-use Paxofi\Core\Contracts\HttpRequest;
-use Paxofi\Core\Contracts\HttpResponse;
-use Paxofi\Core\Http\Response;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
 use PaxofiCloud\Application\Identity\SignIn\AccountUnavailable;
 use PaxofiCloud\Application\Identity\SignIn\EmailNotVerified;
 use PaxofiCloud\Application\Identity\SignIn\InvalidCredentials;
@@ -18,6 +16,10 @@ use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\ProblemDetails;
 use PaxofiCloud\Http\RequestId;
 use PaxofiCloud\Http\SessionCookie;
+use Paxofi\Core\Contracts\Controller;
+use Paxofi\Core\Contracts\HttpRequest;
+use Paxofi\Core\Contracts\HttpResponse;
+use Paxofi\Core\Http\Response;
 
 /**
  * POST /api/v1/auth/sign-in (SRS IAM-005, IAM-006). Unknown email and wrong
@@ -42,6 +44,10 @@ final readonly class SignInController implements Controller
             $issued = $this->signIn->signIn($data, JsonBody::clientIp($request), (string) $request->header('user-agent'), SessionCookie::read($request));
         } catch (InvalidSignIn $e) {
             return ProblemDetails::response(422, 'validation_failed', $id, errors: $e->errors);
+        } catch (ChallengeRequired) {
+            return ProblemDetails::response(403, 'challenge_required', RequestId::of($request));
+        } catch (ChallengeUnavailable) {
+            return ProblemDetails::response(503, 'challenge_unavailable', RequestId::of($request), headers: ['retry-after' => '30']);
         } catch (SignInThrottled $e) {
             return ProblemDetails::response(429, 'too_many_attempts', $id, headers: ['retry-after' => (string) $e->retryAfterSeconds]);
         } catch (InvalidCredentials) {

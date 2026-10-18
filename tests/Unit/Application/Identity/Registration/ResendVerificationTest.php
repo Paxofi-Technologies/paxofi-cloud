@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Registration;
 
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use PaxofiCloud\Application\Contracts\HumanCheck;
 use PaxofiCloud\Application\Email\EmailTemplates;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
 use PaxofiCloud\Application\Identity\Registration\InvalidRegistration;
 use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\RegistrationThrottled;
@@ -15,9 +20,8 @@ use PaxofiCloud\Tests\Support\ImmediateTransactions;
 use PaxofiCloud\Tests\Support\InMemoryIdentityStore;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
 use PaxofiCloud\Tests\Support\ScriptedBreachCheck;
+use PaxofiCloud\Tests\Support\ScriptedHumanVerification;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
-use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\TestCase;
 
 /** SRS IAM-002; threat model T-46, T-47, T-49. */
 final class ResendVerificationTest extends TestCase
@@ -35,8 +39,8 @@ final class ResendVerificationTest extends TestCase
         $this->limiter = new ScriptedRateLimiter();
         $clock = new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC'));
         $transactions = new ImmediateTransactions();
-        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), $transactions, $this->limiter, $clock, '2026-10-01', new ScriptedBreachCheck());
-        $this->resend = new ResendVerification($this->store, $this->outbox, $transactions, $this->limiter, $clock);
+        $this->register = new RegisterCustomer($this->store, $this->outbox, new CountingPasswordHasher(), $transactions, $this->limiter, $clock, '2026-10-01', new ScriptedBreachCheck(), new ChallengeGate(new ScriptedHumanVerification()));
+        $this->resend = new ResendVerification($this->store, $this->outbox, $transactions, $this->limiter, $clock, new ChallengeGate(new ScriptedHumanVerification()));
     }
 
     public function testPendingAddressGetsAFreshLinkAndOlderLinksStopWorking(): void
@@ -133,5 +137,20 @@ final class ResendVerificationTest extends TestCase
             self::assertSame($errors, $e->errors);
         }
         self::assertSame([], $this->limiter->hits);
+    }
+
+    public function testAFailedChallengeSendsNothing(): void
+    {
+        $this->register->register(RegistrationInputTest::valid(), '198.51.100.7');
+        $human = new ScriptedHumanVerification(HumanCheck::Failed);
+        $resend = new ResendVerification($this->store, $this->outbox, new ImmediateTransactions(), $this->limiter, new FixedClock(new \DateTimeImmutable('2026-10-26 09:00:00 UTC')), new ChallengeGate($human));
+
+        try {
+            $resend->resend(['email' => 'ada@example.ng', 'turnstile_token' => 'tok'], '198.51.100.7');
+            self::fail('Expected a challenge.');
+        } catch (ChallengeRequired) {
+        }
+        self::assertCount(1, $this->outbox->queued, 'Only the original sign-up email');
+        self::assertSame('resend', $human->calls[0]['action']);
     }
 }

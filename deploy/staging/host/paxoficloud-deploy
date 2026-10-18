@@ -7,6 +7,8 @@
 #   load               stdin: `docker save ... | gzip` of the two app images
 #   mail-secrets       stdin: NAME=value lines for the mail worker (email
 #                      threat model E-6); only allow-listed names and formats
+#   web-secrets        stdin: NAME=value lines for the PHP web tier only
+#                      (Turnstile keys, identity threat model §6.12)
 #   release <sha>      migrate, start <sha>, health-check; roll back on failure
 #   status             current/previous version and container health
 #
@@ -41,7 +43,7 @@ random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40;
 ensure_secrets() {
   local version="$1" f keys
   install -d -m 0700 "$ENV_DIR"
-  for f in outbox-public.env outbox-secret.env mail-providers.env; do
+  for f in outbox-public.env outbox-secret.env mail-providers.env web.env; do
     [ -e "$ENV_DIR/$f" ] || install -m 0600 /dev/null "$ENV_DIR/$f"
   done
   if [ ! -s "$ENV_DIR/app.env" ]; then
@@ -97,6 +99,27 @@ cmd_mail_secrets() {
   done <<<"$input"
   mv -f "$out" "$ENV_DIR/mail-providers.env"
   log "mail-secrets updated: $(cut -d= -f1 "$ENV_DIR/mail-providers.env" | tr '\n' ' ')(values not logged)"
+}
+
+cmd_web_secrets() {
+  # stdin: NAME=value lines for the web tier (§6.12). Same all-or-nothing rule
+  # as mail-secrets; the file is mounted into the php container only.
+  local input line name value out
+  local LC_ALL=C
+  input="$(head -c 4096)"
+  out="$(mktemp "$ENV_DIR/.web.XXXXXX")"; trap 'rm -f "$out"' RETURN
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    name="${line%%=*}"; value="${line#*=}"
+    case "$name" in
+      TURNSTILE_SITE_KEY|TURNSTILE_SECRET_KEY)
+        [[ "$value" =~ ^([A-Za-z0-9_-]{8,128})?$ ]] || die "web-secrets: $name has an unexpected format" ;;
+      *) die "web-secrets: refused name" ;;
+    esac
+    printf '%s=%s\n' "$name" "$value" >> "$out"
+  done <<<"$input"
+  mv -f "$out" "$ENV_DIR/web.env"
+  log "web-secrets updated: $(cut -d= -f1 "$ENV_DIR/web.env" | tr '\n' ' ')(values not logged)"
 }
 
 image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
@@ -197,7 +220,8 @@ read -r -a args <<<"${SSH_ORIGINAL_COMMAND:-}"
 case "${args[0]:-}:${#args[@]}" in
   load:1)    cmd_load ;;
   mail-secrets:1) install -d -m 0700 "$ENV_DIR"; cmd_mail_secrets ;;
+  web-secrets:1)  install -d -m 0700 "$ENV_DIR"; cmd_web_secrets ;;
   release:2) cmd_release "${args[1]}" ;;
   status:1)  cmd_status ;;
-  *)         log "refused command"; echo "usage: load | mail-secrets | release <sha> | status" >&2; exit 64 ;;
+  *)         log "refused command"; echo "usage: load | mail-secrets | web-secrets | release <sha> | status" >&2; exit 64 ;;
 esac

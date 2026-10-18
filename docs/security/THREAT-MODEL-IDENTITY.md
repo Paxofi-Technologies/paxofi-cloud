@@ -261,6 +261,18 @@ Written before the code; it fixes how T-06…T-12 and T-18…T-24 are met in thi
 - **CSRF (T-21).** Each session has its own 256-bit synchroniser token, kept in the server-side session record (whose key is the hash of the session ID, so a Redis read yields no usable cookie) and returned in the JSON body of sign-in and `GET /session` (CORS is never granted, so other origins cannot read it). State-changing requests made with a session (sign-out now; every later authenticated write) must send it as `X-CSRF-Token`, compared with `hash_equals`, in addition to the Origin check.
 - **Deferred to named follow-ups:** session list and revoke (T-23) and new-device email; breached-password retry at sign-in (T-06); audit events for sign-in success and failure (§6.8, audit PR); MFA step (T-13…T-17); staff sessions (§6.6).
 
+### 6.12 Turnstile challenge implementation notes (Sprint 1, PR "Turnstile")
+
+Written before the code; it fixes how T-02, T-06 and T-07 use Cloudflare Turnstile and what happens when it is unavailable.
+
+- **Where.** Registration and "resend verification email" always require a token (T-02, T-47, T-49). Sign-in requires one only once the attempt looks risky: 3 or more failures for the (email, network) pair in 15 min (T-06), or more than 10 failures for the email across all networks in the hour (T-07 counter b). Without a valid token such a sign-in gets `403 challenge_required` **before** any password hash, and the client shows the widget.
+- **No enumeration through the challenge.** Counter (b) is now counted for every email submitted, known or not, so whether a challenge is required never depends on the address having an account (T-09).
+- **Server-side verification only.** The widget's token is posted with the form (`turnstile_token`) and checked with Cloudflare `siteverify` from the web tier through `ProviderHttpClient` (allow-listed `challenges.cloudflare.com`, TLS 1.2+, pinned vetted addresses, no redirects, 2 s connect / 4 s total). We accept the token only if `success` is true, `hostname` equals `APP_URL`'s host and `action` equals the form's action (`register`, `resend`, `sign_in`). The client IP and an idempotency key are sent. Tokens are single-use and expire after 300 s at Cloudflare. Tokens and the secret are never logged; only fixed reasons (`missing`, `rejected`, `transport`, `http_NNN`) are logged.
+- **Fail closed (T-02).** If Cloudflare cannot be reached, a challenged request is refused with `503 challenge_unavailable` and the customer is asked to retry. Sign-ins that are not challenged are unaffected.
+- **Keys.** `TURNSTILE_SITE_KEY` (public) is served by `GET /api/v1/auth/challenge`; `TURNSTILE_SECRET_KEY` goes only to the PHP web container, through the deploy agent's `web-secrets` verb into `/etc/paxoficloud/web.env` (0600), never into an image, compose file or log. Without keys, Turnstile is off; that is refused when `APP_ENV=production`.
+- **Browser.** The Turnstile script is loaded only on the three forms, from `https://challenges.cloudflare.com` (CSP `script-src` and `frame-src` allow exactly that origin). Cloudflare does not support SRI for this script; accepted because Cloudflare already terminates our TLS and is in the trust boundary.
+- **Residual.** An attacker who solves challenges (human farms) is still limited by the per-IP, per-pair and per-email limits; owner notification for counter (b) arrives with the audit/notification PR.
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -288,3 +300,4 @@ Written before the code; it fixes how T-06…T-12 and T-18…T-24 are met in thi
 | 2026-10-17 | T-49 resend verification email (enumeration and email bombing); written before the resend code | Claude (security engineering) |
 | 2026-10-17 | T-06 breached-password check at registration (k-anonymity range API, padding, fail-open + log), written before the code | Claude (security engineering) |
 | 2026-10-17 | §6.11 sign-in and session implementation notes (T-06…T-12, T-18…T-24), written before the sign-in code | Claude (security engineering) |
+| 2026-10-18 | §6.12 Turnstile implementation notes (T-02, T-06, T-07, T-47, T-49; fail closed; challenge counter made address-independent), written before the Turnstile code | Claude (security engineering) |

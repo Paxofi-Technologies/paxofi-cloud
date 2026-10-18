@@ -11,6 +11,9 @@ use PaxofiCloud\Application\Contracts\IdentityStore;
 use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Email\EmailAddress;
 use PaxofiCloud\Application\Email\EmailTemplates;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeRequired;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeUnavailable;
 
 /**
  * "Resend the verification email" (SRS IAM-002; threat model T-49).
@@ -29,6 +32,7 @@ final readonly class ResendVerification
         private TransactionManager $transactions,
         private RateLimiter $limiter,
         private Clock $clock,
+        private ChallengeGate $challenge,
     ) {
     }
 
@@ -36,6 +40,8 @@ final readonly class ResendVerification
      * @param array<array-key, mixed> $data the decoded request body
      * @throws InvalidRegistration
      * @throws RegistrationThrottled
+     * @throws ChallengeRequired
+     * @throws ChallengeUnavailable
      */
     public function resend(array $data, string $clientIp): void
     {
@@ -50,6 +56,7 @@ final readonly class ResendVerification
         if ($retry > 0) {
             throw new RegistrationThrottled($retry);
         }
+        $this->challenge->assertHuman(ChallengeGate::token($data), ChallengeGate::RESEND, $clientIp);
 
         $this->transactions->transaction(function () use ($email): void {
             $existing = $this->identities->findByEmailLookupForUpdate($email->hash());
@@ -70,7 +77,7 @@ final readonly class ResendVerification
     }
 
     /**
-     * Exactly one field, `email`; anything else makes the request invalid.
+     * Exactly `email` (plus the challenge token); anything else makes the request invalid.
      *
      * @param array<array-key, mixed> $data
      * @throws InvalidRegistration
@@ -79,7 +86,7 @@ final readonly class ResendVerification
     {
         $errors = [];
         foreach (array_keys($data) as $key) {
-            if ($key !== 'email') {
+            if ($key !== 'email' && $key !== ChallengeGate::FIELD) {
                 $errors[is_string($key) && preg_match('/^[a-z_]{1,32}$/', $key) === 1 ? $key : '_unknown'] = 'unknown_field';
             }
         }

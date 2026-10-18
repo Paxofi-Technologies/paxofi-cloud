@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace PaxofiCloud\Application\Identity\Registration;
 
 use PaxofiCloud\Application\Email\EmailAddress;
+use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 
 /**
  * The sign-up form, validated (SRS IAM-001, IAM-003; threat model T-04).
  *
- * - Exactly the documented fields: anything else (role, account_id, …) makes
+ * - Exactly the documented fields (plus the challenge token, checked by
+ *   ChallengeGate): anything else (role, account_id, …) makes
  *   the whole request invalid instead of being silently ignored.
  * - Password: 12-128 characters, any printable Unicode including spaces, no
  *   composition rules (IAM-003). Control characters are refused.
@@ -18,7 +20,7 @@ use PaxofiCloud\Application\Email\EmailAddress;
  */
 final readonly class RegistrationInput
 {
-    public const array FIELDS = ['full_name', 'email', 'phone', 'password', 'accept_terms'];
+    public const array FIELDS = ['full_name', 'email', 'phone', 'password', 'accept_terms', ChallengeGate::FIELD];
     public const int PASSWORD_MIN = 12;
     public const int PASSWORD_MAX = 128;
 
