@@ -185,7 +185,9 @@ final class AuditIntegrationTest extends IntegrationTestCase
     /** @return array{to: string, parameters: array<string, string>} */
     private function latestPayload(string $template): array
     {
-        $sealed = self::query("SELECT payload FROM email_outbox WHERE template = '" . $template . "' ORDER BY created_at DESC LIMIT 1")->fetchColumn();
+        $statement = self::pdo()->prepare('SELECT payload FROM email_outbox WHERE template = :template ORDER BY created_at DESC LIMIT 1');
+        $statement->execute(['template' => $template]);
+        $sealed = $statement->fetchColumn();
         self::assertIsString($sealed);
         $payload = json_decode($this->opener->open($sealed), true, 8, JSON_THROW_ON_ERROR);
         self::assertIsArray($payload);
