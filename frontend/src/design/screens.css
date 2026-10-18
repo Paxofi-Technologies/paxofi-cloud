@@ -58,3 +58,6 @@
   background: var(--pc-semantic-surface-inverse); color: var(--pc-semantic-text-inverse);
   padding: var(--pc-space-4) var(--pc-space-6); border-radius: var(--pc-radius-lg); box-shadow: var(--pc-shadow-md);
 }
+
+/* ---------- Loading ---------- */
+.pc-loading { display: grid; place-items: center; min-height: 100vh; margin: 0; color: var(--pc-semantic-text-secondary); }
