@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Session;
 
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Tests\Support\InMemorySessionStore;
 use PaxofiCloud\Tests\Support\MutableClock;
@@ -25,8 +26,8 @@ final class SessionsTest extends TestCase
 
     public function testIssuedIdsAreUniqueAndOnlyTheirHashIsStored(): void
     {
-        $a = $this->sessions->issue('id-1', 'acct-1', '198.51.100.7', 'UA');
-        $b = $this->sessions->issue('id-1', 'acct-1', '198.51.100.7', 'UA');
+        $a = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('198.51.100.7', 'UA', null, null, null, ''));
+        $b = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('198.51.100.7', 'UA', null, null, null, ''));
 
         self::assertNotSame($a->sessionId, $b->sessionId);
         self::assertNotSame($a->csrfToken, $b->csrfToken);
@@ -38,7 +39,7 @@ final class SessionsTest extends TestCase
 
     public function testActivityWithinTheIdleWindowKeepsTheSessionAlive(): void
     {
-        $issued = $this->sessions->issue('id-1', 'acct-1', '', '');
+        $issued = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('', '', null, null, null, ''));
         for ($i = 0; $i < 4; $i++) {
             $this->clock->advance('+29 minutes');
             self::assertNotNull($this->sessions->resume($issued->sessionId));
@@ -47,7 +48,7 @@ final class SessionsTest extends TestCase
 
     public function testIdleTimeoutEndsTheSession(): void
     {
-        $issued = $this->sessions->issue('id-1', 'acct-1', '', '');
+        $issued = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('', '', null, null, null, ''));
         $this->clock->advance('+30 minutes');
 
         self::assertNull($this->sessions->resume($issued->sessionId));
@@ -56,7 +57,7 @@ final class SessionsTest extends TestCase
 
     public function testAbsoluteTimeoutEndsAnActiveSessionAfterTwelveHours(): void
     {
-        $issued = $this->sessions->issue('id-1', 'acct-1', '', '');
+        $issued = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('', '', null, null, null, ''));
         $this->useEvery25MinutesUntil(700, $issued->sessionId);
         // 725 min elapsed: past 12 h even though it was used 25 min ago.
         $this->clock->advance('+25 minutes');
@@ -65,7 +66,7 @@ final class SessionsTest extends TestCase
 
     public function testStoreTtlNeverOutlivesTheAbsoluteTimeout(): void
     {
-        $issued = $this->sessions->issue('id-1', 'acct-1', '', '');
+        $issued = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('', '', null, null, null, ''));
         $this->useEvery25MinutesUntil(700, $issued->sessionId);
         $this->clock->advance('+10 minutes');
         $this->sessions->resume($issued->sessionId);
@@ -82,7 +83,7 @@ final class SessionsTest extends TestCase
 
     public function testEndDeletesTheSession(): void
     {
-        $issued = $this->sessions->issue('id-1', 'acct-1', '', '');
+        $issued = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('', '', null, null, null, ''));
         $this->sessions->end($issued->sessionId);
 
         self::assertNull($this->sessions->resume($issued->sessionId));
@@ -90,8 +91,8 @@ final class SessionsTest extends TestCase
 
     public function testCsrfTokenMustMatchItsOwnSession(): void
     {
-        $a = $this->sessions->issue('id-1', 'acct-1', '', '');
-        $b = $this->sessions->issue('id-2', 'acct-2', '', '');
+        $a = $this->sessions->issue('id-1', 'acct-1', ClientContext::from('', '', null, null, null, ''));
+        $b = $this->sessions->issue('id-2', 'acct-2', ClientContext::from('', '', null, null, null, ''));
 
         self::assertTrue($this->sessions->csrfMatches($a->session, $a->csrfToken));
         self::assertFalse($this->sessions->csrfMatches($a->session, $b->csrfToken));

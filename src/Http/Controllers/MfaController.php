@@ -7,6 +7,7 @@ namespace PaxofiCloud\Http\Controllers;
 use Paxofi\Core\Contracts\HttpRequest;
 use Paxofi\Core\Contracts\HttpResponse;
 use Paxofi\Core\Http\Response;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\SignInStore;
 use PaxofiCloud\Application\Identity\Mfa\InvalidMfaInput;
 use PaxofiCloud\Application\Identity\Mfa\MfaAlreadyEnabled;
@@ -19,6 +20,7 @@ use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Http\Authenticated;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 
 /**
@@ -44,9 +46,9 @@ final readonly class MfaController
 
     public function setup(HttpRequest $request): HttpResponse
     {
-        return $this->write($request, function (Session $session, array $data): HttpResponse {
+        return $this->write($request, function (Session $session, array $data, ClientContext $client): HttpResponse {
             $profile = $this->identities->findProfile($session->identityId);
-            $setup = $this->mfa->setup($session->identityId, $profile['email'] ?? '', $data);
+            $setup = $this->mfa->setup($session->identityId, $profile['email'] ?? '', $data, $client);
 
             return self::json(['secret' => $setup->secretBase32, 'otpauth_uri' => $setup->uri]);
         });
@@ -54,29 +56,29 @@ final readonly class MfaController
 
     public function confirm(HttpRequest $request): HttpResponse
     {
-        return $this->write($request, fn (Session $session, array $data): HttpResponse => self::json([
+        return $this->write($request, fn (Session $session, array $data, ClientContext $client): HttpResponse => self::json([
             'status' => 'enabled',
-            'recovery_codes' => $this->mfa->confirm($session->identityId, $data),
+            'recovery_codes' => $this->mfa->confirm($session->identityId, $data, $client),
         ]));
     }
 
     public function recoveryCodes(HttpRequest $request): HttpResponse
     {
-        return $this->write($request, fn (Session $session, array $data): HttpResponse => self::json([
-            'recovery_codes' => $this->mfa->regenerateRecoveryCodes($session->identityId, $data),
+        return $this->write($request, fn (Session $session, array $data, ClientContext $client): HttpResponse => self::json([
+            'recovery_codes' => $this->mfa->regenerateRecoveryCodes($session->identityId, $data, $client),
         ]));
     }
 
     public function disable(HttpRequest $request): HttpResponse
     {
-        return $this->write($request, function (Session $session, array $data): HttpResponse {
-            $this->mfa->disable($session->identityId, $data);
+        return $this->write($request, function (Session $session, array $data, ClientContext $client): HttpResponse {
+            $this->mfa->disable($session->identityId, $data, $client);
 
             return self::json(['status' => 'disabled']);
         });
     }
 
-    /** @param \Closure(Session, array<array-key, mixed>): HttpResponse $action */
+    /** @param \Closure(Session, array<array-key, mixed>, ClientContext): HttpResponse $action */
     private function write(HttpRequest $request, \Closure $action): HttpResponse
     {
         $session = Authenticated::session($request, $this->sessions, write: true);
@@ -94,7 +96,7 @@ final readonly class MfaController
 
         $id = RequestId::of($request);
         try {
-            return $action($session, $data);
+            return $action($session, $data, RequestClient::of($request));
         } catch (InvalidMfaInput $e) {
             return ProblemDetails::response(422, 'validation_failed', $id, errors: $e->errors);
         } catch (MfaThrottled $e) {

@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Identity\Registration\RegisterCustomer;
 use PaxofiCloud\Application\Identity\Registration\RegistrationThrottled;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 use Paxofi\Core\Contracts\Controller;
 use Paxofi\Core\Contracts\HttpRequest;
@@ -35,7 +36,7 @@ final readonly class RegisterController implements Controller
         }
 
         try {
-            $this->register->register($data, JsonBody::clientIp($request));
+            $this->register->register($data, RequestClient::of($request));
         } catch (InvalidRegistration $e) {
             return ProblemDetails::response(422, 'validation_failed', RequestId::of($request), errors: $e->errors);
         } catch (ChallengeRequired) {

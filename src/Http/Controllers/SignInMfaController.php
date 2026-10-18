@@ -17,6 +17,7 @@ use PaxofiCloud\Application\Identity\SignIn\AccountUnavailable;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\MfaCookie;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 use PaxofiCloud\Http\SessionCookie;
 
@@ -40,7 +41,7 @@ final readonly class SignInMfaController implements Controller
         $id = RequestId::of($request);
         $expired = ['set-cookie' => MfaCookie::clear()];
         try {
-            $issued = $this->complete->complete(MfaCookie::read($request), $data, JsonBody::clientIp($request), (string) $request->header('user-agent'));
+            $issued = $this->complete->complete(MfaCookie::read($request), $data, RequestClient::of($request));
         } catch (InvalidMfaInput $e) {
             return ProblemDetails::response(422, 'validation_failed', $id, errors: $e->errors);
         } catch (MfaTicketInvalid) {

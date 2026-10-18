@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace PaxofiCloud\Application\Identity\Registration;
 
 use Paxofi\Core\Contracts\TransactionManager;
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\IdentityStore;
 use PaxofiCloud\Application\Contracts\RateLimiter;
@@ -24,6 +28,7 @@ final readonly class VerifyEmail
         private TransactionManager $transactions,
         private RateLimiter $limiter,
         private Clock $clock,
+        private AuditTrail $audit,
     ) {
     }
 
@@ -31,9 +36,9 @@ final readonly class VerifyEmail
      * @throws VerificationTokenInvalid
      * @throws RegistrationThrottled
      */
-    public function verify(#[\SensitiveParameter] mixed $token, string $clientIp): void
+    public function verify(#[\SensitiveParameter] mixed $token, ClientContext $client): void
     {
-        $retry = $this->limiter->hit('verify-email:ip:' . hash('sha256', $clientIp), self::PER_IP_LIMIT, self::WINDOW_SECONDS);
+        $retry = $this->limiter->hit('verify-email:ip:' . hash('sha256', $client->ip), self::PER_IP_LIMIT, self::WINDOW_SECONDS);
         if ($retry > 0) {
             throw new RegistrationThrottled($retry);
         }
@@ -41,14 +46,15 @@ final readonly class VerifyEmail
             throw new VerificationTokenInvalid();
         }
 
-        $verified = $this->transactions->transaction(function () use ($token): bool {
+        $verified = $this->transactions->transaction(function () use ($token): ?string {
             $now = $this->clock->now();
             $identityId = $this->identities->consumeVerificationToken(hash('sha256', $token), $now);
 
-            return $identityId !== null && $this->identities->activate($identityId, $now);
+            return $identityId !== null && $this->identities->activate($identityId, $now) ? $identityId : null;
         });
-        if ($verified !== true) {
+        if (!is_string($verified)) {
             throw new VerificationTokenInvalid();
         }
+        $this->audit->record(AuditEventType::EMAIL_VERIFIED, AuditEvent::SUCCESS, $client, $verified);
     }
 }

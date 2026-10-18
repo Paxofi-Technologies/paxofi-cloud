@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Mfa;
 
+use PaxofiCloud\Tests\Support\AuditFixtures;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Email\EmailAddress;
 use PaxofiCloud\Application\Identity\Mfa\CompleteMfaSignIn;
 use PaxofiCloud\Application\Identity\Mfa\InvalidMfaInput;
@@ -54,19 +56,19 @@ final class CompleteMfaSignInTest extends TestCase
         $this->mfa->totp['id-1'] = ['secret_envelope' => $crypto->secrets->encrypt(self::SECRET, MfaCrypto::associatedData('id-1')), 'confirmed' => true, 'last_used_step' => null];
         $this->recoveryCodes = RecoveryCodes::generate();
         $this->mfa->replaceRecoveryCodes('id-1', array_map(static fn (string $c): string => (string) $crypto->recoveryCodes->hash($c), $this->recoveryCodes));
-        $this->complete = new CompleteMfaSignIn($this->challenges, $this->mfa, $this->identities, new Sessions($this->sessions, $this->clock), $this->clock, $this->logger, $crypto);
+        $this->complete = new CompleteMfaSignIn($this->challenges, $this->mfa, $this->identities, new Sessions($this->sessions, $this->clock), $this->clock, $this->logger, $crypto, AuditFixtures::trail());
     }
 
     public function testATicketAndTheCurrentCodeGiveASessionAndEndTheTicket(): void
     {
         $ticket = $this->complete->start('id-1', 'acct-1')->ticket;
 
-        $issued = $this->complete->complete($ticket, ['code' => $this->code()], '198.51.100.7', 'UA');
+        $issued = $this->complete->complete($ticket, ['code' => $this->code()], ClientContext::from('198.51.100.7', 'UA', null, null, null, ''));
 
         self::assertSame(['id-1', 'acct-1'], [$issued->session->identityId, $issued->session->accountId]);
         self::assertSame([], $this->challenges->tickets, 'Single use');
         $this->expectException(MfaTicketInvalid::class);
-        $this->complete->complete($ticket, ['code' => $this->code()], '198.51.100.7', 'UA');
+        $this->complete->complete($ticket, ['code' => $this->code()], ClientContext::from('198.51.100.7', 'UA', null, null, null, ''));
     }
 
     public function testOnlyTheTicketHashIsStored(): void
@@ -79,19 +81,19 @@ final class CompleteMfaSignInTest extends TestCase
     public function testACodeWorksOnlyOnce(): void
     {
         $code = $this->code();
-        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['code' => $code], '', '');
+        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['code' => $code], ClientContext::from('', '', null, null, null, ''));
 
         $this->expectException(InvalidMfaInput::class);
-        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['code' => $code], '', '');
+        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['code' => $code], ClientContext::from('', '', null, null, null, ''));
     }
 
     public function testARecoveryCodeWorksOnceAndIsLogged(): void
     {
-        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['recovery_code' => $this->recoveryCodes[0]], '', '');
+        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['recovery_code' => $this->recoveryCodes[0]], ClientContext::from('', '', null, null, null, ''));
 
         self::assertSame([['level' => 'info', 'message' => 'auth.mfa.recovery_code_used', 'context' => ['identity_id' => 'id-1']]], $this->logger->records);
         $this->expectException(InvalidMfaInput::class);
-        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['recovery_code' => $this->recoveryCodes[0]], '', '');
+        $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['recovery_code' => $this->recoveryCodes[0]], ClientContext::from('', '', null, null, null, ''));
     }
 
     public function testFiveWrongCodesEndTheTicketAndLockTheIdentity(): void
@@ -99,7 +101,7 @@ final class CompleteMfaSignInTest extends TestCase
         $ticket = $this->complete->start('id-1', 'acct-1')->ticket;
         for ($i = 0; $i < CompleteMfaSignIn::MAX_ATTEMPTS; $i++) {
             try {
-                $this->complete->complete($ticket, ['code' => '000000'], '', '');
+                $this->complete->complete($ticket, ['code' => '000000'], ClientContext::from('', '', null, null, null, ''));
             } catch (InvalidMfaInput) {
             }
         }
@@ -108,7 +110,7 @@ final class CompleteMfaSignInTest extends TestCase
 
         // A fresh ticket from a new password sign-in is still locked out, even with the right code.
         try {
-            $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['code' => $this->code()], '', '');
+            $this->complete->complete($this->complete->start('id-1', 'acct-1')->ticket, ['code' => $this->code()], ClientContext::from('', '', null, null, null, ''));
             self::fail('Locked identity signed in');
         } catch (MfaThrottled $e) {
             self::assertSame(CompleteMfaSignIn::LOCK_SECONDS, $e->retryAfterSeconds);
@@ -120,7 +122,7 @@ final class CompleteMfaSignInTest extends TestCase
     {
         foreach ([null, 'short', str_repeat('A', 43)] as $ticket) {
             try {
-                $this->complete->complete($ticket, ['code' => $this->code()], '', '');
+                $this->complete->complete($ticket, ['code' => $this->code()], ClientContext::from('', '', null, null, null, ''));
                 self::fail('Accepted ticket ' . var_export($ticket, true));
             } catch (MfaTicketInvalid) {
             }
@@ -134,14 +136,14 @@ final class CompleteMfaSignInTest extends TestCase
         $this->identities->identities['id-1']['status'] = 'suspended';
 
         $this->expectException(AccountUnavailable::class);
-        $this->complete->complete($ticket, ['code' => $this->code()], '', '');
+        $this->complete->complete($ticket, ['code' => $this->code()], ClientContext::from('', '', null, null, null, ''));
     }
 
     public function testInputMustBeExactlyOneFactor(): void
     {
         $ticket = $this->complete->start('id-1', 'acct-1')->ticket;
         try {
-            $this->complete->complete($ticket, ['code' => $this->code(), 'recovery_code' => $this->recoveryCodes[0]], '', '');
+            $this->complete->complete($ticket, ['code' => $this->code(), 'recovery_code' => $this->recoveryCodes[0]], ClientContext::from('', '', null, null, null, ''));
             self::fail('Two factors accepted');
         } catch (InvalidMfaInput $e) {
             self::assertSame(['recovery_code' => 'unknown_field'], $e->errors);

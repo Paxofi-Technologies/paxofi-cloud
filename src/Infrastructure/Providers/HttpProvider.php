@@ -13,6 +13,7 @@ use Paxofi\Core\Contracts\Logger;
 use Paxofi\Core\Contracts\Provider;
 use Paxofi\Core\Http\ControllerDispatcher;
 use Paxofi\Core\Http\Router;
+use PaxofiCloud\Http\Controllers\AccountActivityController;
 use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Http\Controllers\LivenessController;
 use PaxofiCloud\Http\Controllers\MfaController;
@@ -57,6 +58,7 @@ final class HttpProvider implements Provider
             $router->post('/api/v1/account/mfa/totp/confirm', static fn (HttpRequest $r): HttpResponse => $mfa()->confirm($r));
             $router->post('/api/v1/account/mfa/recovery-codes', static fn (HttpRequest $r): HttpResponse => $mfa()->recoveryCodes($r));
             $router->post('/api/v1/account/mfa/disable', static fn (HttpRequest $r): HttpResponse => $mfa()->disable($r));
+            $router->controller('GET', '/api/v1/account/activity', AccountActivityController::class, $dispatcher);
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('POST', '/api/v1/auth/sign-out', SignOutController::class, $dispatcher);
 

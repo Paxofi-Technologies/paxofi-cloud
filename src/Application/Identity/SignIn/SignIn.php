@@ -6,6 +6,10 @@ namespace PaxofiCloud\Application\Identity\SignIn;
 
 use Paxofi\Core\Contracts\Logger;
 use Paxofi\Core\Contracts\PasswordHasher;
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\PasswordRehashPolicy;
 use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Contracts\SignInStore;
@@ -50,6 +54,7 @@ final readonly class SignIn
         private ChallengeGate $challenge,
         private MfaSettings $mfa,
         private CompleteMfaSignIn $mfaSignIn,
+        private AuditTrail $audit,
     ) {
     }
 
@@ -66,16 +71,15 @@ final readonly class SignIn
      */
     public function signIn(
         #[\SensitiveParameter] array $data,
-        string $clientIp,
-        string $userAgent,
+        ClientContext $client,
         #[\SensitiveParameter] ?string $previousSessionId,
     ): IssuedSession|MfaPending {
         $input = SignInInput::fromArray($data);
         $lookup = $input->email->hash();
 
         // T-11: both limits run before the hash.
-        $retry = $this->limiter->hit('signin:ip:' . hash('sha256', $clientIp), self::PER_IP_LIMIT, self::PER_IP_WINDOW_SECONDS);
-        $pair = hash('sha256', $lookup . '|' . self::network($clientIp));
+        $retry = $this->limiter->hit('signin:ip:' . hash('sha256', $client->ip), self::PER_IP_LIMIT, self::PER_IP_WINDOW_SECONDS);
+        $pair = hash('sha256', $lookup . '|' . self::network($client->ip));
         $retry = max($retry, $this->throttle->retryAfter($pair));
         if ($retry > 0) {
             throw new SignInThrottled($retry);
@@ -85,7 +89,7 @@ final readonly class SignIn
         // counts every address, so this never depends on the account existing.
         $failures = $this->throttle->failures($pair, $lookup);
         if ($failures['pair'] >= self::CHALLENGE_AFTER_PAIR_FAILURES || $failures['account'] > self::ACCOUNT_ALERT_THRESHOLD) {
-            $this->challenge->assertHuman(ChallengeGate::token($data), ChallengeGate::SIGN_IN, $clientIp);
+            $this->challenge->assertHuman(ChallengeGate::token($data), ChallengeGate::SIGN_IN, $client->ip);
         }
 
         $identity = $this->identities->findForSignIn($lookup);
@@ -93,9 +97,12 @@ final readonly class SignIn
         if ($identity === null || !$matches) {
             $this->throttle->recordFailure($pair);
             $accountFailures = $this->throttle->recordAccountFailure($lookup);
-            if ($identity !== null && $accountFailures > self::ACCOUNT_ALERT_THRESHOLD) {
-                // T-07 counter (b): challenged from now on (§6.12); owner email follows with notifications.
+            // §6.14: unknown addresses are recorded without an identity (and without the address).
+            $this->audit->record(AuditEventType::SIGN_IN_FAILED, AuditEvent::FAILURE, $client, $identity['id'] ?? null, $identity['account_id'] ?? null, ['reason' => $identity === null ? 'unknown_account' : 'wrong_password']);
+            if ($identity !== null && $accountFailures === self::ACCOUNT_ALERT_THRESHOLD + 1) {
+                // T-07 counter (b): challenged from now on (§6.12); recorded once per window, owner email follows with notifications.
                 $this->logger->warning('auth.sign_in.account_failures_high', ['identity_id' => $identity['id']]);
+                $this->audit->record(AuditEventType::SIGN_IN_MANY_FAILURES, AuditEvent::FAILURE, $client, $identity['id'], $identity['account_id'], ['failures' => $accountFailures]);
             }
 
             throw new InvalidCredentials();
@@ -104,9 +111,11 @@ final readonly class SignIn
         $this->throttle->clear($pair);
 
         if ($identity['status'] === 'pending_verification') {
+            $this->audit->record(AuditEventType::SIGN_IN_FAILED, AuditEvent::FAILURE, $client, $identity['id'], $identity['account_id'], ['reason' => 'email_not_verified']);
             throw new EmailNotVerified();
         }
         if ($identity['status'] !== 'active') {
+            $this->audit->record(AuditEventType::SIGN_IN_FAILED, AuditEvent::FAILURE, $client, $identity['id'], $identity['account_id'], ['reason' => 'account_unavailable']);
             throw new AccountUnavailable();
         }
 
@@ -119,10 +128,15 @@ final readonly class SignIn
 
         // §6.13: with TOTP on, the password only earns a short ticket for the second step.
         if ($this->mfa->isEnabled($identity['id'])) {
+            $this->audit->record(AuditEventType::SIGN_IN_MFA_REQUIRED, AuditEvent::SUCCESS, $client, $identity['id'], $identity['account_id']);
+
             return $this->mfaSignIn->start($identity['id'], $identity['account_id']);
         }
 
-        return $this->sessions->issue($identity['id'], $identity['account_id'], $clientIp, $userAgent);
+        $issued = $this->sessions->issue($identity['id'], $identity['account_id'], $client);
+        $this->audit->record(AuditEventType::SIGN_IN_SUCCEEDED, AuditEvent::SUCCESS, $client, $identity['id'], $identity['account_id'], ['method' => 'password']);
+
+        return $issued;
     }
 
     /** IPv4 /24 or IPv6 /64: the network a household or office usually shares (T-08). */

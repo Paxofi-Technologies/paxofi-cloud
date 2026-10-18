@@ -8,8 +8,12 @@ use Paxofi\Core\Contracts\Controller;
 use Paxofi\Core\Contracts\HttpRequest;
 use Paxofi\Core\Contracts\HttpResponse;
 use Paxofi\Core\Http\Response;
+use PaxofiCloud\Application\Audit\AuditEvent;
+use PaxofiCloud\Application\Audit\AuditEventType;
+use PaxofiCloud\Application\Audit\AuditTrail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 use PaxofiCloud\Http\SessionCookie;
 
@@ -19,7 +23,7 @@ use PaxofiCloud\Http\SessionCookie;
  */
 final readonly class SignOutController implements Controller
 {
-    public function __construct(private Sessions $sessions)
+    public function __construct(private Sessions $sessions, private AuditTrail $audit)
     {
     }
 
@@ -36,6 +40,7 @@ final readonly class SignOutController implements Controller
         }
 
         $this->sessions->end($sessionId);
+        $this->audit->record(AuditEventType::SIGNED_OUT, AuditEvent::SUCCESS, RequestClient::of($request), $session->identityId, $session->accountId);
 
         return new Response(204, ['cache-control' => 'no-store', 'set-cookie' => SessionCookie::clear()], '');
     }

@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Identity\Registration\RegistrationThrottled;
 use PaxofiCloud\Application\Identity\Registration\ResendVerification;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\ProblemDetails;
+use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 use Paxofi\Core\Contracts\Controller;
 use Paxofi\Core\Contracts\HttpRequest;
@@ -35,7 +36,7 @@ final readonly class ResendVerificationController implements Controller
         }
 
         try {
-            $this->resend->resend($data, JsonBody::clientIp($request));
+            $this->resend->resend($data, RequestClient::of($request));
         } catch (InvalidRegistration $e) {
             return ProblemDetails::response(422, 'validation_failed', RequestId::of($request), errors: $e->errors);
         } catch (ChallengeRequired) {

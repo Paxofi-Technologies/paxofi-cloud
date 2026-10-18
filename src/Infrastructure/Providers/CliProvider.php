@@ -13,6 +13,8 @@ use Paxofi\Core\Contracts\Logger;
 use Paxofi\Core\Contracts\Provider;
 use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Bootstrap\AppPaths;
+use PaxofiCloud\Cli\AuditPurgeContextCommand;
+use PaxofiCloud\Cli\AuditVerifyCommand;
 use PaxofiCloud\Cli\Console;
 use PaxofiCloud\Cli\CredentialsListCommand;
 use PaxofiCloud\Cli\CredentialsReencryptCommand;
@@ -23,6 +25,7 @@ use PaxofiCloud\Cli\MailStatusCommand;
 use PaxofiCloud\Cli\MailWorkCommand;
 use PaxofiCloud\Cli\MigrateCommand;
 use PaxofiCloud\Cli\MigrateStatusCommand;
+use PaxofiCloud\Infrastructure\Audit\MysqlAuditChain;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\Email\EmailWorker;
 use PaxofiCloud\Infrastructure\Email\MailWorkerFactory;
@@ -80,6 +83,9 @@ final readonly class CliProvider implements Provider
             ), $console));
             $registry->register(new MailKeygenCommand($console));
             $registry->register(new MailStatusCommand(new MysqlOutboxReport(Resolve::get($c, Repository::class)), $console));
+            $auditChain = new MysqlAuditChain(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class));
+            $registry->register(new AuditVerifyCommand($auditChain, $console));
+            $registry->register(new AuditPurgeContextCommand($auditChain, $console, $clock));
 
             return $registry;
         });

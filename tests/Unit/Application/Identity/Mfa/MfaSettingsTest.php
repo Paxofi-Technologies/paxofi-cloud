@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Identity\Mfa;
 
+use PaxofiCloud\Tests\Support\AuditFixtures;
 use PaxofiCloud\Application\Email\EmailAddress;
 use PaxofiCloud\Application\Identity\Mfa\InvalidMfaInput;
 use PaxofiCloud\Application\Identity\Mfa\MfaAlreadyEnabled;
@@ -44,19 +45,19 @@ final class MfaSettingsTest extends TestCase
             'phone' => '+2348012345678', 'password_hash' => $hasher->hash(self::PASSWORD), 'status' => 'active', 'terms' => '2026-10-01',
             'verified_at' => null, 'account_id' => 'acct-1',
         ];
-        $this->settings = new MfaSettings($this->mfa, $this->identities, $hasher, $this->limiter, $this->clock, MfaFixtures::crypto());
+        $this->settings = new MfaSettings($this->mfa, $this->identities, $hasher, $this->limiter, $this->clock, MfaFixtures::crypto(), AuditFixtures::trail());
     }
 
     public function testSetupConfirmAndStatusRoundTrip(): void
     {
         self::assertSame(['totp_enabled' => false, 'recovery_codes_left' => 0], $this->settings->status('id-1'));
 
-        $setup = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $setup = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
         self::assertMatchesRegularExpression('/^[A-Z2-7]{32}$/', $setup->secretBase32);
         self::assertStringContainsString('secret=' . $setup->secretBase32, $setup->uri);
         self::assertFalse($this->settings->isEnabled('id-1'), 'Not on until confirmed');
 
-        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()]);
+        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
 
         self::assertCount(10, $codes);
         self::assertSame(['totp_enabled' => true, 'recovery_codes_left' => 10], $this->settings->status('id-1'));
@@ -64,7 +65,7 @@ final class MfaSettingsTest extends TestCase
 
     public function testTheSecretIsStoredEncryptedAndBoundToTheIdentity(): void
     {
-        $setup = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $setup = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
         $envelope = $this->mfa->totp['id-1']['secret_envelope'];
 
         self::assertStringStartsWith('v1.t1.', $envelope);
@@ -75,8 +76,8 @@ final class MfaSettingsTest extends TestCase
 
     public function testRecoveryCodesAreStoredOnlyAsKeyedHashes(): void
     {
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
-        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
+        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
 
         foreach (array_keys($this->mfa->codes) as $stored) {
             self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', (string) $stored);
@@ -92,9 +93,9 @@ final class MfaSettingsTest extends TestCase
         foreach (['setup', 'regenerate', 'disable'] as $action) {
             try {
                 match ($action) {
-                    'setup' => $this->settings->setup('id-1', 'ada@example.ng', ['password' => 'wrong password']),
-                    'regenerate' => $this->settings->regenerateRecoveryCodes('id-1', ['password' => 'wrong password']),
-                    'disable' => $this->settings->disable('id-1', ['password' => 'wrong password', 'code' => '123456']),
+                    'setup' => $this->settings->setup('id-1', 'ada@example.ng', ['password' => 'wrong password'], AuditFixtures::client()),
+                    'regenerate' => $this->settings->regenerateRecoveryCodes('id-1', ['password' => 'wrong password'], AuditFixtures::client()),
+                    'disable' => $this->settings->disable('id-1', ['password' => 'wrong password', 'code' => '123456'], AuditFixtures::client()),
                 };
                 self::fail($action . ' accepted a wrong password');
             } catch (InvalidMfaInput $e) {
@@ -109,14 +110,14 @@ final class MfaSettingsTest extends TestCase
         $this->limiter->hits['mfa:password:id-1'] = MfaSettings::PASSWORD_LIMIT;
 
         $this->expectException(MfaThrottled::class);
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
     }
 
     public function testAWrongCodeDoesNotConfirmAndConfirmIsThrottled(): void
     {
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
         try {
-            $this->settings->confirm('id-1', ['code' => '000000']);
+            $this->settings->confirm('id-1', ['code' => '000000'], AuditFixtures::client());
             self::fail('Wrong code accepted');
         } catch (InvalidMfaInput $e) {
             self::assertSame(['code' => 'incorrect'], $e->errors);
@@ -125,71 +126,71 @@ final class MfaSettingsTest extends TestCase
 
         $this->limiter->hits['mfa:confirm:id-1'] = MfaSettings::CODE_LIMIT;
         $this->expectException(MfaThrottled::class);
-        $this->settings->confirm('id-1', ['code' => $this->currentCode()]);
+        $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
     }
 
     public function testANewSetupReplacesAnUnconfirmedOneButNotAConfirmedOne(): void
     {
-        $first = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
-        $second = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $first = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
+        $second = $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
         self::assertNotSame($first->secretBase32, $second->secretBase32);
         $stored = MfaFixtures::crypto()->secrets->decrypt($this->mfa->totp['id-1']['secret_envelope'], MfaCrypto::associatedData('id-1'));
         self::assertSame(self::secretFrom($second->secretBase32), $stored, 'Only the newest unconfirmed secret is kept');
 
-        $this->settings->confirm('id-1', ['code' => $this->currentCode()]);
+        $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
         $this->expectException(MfaAlreadyEnabled::class);
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
     }
 
     public function testDisableNeedsPasswordAndAWorkingSecondFactor(): void
     {
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
-        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
+        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
 
         try {
-            $this->settings->disable('id-1', ['password' => self::PASSWORD, 'recovery_code' => 'AAAA-AAAA-AAAA-AAAA']);
+            $this->settings->disable('id-1', ['password' => self::PASSWORD, 'recovery_code' => 'AAAA-AAAA-AAAA-AAAA'], AuditFixtures::client());
             self::fail('Unknown recovery code accepted');
         } catch (InvalidMfaInput $e) {
             self::assertSame(['recovery_code' => 'incorrect'], $e->errors);
         }
         self::assertTrue($this->settings->isEnabled('id-1'));
 
-        $this->settings->disable('id-1', ['password' => self::PASSWORD, 'recovery_code' => strtolower($codes[3])]);
+        $this->settings->disable('id-1', ['password' => self::PASSWORD, 'recovery_code' => strtolower($codes[3])], AuditFixtures::client());
         self::assertFalse($this->settings->isEnabled('id-1'));
         self::assertSame([], $this->mfa->codes);
     }
 
     public function testTheCodeThatConfirmedCannotBeReusedToDisable(): void
     {
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
         $code = $this->currentCode();
-        $this->settings->confirm('id-1', ['code' => $code]);
+        $this->settings->confirm('id-1', ['code' => $code], AuditFixtures::client());
 
         $this->expectException(InvalidMfaInput::class);
-        $this->settings->disable('id-1', ['password' => self::PASSWORD, 'code' => $code]);
+        $this->settings->disable('id-1', ['password' => self::PASSWORD, 'code' => $code], AuditFixtures::client());
     }
 
     public function testRegeneratingRecoveryCodesKillsTheOldSet(): void
     {
-        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
-        $old = $this->settings->confirm('id-1', ['code' => $this->currentCode()]);
-        $new = $this->settings->regenerateRecoveryCodes('id-1', ['password' => self::PASSWORD]);
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
+        $old = $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
+        $new = $this->settings->regenerateRecoveryCodes('id-1', ['password' => self::PASSWORD], AuditFixtures::client());
 
         self::assertSame([], array_intersect($old, $new));
         $this->expectException(InvalidMfaInput::class);
-        $this->settings->disable('id-1', ['password' => self::PASSWORD, 'recovery_code' => $old[0]]);
+        $this->settings->disable('id-1', ['password' => self::PASSWORD, 'recovery_code' => $old[0]], AuditFixtures::client());
     }
 
     public function testActionsThatNeedTotpOnAreRefusedWhenItIsOff(): void
     {
         $this->expectException(MfaNotEnabled::class);
-        $this->settings->regenerateRecoveryCodes('id-1', ['password' => self::PASSWORD]);
+        $this->settings->regenerateRecoveryCodes('id-1', ['password' => self::PASSWORD], AuditFixtures::client());
     }
 
     public function testStrictInput(): void
     {
         try {
-            $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD, 'secret' => 'MINE']);
+            $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD, 'secret' => 'MINE'], AuditFixtures::client());
             self::fail('Extra field accepted');
         } catch (InvalidMfaInput $e) {
             self::assertSame(['secret' => 'unknown_field'], $e->errors);
@@ -199,10 +200,10 @@ final class MfaSettingsTest extends TestCase
 
     public function testWithoutKeysMfaIsUnavailableNotSkipped(): void
     {
-        $settings = new MfaSettings($this->mfa, $this->identities, new CountingPasswordHasher(), $this->limiter, $this->clock, null);
+        $settings = new MfaSettings($this->mfa, $this->identities, new CountingPasswordHasher(), $this->limiter, $this->clock, null, AuditFixtures::trail());
 
         $this->expectException(MfaUnavailable::class);
-        $settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD]);
+        $settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
     }
 
     private function currentCode(): string
