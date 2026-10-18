@@ -31,6 +31,15 @@ final class AuditEventType
     public const string STAFF_ROLE_APPROVED = 'staff.role.approved';
     public const string STAFF_ROLE_REVOKED = 'staff.role.revoked';
     public const string STAFF_ROLE_CHANGE_REFUSED = 'staff.role.change_refused';
+    public const string STAFF_INVITED = 'staff.invited';
+    public const string STAFF_BOOTSTRAP_INVITED = 'staff.bootstrap_invited';
+    public const string STAFF_INVITATION_REFUSED = 'staff.invitation_refused';
+    public const string STAFF_PASSKEY_REGISTERED = 'staff.passkey.registered';
+    public const string STAFF_PASSKEY_REJECTED = 'staff.passkey.rejected';
+    public const string STAFF_ACTIVATED = 'staff.activated';
+    public const string STAFF_SIGNED_IN = 'staff.signed_in';
+    public const string STAFF_SIGN_IN_FAILED = 'staff.sign_in.failed';
+    public const string STAFF_PASSKEY_CLONE_SUSPECTED = 'staff.passkey.clone_suspected';
 
     private function __construct()
     {

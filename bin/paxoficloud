@@ -20,7 +20,7 @@ $console = Console::standard();
 $command = $argv[1] ?? null;
 if ($command === null || $command === '--help' || $command === '-h') {
     $console->line('Usage: bin/paxoficloud <command>');
-    $console->line('Commands: migrate, migrate:status, credentials:set, credentials:list, credentials:reencrypt, mail:work, mail:keygen, mail:status, audit:verify, audit:purge-context');
+    $console->line('Commands: migrate, migrate:status, credentials:set, credentials:list, credentials:reencrypt, mail:work, mail:keygen, mail:status, audit:verify, audit:purge-context, staff:bootstrap');
     exit($command === null ? 1 : 0);
 }
 

@@ -48,11 +48,11 @@ final class StaffRolesIntegrationTest extends IntegrationTestCase
         $this->authorizer = Resolve::get($app->container(), StaffAuthorizer::class);
 
         $this->pdo = self::pdo();
-        $insert = $this->pdo->prepare('INSERT INTO staff_members (id, email, email_lookup, full_name, status, created_at) VALUES (?, ?, ?, ?, \'active\', NOW(6))');
+        $insert = $this->pdo->prepare('INSERT INTO staff_members (id, email, email_lookup, full_name, status, created_at, webauthn_user_handle) VALUES (?, ?, ?, ?, \'active\', NOW(6), ?)');
         foreach ([self::ADMIN => 'staff0@example.test', self::ADMIN2 => 'staff1@example.test', self::OTHER => 'staff2@example.test'] as $id => $email) {
-            $insert->execute([$id, $email, hash('sha256', $email), 'Staff member']);
+            $insert->execute([$id, $email, hash('sha256', $email), 'Staff member', random_bytes(32)]);
         }
-        // The operator bootstrap grant (granted_by NULL), as the CLI in the next PR will write it.
+        // The operator bootstrap grant (granted_by NULL), as `staff:bootstrap` writes it.
         $this->insertGrant('10000000000000000000000000000000', self::ADMIN, 'security_admin', 'active', null);
     }
 

@@ -41,7 +41,7 @@ final class MailWorkerFactory
         return new EmailWorker(
             new MysqlEmailOutbox($connection, $repository, $sealer, $clock),
             $sealer,
-            new EmailTemplates(self::string($config, 'app.url')),
+            new EmailTemplates(self::string($config, 'app.url'), 'PaxofiCloud', self::optionalString($config, 'app.admin_url')),
             self::sender($config, $getenv),
             RecipientPolicy::fromEnvironment(self::string($config, 'app.env'), self::string($config, 'mail.recipient_allowlist')),
             $clock,
@@ -152,6 +152,13 @@ final class MailWorkerFactory
         }
 
         return $value;
+    }
+
+    private static function optionalString(Configuration $config, string $key): ?string
+    {
+        $value = $config->get($key);
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private static function int(Configuration $config, string $key): int

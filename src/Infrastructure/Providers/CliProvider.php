@@ -15,6 +15,8 @@ use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Bootstrap\AppPaths;
 use PaxofiCloud\Cli\AuditPurgeContextCommand;
 use PaxofiCloud\Cli\AuditVerifyCommand;
+use PaxofiCloud\Cli\StaffBootstrapCommand;
+use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Cli\Console;
 use PaxofiCloud\Cli\CredentialsListCommand;
 use PaxofiCloud\Cli\CredentialsReencryptCommand;
@@ -86,6 +88,7 @@ final readonly class CliProvider implements Provider
             $auditChain = new MysqlAuditChain(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class));
             $registry->register(new AuditVerifyCommand($auditChain, $console));
             $registry->register(new AuditPurgeContextCommand($auditChain, $console, $clock));
+            $registry->register(new StaffBootstrapCommand(static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class), $console));
 
             return $registry;
         });
