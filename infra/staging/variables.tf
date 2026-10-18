@@ -39,9 +39,14 @@ variable "region" {
 }
 
 variable "plan" {
-  description = "Vultr plan ID for the staging server."
+  description = "Vultr plan ID for the staging server. vc2-2c-4gb sold out in jnb (Oct 2026); vhp-2c-4gb-amd is the same size on newer hardware."
   type        = string
-  default     = "vc2-2c-4gb"
+  default     = "vhp-2c-4gb-amd"
+
+  validation {
+    condition     = can(regex("^[a-z0-9.-]+$", var.plan))
+    error_message = "plan must be a Vultr plan ID such as vhp-2c-4gb-amd."
+  }
 }
 
 variable "os_name" {
