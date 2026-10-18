@@ -26,7 +26,13 @@ use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
 use PaxofiCloud\Application\Staff\Passkeys\StaffEnrolment;
 use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeySignIn;
+use PaxofiCloud\Application\Staff\Session\StaffSessions;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
+use PaxofiCloud\Http\Admin\AdminGate;
+use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
+use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
+use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
+use PaxofiCloud\Infrastructure\Session\RedisStaffSessionStore;
 use PaxofiCloud\Application\Staff\StaffRoles;
 use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Http\Controllers\MfaController;
@@ -257,6 +263,9 @@ final class IdentityProvider implements Provider
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
             Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, StaffDirectory::class),
+            Resolve::get($c, EmailOutbox::class),
+            Resolve::get($c, Logger::class),
         ));
         $container->singleton(StaffPasskeySignIn::class, static fn (Container $c): StaffPasskeySignIn => new StaffPasskeySignIn(
             Resolve::get($c, StaffPasskeyStore::class),
@@ -266,6 +275,31 @@ final class IdentityProvider implements Provider
             new SystemClock(),
             Resolve::get($c, AuditTrail::class),
             Resolve::get($c, Logger::class),
+        ));
+
+        $container->singleton(StaffSessions::class, static fn (Container $c): StaffSessions => new StaffSessions(
+            new RedisStaffSessionStore(Resolve::get($c, RedisClient::class)),
+            Resolve::get($c, StaffDirectory::class),
+            new SystemClock(),
+        ));
+        $container->singleton(AdminGate::class, static fn (Container $c): AdminGate => new AdminGate(
+            Resolve::get($c, StaffSessions::class),
+            Resolve::get($c, StaffAuthorizer::class),
+            Resolve::get($c, StaffDirectory::class),
+        ));
+        $container->singleton(AdminAuthController::class, static fn (Container $c): AdminAuthController => new AdminAuthController(
+            Resolve::get($c, StaffPasskeySignIn::class),
+            Resolve::get($c, StaffSessions::class),
+            Resolve::get($c, StaffDirectory::class),
+            Resolve::get($c, AuditTrail::class),
+        ));
+        $container->singleton(AdminEnrolmentController::class, static fn (Container $c): AdminEnrolmentController => new AdminEnrolmentController(
+            Resolve::get($c, StaffEnrolment::class),
+        ));
+        $container->singleton(AdminStaffController::class, static fn (Container $c): AdminStaffController => new AdminStaffController(
+            Resolve::get($c, StaffDirectory::class),
+            Resolve::get($c, StaffInvitations::class),
+            Resolve::get($c, StaffRoles::class),
         ));
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));

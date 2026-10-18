@@ -40,7 +40,7 @@ final class StaffPasskeyFixtures
         $trail = AuditFixtures::trail($this->audit);
         $ceremonies = new WebAuthnLibCeremonies(self::ORIGIN);
         $this->invitations = new StaffInvitations($this->store, $this->directory, new StaffAuthorizer($this->directory, $trail), $this->directory, $this->outbox, $this->clock, $trail);
-        $this->enrolment = new StaffEnrolment($this->store, $ceremonies, $this->ceremonyStore, $this->directory, $this->limiter, $this->clock, $trail);
+        $this->enrolment = new StaffEnrolment($this->store, $ceremonies, $this->ceremonyStore, $this->directory, $this->limiter, $this->clock, $trail, $this->directory, $this->outbox, $this->logger);
         $this->signIn = new StaffPasskeySignIn($this->store, $ceremonies, $this->ceremonyStore, $this->limiter, $this->clock, $trail, $this->logger);
     }
 

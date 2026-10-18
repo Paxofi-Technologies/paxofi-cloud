@@ -132,6 +132,40 @@ final class StaffEnrolmentTest extends TestCase
         $this->expectRejected(PasskeyRejected::THROTTLED, fn () => $this->f->enrolment->begin($this->token, AuditFixtures::client()), false);
     }
 
+    /** §6.18: other active staff managers are told when someone finishes enrolment. */
+    public function testActivationAlertsTheOtherStaffManagers(): void
+    {
+        $this->f->enrol($this->token, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+        $this->f->enrol($this->token, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+
+        // Ada (the first admin) is active now; she invites Bob, and Bob's activation alerts Ada only.
+        $this->f->outbox->queued = [];
+        $this->f->invitations->invite($this->staffId, 'bob@example.test', 'Bob Builder', \PaxofiCloud\Domain\Staff\StaffRole::Support, AuditFixtures::client());
+        $bobToken = $this->f->lastToken();
+        $this->f->enrol($bobToken, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+        self::assertCount(1, $this->f->outbox->queued, 'no alert before activation');
+        $this->f->enrol($bobToken, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+
+        $alerts = array_values(array_filter($this->f->outbox->queued, static fn (array $m): bool => $m['template'] === \PaxofiCloud\Application\Email\EmailTemplates::STAFF_ACTIVATED));
+        self::assertCount(1, $alerts);
+        self::assertSame('ada@example.test', $alerts[0]['to']);
+        self::assertSame(['name' => 'Ada Lovelace', 'staff_name' => 'Bob Builder'], $alerts[0]['parameters']);
+    }
+
+    public function testANewStaffManagerIsNotAlertedAboutThemselves(): void
+    {
+        $this->f->enrol($this->token, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+        $this->f->enrol($this->token, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+        $this->f->invitations->invite($this->staffId, 'carol@example.test', 'Carol', \PaxofiCloud\Domain\Staff\StaffRole::SecurityAdmin, AuditFixtures::client());
+        $token = $this->f->lastToken();
+        $this->f->outbox->queued = [];
+
+        $this->f->enrol($token, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+        $this->f->enrol($token, new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN));
+
+        self::assertSame(['ada@example.test'], array_column($this->f->outbox->queued, 'to'));
+    }
+
     /** @param callable(): mixed $action */
     private function expectRejected(string $reason, callable $action, bool $audited = true): void
     {

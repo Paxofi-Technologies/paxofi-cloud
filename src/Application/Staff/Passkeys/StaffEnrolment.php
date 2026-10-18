@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Application\Staff\Passkeys;
 
+use Paxofi\Core\Contracts\Logger;
 use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Audit\AuditEvent;
 use PaxofiCloud\Application\Audit\AuditEventType;
@@ -11,9 +12,15 @@ use PaxofiCloud\Application\Audit\AuditTrail;
 use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\CeremonyStore;
 use PaxofiCloud\Application\Contracts\Clock;
+use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\PasskeyCeremonies;
 use PaxofiCloud\Application\Contracts\RateLimiter;
+use PaxofiCloud\Application\Contracts\StaffDirectory;
 use PaxofiCloud\Application\Contracts\StaffPasskeyStore;
+use PaxofiCloud\Application\Email\EmailAddress;
+use PaxofiCloud\Application\Email\EmailTemplates;
+use PaxofiCloud\Domain\Staff\Permission;
+use PaxofiCloud\Domain\Staff\StaffRole;
 
 /**
  * Registering passkeys with an invitation (threat model D-11, §6.17). The
@@ -36,6 +43,9 @@ final readonly class StaffEnrolment
         private RateLimiter $limiter,
         private Clock $clock,
         private AuditTrail $audit,
+        private StaffDirectory $directory,
+        private EmailOutbox $outbox,
+        private Logger $logger,
     ) {
     }
 
@@ -108,7 +118,7 @@ final readonly class StaffEnrolment
                     $this->store->completeEnrolment($tokenHash, $invitation['staff_id'], $now);
                 }
 
-                return ['staff_id' => $invitation['staff_id'], 'passkeys' => $count, 'active' => $active];
+                return ['staff_id' => $invitation['staff_id'], 'full_name' => $invitation['full_name'], 'passkeys' => $count, 'active' => $active];
             });
         } catch (PasskeyRejected $e) {
             $this->reject($e->reason, $client, is_string($state['staff_id'] ?? null) ? $state['staff_id'] : null);
@@ -117,9 +127,32 @@ final readonly class StaffEnrolment
         $this->audit->record(AuditEventType::STAFF_PASSKEY_REGISTERED, AuditEvent::SUCCESS, $client, details: ['subject' => $result['staff_id'], 'passkeys' => $result['passkeys']]);
         if ($result['active']) {
             $this->audit->record(AuditEventType::STAFF_ACTIVATED, AuditEvent::SUCCESS, $client, details: ['subject' => $result['staff_id']]);
+            $this->alertManagers($result['staff_id'], $result['full_name']);
         }
 
         return ['passkeys' => $result['passkeys'], 'active' => $result['active']];
+    }
+
+    /**
+     * §6.18: every other active staff manager hears about the new member, so an
+     * enrolment from a stolen invitation is noticed. Best effort, after commit.
+     */
+    private function alertManagers(string $staffId, string $fullName): void
+    {
+        $managers = array_values(array_filter(
+            StaffRole::cases(),
+            static fn (StaffRole $r): bool => in_array(Permission::StaffManage, $r->permissions(), true),
+        ));
+        foreach ($this->directory->activeHoldersOf($managers) as $manager) {
+            if ($manager['id'] === $staffId) {
+                continue;
+            }
+            try {
+                $this->outbox->enqueue(new EmailAddress($manager['email']), EmailTemplates::STAFF_ACTIVATED, ['name' => $manager['full_name'], 'staff_name' => $fullName]);
+            } catch (\Throwable $e) {
+                $this->logger->error('staff.activation_alert_failed', ['staff_id' => $staffId, 'error' => $e::class]);
+            }
+        }
     }
 
     /** @throws PasskeyRejected */

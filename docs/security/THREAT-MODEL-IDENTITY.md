@@ -335,6 +335,14 @@ WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-
 - **Throttling.** Ceremony starts and finishes count against per-IP limits (Redis) before any verification work.
 - **Audit (T-34).** Invitations, passkey registrations, activation, sign-in success and failure (fixed reason codes) and clone suspicion are audited with the staff ID in details and `identity_id` NULL.
 
+### 6.18 Staff sessions and admin API implementation notes (Sprint 1, PR "staff sessions + admin API")
+
+- **Separate session (D-6, T-31).** Staff sessions use the cookie `__Host-pc_staff` (Secure, HttpOnly, **SameSite=Strict**, host-only, no Max-Age), their own Redis prefix `pc:staff:sess:{SHA-256}` and shorter limits than customers (ASVS L3 for admin): **15 minutes idle, 8 hours absolute**. A new session ID is issued at every sign-in. Every request re-reads the member's status: a disabled member's sessions stop working at once. The customer cookie is never read on admin routes and the staff cookie never on customer routes.
+- **Admin origin only.** The admin API lives under `/admin-api/v1/` and answers only when `ADMIN_URL` is set **and** the request's `Host` is the admin host (otherwise 404, so the customer host does not even reveal the routes). Writes need `Origin` equal to the admin origin and a JSON body (same reasoning as T-48), plus the session's CSRF token in `X-CSRF-Token`. Responses are `no-store`.
+- **One table, one gate (T-32).** Every admin route is declared once in `AdminRoutes` with exactly one access rule: public (passkey sign-in and enrolment ceremonies only), any signed-in staff member (own session, sign-out), or one named `Permission`. The router is built from that table and the gate enforces the rule before the controller runs, so a route cannot be added without a rule. `AdminRouteCoverageTest` walks the table: every non-public route refuses a request without a session (401) and every permission route refuses a staff member without that permission (403, audited).
+- **Uniform passkey failures.** Sign-in and enrolment failures answer one generic 401/400 problem with no reason; reasons go only to the audit log. Throttling answers 429 with `Retry-After`.
+- **Activation alert.** When a new staff member completes enrolment, every other active staff manager (Security Admin, Super Admin) gets an email, so an enrolment from a stolen invitation is noticed (residual risk of §6.17).
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -365,6 +373,7 @@ WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-
 | 2026-10-18 | §6.12 Turnstile implementation notes (T-02, T-06, T-07, T-47, T-49; fail closed; challenge counter made address-independent), written before the Turnstile code | Claude (security engineering) |
 | 2026-10-18 | §6.13 TOTP two-step verification notes (D-4, D-5, T-13…T-17), written before the MFA code | Claude (security engineering) |
 | 2026-10-18 | §6.14 audit log notes, T-50 forged context, T-51 personal data in the audit trail, T-52 activity isolation; written before the audit code | Claude (security engineering) |
+| 2026-10-18 | §6.18 staff sessions + admin API notes (separate Strict cookie and Redis prefix, 15 min/8 h, admin host only, single route table with one access rule per route, activation alert); written before the code | Claude (security engineering) |
 | 2026-10-18 | §6.17 staff passkey notes (invitation tokens, two-passkey activation, ES256/EdDSA only, discoverable usernameless sign-in, single-use challenges, clone detection disables the credential); written before the staff passkey code | Claude (security engineering) |
 | 2026-10-18 | §6.16 staff RBAC notes (ACC-005 permission catalogue from SRS §2.2, deny by default, two-person Super Admin grants, reason-scoped suspensions); O-1 resolved by ADR-002; written before the staff RBAC code | Claude (security engineering) |
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |

@@ -163,4 +163,14 @@ final class EmailTemplatesTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'http://admin.paxofi.com');
     }
+
+    public function testStaffActivatedAlertNamesTheNewMemberSafely(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com');
+        $message = $templates->render(new EmailAddress('sec@example.ng'), EmailTemplates::STAFF_ACTIVATED, ['name' => 'Ada', 'staff_name' => 'Bob <script>Builder</script>'], 'k3');
+
+        self::assertStringContainsString('Bob scriptBuilderscript finished setting up passkeys', $message->textBody);
+        self::assertStringNotContainsString('<script>', $message->htmlBody);
+        self::assertStringContainsString('href="https://admin.paxofi.com/staff"', $message->htmlBody);
+    }
 }

@@ -39,6 +39,7 @@ final class InMemoryStaffPasskeyStore implements StaffPasskeyStore
     {
         $this->profiles[$staffId] = ['email' => $email, 'lookup' => $emailLookup, 'name' => $fullName, 'handle' => $userHandle];
         $this->directory->members[$staffId] = 'invited';
+        $this->directory->profiles[$staffId] = ['email' => $email, 'full_name' => $fullName];
     }
 
     public function addInvitation(string $tokenHash, string $staffId, ?string $invitedBy, \DateTimeImmutable $now, \DateTimeImmutable $expiresAt): void
