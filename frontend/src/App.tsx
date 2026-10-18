@@ -4,8 +4,10 @@ import { CloudIcon, GlobeIcon, HomeIcon, LifebuoyIcon, ReceiptIcon, ServerIcon, 
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DomainSearchScreen } from './screens/DomainSearchScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
+import { SecurityScreen } from './screens/SecurityScreen';
 import { SignInScreen } from './screens/SignInScreen';
 import { VerifyEmailScreen } from './screens/VerifyEmailScreen';
+import { fetchMfaStatus } from './lib/mfa';
 import { fetchSession, signOut, type SessionState } from './lib/session';
 
 const NAV: readonly NavItem[] = [
@@ -15,10 +17,10 @@ const NAV: readonly NavItem[] = [
   { id: 'vps', label: 'Cloud servers', icon: <CloudIcon />, comingIn: 'Soon' },
   { id: 'billing', label: 'Billing', icon: <ReceiptIcon />, comingIn: 'Soon' },
   { id: 'support', label: 'Support', icon: <LifebuoyIcon />, comingIn: 'Soon' },
-  { id: 'security', label: 'Security', icon: <ShieldIcon />, comingIn: 'Soon' },
+  { id: 'security', label: 'Security', icon: <ShieldIcon /> },
 ];
 
-type Screen = 'dashboard' | 'domains';
+type Screen = 'dashboard' | 'domains' | 'security';
 
 export interface AppProps {
   path?: string;
@@ -47,6 +49,7 @@ function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined;
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [attempt, setAttempt] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
+  const [mfaEnabled, setMfaEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -54,6 +57,11 @@ function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined;
       if (!active) return;
       if (next.kind === 'signed_out') navigate('/sign-in');
       setState(next);
+      if (next.kind === 'signed_in') {
+        void fetchMfaStatus(fetchImpl).then((status) => {
+          if (active && status) setMfaEnabled(status.totpEnabled);
+        });
+      }
     });
     return () => {
       active = false;
@@ -92,13 +100,17 @@ function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined;
     <AppShell
       nav={NAV}
       current={screen}
-      onNavigate={(id) => setScreen(id === 'domains' ? 'domains' : 'dashboard')}
+      onNavigate={(id) => setScreen(id === 'domains' || id === 'security' ? id : 'dashboard')}
       userName={session.fullName}
       onSignOut={() => {
         if (!signingOut) void handleSignOut();
       }}
     >
-      {screen === 'dashboard' ? <DashboardScreen fullName={session.fullName} onFindDomain={() => setScreen('domains')} /> : <DomainSearchScreen />}
+      {screen === 'dashboard' && (
+        <DashboardScreen fullName={session.fullName} mfaEnabled={mfaEnabled ?? true} onFindDomain={() => setScreen('domains')} onSetUpMfa={() => setScreen('security')} />
+      )}
+      {screen === 'domains' && <DomainSearchScreen />}
+      {screen === 'security' && <SecurityScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} onStatusChange={(status) => setMfaEnabled(status.totpEnabled)} />}
     </AppShell>
   );
 }
