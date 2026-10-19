@@ -87,7 +87,7 @@ final readonly class StaffPasskeySignIn
         }
 
         $this->store->recordUse($passkey->id, $verified->signCount, $verified->backupState, $this->clock->now());
-        $this->audit->record(AuditEventType::STAFF_SIGNED_IN, AuditEvent::SUCCESS, $client, details: ['subject' => $passkey->staffId]);
+        $this->audit->record(AuditEventType::STAFF_SIGNED_IN, AuditEvent::SUCCESS, $client, details: ['subject' => $passkey->staffId, 'method' => 'passkey']);
 
         return $passkey->staffId;
     }

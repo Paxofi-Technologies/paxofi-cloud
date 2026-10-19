@@ -27,8 +27,9 @@ final class StaffPasskeySignInTest extends TestCase
         $token = $this->f->lastToken();
         $this->key1 = new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN);
         $this->key2 = new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN, -8);
-        $this->f->enrol($token, $this->key1);
-        $this->f->enrol($token, $this->key2);
+        $this->f->activate($token);
+        $this->f->addPasskey($this->staffId, $this->key1);
+        $this->f->addPasskey($this->staffId, $this->key2);
         $this->f->audit->events = [];
     }
 
@@ -37,7 +38,7 @@ final class StaffPasskeySignInTest extends TestCase
         self::assertSame($this->staffId, $this->f->signInWith($this->key1));
         self::assertSame($this->staffId, $this->f->signInWith($this->key2));
         self::assertSame([AuditEventType::STAFF_SIGNED_IN, AuditEventType::STAFF_SIGNED_IN], $this->f->audit->types());
-        self::assertSame(['subject' => $this->staffId], $this->f->audit->events[0]->details);
+        self::assertSame(['subject' => $this->staffId, 'method' => 'passkey'], $this->f->audit->events[0]->details);
         self::assertNull($this->f->audit->events[0]->identityId);
     }
 
@@ -50,13 +51,11 @@ final class StaffPasskeySignInTest extends TestCase
         self::assertSame([2, 0], $counts);
     }
 
-    public function testAnInvitedMemberCannotSignInBeforeEnrolmentCompletes(): void
+    public function testAPasskeyStopsWorkingWhenItsMemberIsNoLongerActive(): void
     {
-        $this->f->invitations->invite($this->staffId, 'bob@example.test', 'Bob', \PaxofiCloud\Domain\Staff\StaffRole::Support, AuditFixtures::client());
-        $bob = new SoftwareAuthenticator(StaffPasskeyFixtures::ORIGIN);
-        $this->f->enrol($this->f->lastToken(), $bob);
+        $this->f->directory->members[$this->staffId] = 'disabled';
 
-        $this->expectFailed(PasskeyRejected::UNKNOWN_CREDENTIAL, fn () => $this->f->signInWith($bob));
+        $this->expectFailed(PasskeyRejected::UNKNOWN_CREDENTIAL, fn () => $this->f->signInWith($this->key1));
     }
 
     public function testDisabledMembersAndUnknownCredentialsAreRefused(): void

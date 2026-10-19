@@ -31,6 +31,8 @@ export interface StaffSession {
   email: string;
   roles: string[];
   permissions: string[];
+  /** §6.20: which sign-in methods the member has set up. */
+  signIn: { password: boolean; passkeys: number };
   csrfToken: string;
 }
 
@@ -85,6 +87,10 @@ export async function fetchStaffSession(fetchImpl: typeof fetch = fetch): Promis
       email: typeof staff.email === 'string' ? staff.email : '',
       roles: strings(staff.roles),
       permissions: strings(staff.permissions),
+      signIn: {
+        password: obj(staff.sign_in)?.password === true,
+        passkeys: typeof obj(staff.sign_in)?.passkeys === 'number' ? (obj(staff.sign_in)?.passkeys as number) : 0,
+      },
       csrfToken: body.csrf_token,
     },
   };
@@ -126,10 +132,57 @@ export const signInOptions = (fetchImpl: typeof fetch = fetch) => postJson(`${AD
 export const finishSignIn = (ceremonyId: string, credential: unknown, fetchImpl: typeof fetch = fetch) =>
   postJson(`${ADMIN_API}/auth/passkey`, { ceremony_id: ceremonyId, credential }, fetchImpl);
 
-export const enrolmentOptions = (token: string, fetchImpl: typeof fetch = fetch) => postJson(`${ADMIN_API}/enrolment/options`, { token }, fetchImpl);
+/*
+ * Code sign-in (§6.20): password, then the authenticator code, then the code
+ * sent by email. The ticket between steps is an HttpOnly cookie the page never sees.
+ */
+export const signInWithPassword = (email: string, password: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/auth/password`, { email, password }, fetchImpl);
 
-export const finishEnrolment = (token: string, ceremonyId: string, credential: unknown, label: string, fetchImpl: typeof fetch = fetch) =>
-  postJson(`${ADMIN_API}/enrolment`, { token, ceremony_id: ceremonyId, credential, label }, fetchImpl);
+export const submitAuthenticatorCode = (code: string, fetchImpl: typeof fetch = fetch) => postJson(`${ADMIN_API}/auth/authenticator-code`, { code }, fetchImpl);
+
+export const submitEmailCode = (code: string, fetchImpl: typeof fetch = fetch) => postJson(`${ADMIN_API}/auth/email-code`, { code }, fetchImpl);
+
+export const resendEmailCode = (fetchImpl: typeof fetch = fetch) => postJson(`${ADMIN_API}/auth/email-code/resend`, {}, fetchImpl);
+
+/** A setup start: who is being set up and the new authenticator secret. */
+export interface SignInSetup {
+  fullName: string;
+  email: string;
+  secret: string;
+  uri: string;
+}
+
+export function readSetup(result: ApiResult): SignInSetup | null {
+  if (result.kind !== 'ok') return null;
+  const body = obj(result.data);
+  if (!body || typeof body.secret !== 'string' || typeof body.uri !== 'string' || !body.uri.startsWith('otpauth://totp/')) return null;
+  return {
+    fullName: typeof body.full_name === 'string' ? body.full_name : '',
+    email: typeof body.email === 'string' ? body.email : '',
+    secret: body.secret,
+    uri: body.uri,
+  };
+}
+
+export const startEnrolment = (token: string, fetchImpl: typeof fetch = fetch) => postJson(`${ADMIN_API}/enrolment/start`, { token }, fetchImpl);
+
+export const finishEnrolment = (token: string, password: string, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/enrolment`, { token, password, code }, fetchImpl);
+
+/** For members who enrolled with passkeys before codes existed. */
+export const startMemberSetup = (csrfToken: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/account/sign-in-setup/start`, {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+export const finishMemberSetup = (csrfToken: string, password: string, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/account/sign-in-setup`, { password, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** Optional passkeys: a current authenticator code starts the ceremony. */
+export const addPasskeyOptions = (csrfToken: string, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/account/passkeys/options`, { code }, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+export const addPasskey = (csrfToken: string, ceremonyId: string, credential: unknown, label: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/account/passkeys`, { ceremony_id: ceremonyId, credential, label }, fetchImpl, { 'X-CSRF-Token': csrfToken });
 
 export const inviteStaff = (csrfToken: string, invitation: { email: string; fullName: string; role: string }, fetchImpl: typeof fetch = fetch) =>
   postJson(`${ADMIN_API}/staff/invitations`, { email: invitation.email, full_name: invitation.fullName, role: invitation.role }, fetchImpl, {

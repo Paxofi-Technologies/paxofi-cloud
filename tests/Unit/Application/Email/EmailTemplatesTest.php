@@ -152,7 +152,7 @@ final class EmailTemplatesTest extends TestCase
         self::assertStringContainsString('https://admin.paxofi.com/enrol#token=' . self::TOKEN, $message->textBody);
         self::assertStringContainsString('href="https://admin.paxofi.com/enrol#token=' . self::TOKEN . '"', $message->htmlBody);
         self::assertStringNotContainsString('cloud.paxofi.com', $message->textBody);
-        self::assertStringContainsString('passkeys', $message->textBody);
+        self::assertStringContainsString('choose a password and add an authenticator app', $message->textBody);
 
         $this->expectException(\InvalidArgumentException::class);
         (new EmailTemplates('https://cloud.paxofi.com'))->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_INVITATION, ['name' => 'Ada', 'token' => self::TOKEN], 'k2');
@@ -169,8 +169,35 @@ final class EmailTemplatesTest extends TestCase
         $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com');
         $message = $templates->render(new EmailAddress('sec@example.ng'), EmailTemplates::STAFF_ACTIVATED, ['name' => 'Ada', 'staff_name' => 'Bob <script>Builder</script>'], 'k3');
 
-        self::assertStringContainsString('Bob scriptBuilderscript finished setting up passkeys', $message->textBody);
+        self::assertStringContainsString('Bob scriptBuilderscript finished setting up their sign-in', $message->textBody);
         self::assertStringNotContainsString('<script>', $message->htmlBody);
         self::assertStringContainsString('href="https://admin.paxofi.com/staff"', $message->htmlBody);
+    }
+
+    /** §6.20: the code, the device signing in, where the code may be typed; no link, code not in the subject. */
+    public function testStaffSignInCodeNamesTheDeviceAndTheOnlyPlaceToTypeIt(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com');
+        $message = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_SIGN_IN_CODE, [
+            'name' => 'Ada',
+            'code' => '042917',
+            'device' => 'Chrome 146 on Windows (desktop)',
+            'location' => 'Lagos, Nigeria',
+            'ip' => '102.89.1.2',
+            'time' => '2026-10-19T08:30:00Z',
+        ], 'k4');
+
+        self::assertSame('Your PaxofiCloud admin sign-in code', $message->subject);
+        self::assertStringContainsString("\n042917\n", $message->textBody);
+        self::assertStringContainsString('>042917</p>', $message->htmlBody);
+        self::assertStringContainsString('Device: Chrome 146 on Windows (desktop)', $message->textBody);
+        self::assertStringContainsString('Location: Lagos, Nigeria (approximate)', $message->textBody);
+        self::assertStringContainsString('IP address: 102.89.1.2', $message->textBody);
+        self::assertStringContainsString('Time: 19 Oct 2026, 09:30 WAT', $message->textBody);
+        self::assertStringContainsString('Only type this code on admin.paxofi.com', $message->textBody);
+        self::assertStringNotContainsString('href=', $message->htmlBody);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_SIGN_IN_CODE, ['name' => 'Ada', 'code' => '12345<'], 'k5');
     }
 }

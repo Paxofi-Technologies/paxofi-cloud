@@ -1,19 +1,31 @@
-import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Card, Logo, TextField } from '../components';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Alert, Badge, Button, Card, Logo, RecoveryCodesView, TextField } from '../components';
+import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
+import { groupSecret, readRecoveryCodes } from '../lib/mfa';
 import {
   INVITABLE_ROLES,
+  addPasskey,
+  addPasskeyOptions,
   approveGrant,
   ceremony,
-  enrolmentOptions,
   fetchStaff,
   fetchStaffSession,
   finishEnrolment,
+  finishMemberSetup,
   finishSignIn,
   inviteStaff,
+  readSetup,
+  resendEmailCode,
   roleLabel,
   signInOptions,
+  signInWithPassword,
   signOutStaff,
+  startEnrolment,
+  startMemberSetup,
+  submitAuthenticatorCode,
+  submitEmailCode,
+  type SignInSetup,
   type StaffList,
   type StaffSession,
   type StaffSessionState,
@@ -29,6 +41,8 @@ export interface AdminAppProps {
 }
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const PASSWORD_MIN = 15;
+const EMAIL_RESEND_SECONDS = 60;
 
 /** Parses `#token=…` from an invitation link; anything malformed is no token. */
 export function invitationToken(hash: string): string | null {
@@ -38,11 +52,12 @@ export function invitationToken(hash: string): string | null {
 
 /**
  * The PaxofiCloud staff console (SRS ACC-005, IAM-008; identity threat model
- * §6.17–§6.19). Served only on the admin host. Staff sign in with a passkey
- * only: there is no password form to phish.
+ * §6.17–§6.20). Served only on the admin host. Staff sign in with password,
+ * authenticator code and a code sent by email; a passkey is the optional,
+ * stronger way in.
  */
 export function AdminApp({ path = window.location.pathname, initialHash, fetchImpl, credentials }: AdminAppProps) {
-  if (path === '/enrol') return <EnrolScreen initialHash={initialHash} fetchImpl={fetchImpl} credentials={credentials} />;
+  if (path === '/enrol') return <EnrolScreen initialHash={initialHash} fetchImpl={fetchImpl} />;
 
   return <Console fetchImpl={fetchImpl} credentials={credentials} />;
 }
@@ -57,11 +72,11 @@ function StaffAuthLayout({ children }: { children: ReactNode }) {
       <div className="pc-auth__aside" aria-hidden="true">
         <div className="pc-auth__aside-inner">
           <p className="pc-auth__eyebrow">PaxofiCloud staff</p>
-          <p className="pc-auth__headline">Staff access is by passkey only.</p>
+          <p className="pc-auth__headline">Staff sign-in needs your password, your authenticator app and your email.</p>
           <ul className="pc-auth__points">
             <li>Every action is recorded in the audit log</li>
             <li>Access follows your role, nothing more</li>
-            <li>Never share a passkey or an invitation link</li>
+            <li>Never share a code, a password or an invitation link</li>
           </ul>
         </div>
       </div>
@@ -69,74 +84,159 @@ function StaffAuthLayout({ children }: { children: ReactNode }) {
   );
 }
 
-function ceremonyProblem(result: ApiResult, fallback: string): string {
+function problemText(result: ApiResult, fallback: string): string {
   if (result.kind === 'throttled') return `Too many attempts. Please try again in ${describeWait(result.retryAfterSeconds)}.`;
-  if (result.kind === 'unavailable') return 'We could not reach PaxofiCloud. Check your connection and try again.';
+  if (result.kind === 'unavailable') return 'We could not reach PaxofiCloud, or sign-in is unavailable right now. Please try again in a few minutes.';
   return fallback;
 }
 
 const UNSUPPORTED = 'This browser cannot use passkeys. Use a current version of Chrome, Edge, Safari or Firefox.';
 
-type EnrolState =
-  | { kind: 'ready'; passkeys: number }
-  | { kind: 'active' }
-  | { kind: 'invalid' }
-  | { kind: 'limit' };
+const PASSWORD_ERRORS: Record<string, string> = {
+  too_short: `Use at least ${PASSWORD_MIN} characters. A few unrelated words work well.`,
+  too_long: 'Use at most 128 characters.',
+  invalid_characters: 'Remove control characters such as tabs or line breaks.',
+  breached: 'This password has appeared in a data breach. Choose a different one.',
+};
 
-function EnrolScreen({ initialHash, fetchImpl, credentials }: { initialHash?: string | undefined; fetchImpl?: typeof fetch | undefined; credentials?: CredentialsApi | null | undefined }) {
-  // Read once (StrictMode may run initialisers twice), then strip from the address bar.
-  const [token] = useState(() => invitationToken(initialHash ?? window.location.hash));
-  const [state, setState] = useState<EnrolState>(token === null ? { kind: 'invalid' } : { kind: 'ready', passkeys: 0 });
-  const [label, setLabel] = useState('');
+const CODE_WRONG = 'That code is not right. Check the time on your phone and try the newest code.';
+
+/**
+ * Password plus authenticator app, finished with a code from the app (§6.20).
+ * Used with an invitation and, once, by members who enrolled with passkeys only.
+ */
+function SetupForm({
+  setup,
+  submit,
+  onFinished,
+  onInvitationDead,
+}: {
+  setup: SignInSetup;
+  submit: (password: string, code: string) => Promise<ApiResult>;
+  onFinished: (codes: string[]) => void;
+  onInvitationDead?: () => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [code, setCode] = useState('');
+  const [errors, setErrors] = useState<{ password?: string | undefined; confirm?: string | undefined; code?: string | undefined }>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    const next: typeof errors = {};
+    if ([...password].length < PASSWORD_MIN) next.password = PASSWORD_ERRORS.too_short;
+    if (confirm !== password) next.confirm = 'The two passwords do not match.';
+    if (!/^\d{6}$/.test(code)) next.code = 'Enter the 6-digit code shown in your app.';
+    setErrors(next);
+    setProblem(null);
+    if (Object.keys(next).length > 0) return;
+
+    setLoading(true);
+    const result = await submit(password, code);
+    setLoading(false);
+    setCode('');
+    if (result.kind === 'ok') {
+      const codes = readRecoveryCodes(result.data);
+      if (codes) onFinished(codes);
+      else setProblem('Something went wrong. Please try again.');
+      return;
+    }
+    if (result.kind === 'invalid') {
+      setErrors({
+        password: result.errors.password ? (PASSWORD_ERRORS[result.errors.password] ?? 'Choose a different password.') : undefined,
+        code: result.errors.code ? CODE_WRONG : undefined,
+      });
+      return;
+    }
+    if (result.kind === 'rejected' && result.code === 'invitation_invalid' && onInvitationDead) {
+      onInvitationDead();
+      return;
+    }
+    setProblem(problemText(result, 'Setup could not be finished. Reload the page and try again.'));
+  }
+
+  return (
+    <form className="pc-stack" onSubmit={onSubmit} noValidate>
+      {problem && <Alert tone="danger">{problem}</Alert>}
+      <h2>1. Choose a password</h2>
+      <p className="pc-muted">Use it only for the PaxofiCloud admin console. A password manager can create and remember one for you.</p>
+      <TextField
+        label="Password"
+        type="password"
+        autoComplete="new-password"
+        hint={`At least ${PASSWORD_MIN} characters`}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        error={errors.password}
+        required
+      />
+      <TextField label="Confirm password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} error={errors.confirm} required />
+      <h2>2. Add your authenticator app</h2>
+      <p className="pc-muted">Open Google Authenticator, Microsoft Authenticator or a similar app and scan this code.</p>
+      <div className="pc-mfa-setup">
+        <QrCode value={setup.uri} label="QR code for your authenticator app" />
+        <div className="pc-stack">
+          <p className="pc-muted">Can't scan it? Add an account in the app manually with this key (time-based):</p>
+          <code className="pc-secret">{groupSecret(setup.secret)}</code>
+          <p className="pc-muted">Then enter the 6-digit code the app shows for PaxofiCloud Admin.</p>
+        </div>
+      </div>
+      <TextField
+        label="Code from your app"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+        error={errors.code}
+        required
+      />
+      <div>
+        <Button type="submit" loading={loading}>
+          Finish setup
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+type EnrolState =
+  | { kind: 'starting' }
+  | { kind: 'setup'; setup: SignInSetup }
+  | { kind: 'codes'; codes: string[] }
+  | { kind: 'active' }
+  | { kind: 'invalid' }
+  | { kind: 'error'; message: string };
+
+function EnrolScreen({ initialHash, fetchImpl }: { initialHash?: string | undefined; fetchImpl?: typeof fetch | undefined }) {
+  // Read once (StrictMode may run initialisers twice), then strip from the address bar.
+  const [token] = useState(() => invitationToken(initialHash ?? window.location.hash));
+  const [state, setState] = useState<EnrolState>(token === null ? { kind: 'invalid' } : { kind: 'starting' });
+  const started = useRef(false);
+
   useEffect(() => {
     if (window.location.hash !== '') window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  }, []);
-
-  async function addPasskey(event: FormEvent) {
-    event.preventDefault();
-    if (token === null || state.kind !== 'ready') return;
-    setProblem(null);
-    setLoading(true);
-    try {
-      const started = await enrolmentOptions(token, fetchImpl);
-      const begun = ceremony(started);
-      if (begun === null) {
-        if (started.kind === 'rejected' && started.code === 'invitation_invalid') setState({ kind: 'invalid' });
-        else if (started.kind === 'rejected' && started.code === 'passkey_limit_reached') setState({ kind: 'limit' });
-        else setProblem(ceremonyProblem(started, 'We could not start passkey setup. Please try again.'));
-        return;
-      }
-      const created = await createPasskey(begun.options, credentials === undefined ? undefined : credentials);
-      if (created.kind === 'unsupported') {
-        setProblem(UNSUPPORTED);
-        return;
-      }
-      if (created.kind === 'cancelled') {
-        setProblem('Passkey setup was cancelled or timed out. Please try again.');
-        return;
-      }
-      const finished = await finishEnrolment(token, begun.ceremonyId, created.credential, label.trim(), fetchImpl);
-      if (finished.kind !== 'ok') {
-        if (finished.kind === 'rejected' && finished.code === 'invitation_invalid') setState({ kind: 'invalid' });
-        else if (finished.kind === 'rejected' && finished.code === 'passkey_limit_reached') setState({ kind: 'limit' });
-        else setProblem(ceremonyProblem(finished, 'This passkey could not be registered. Use a different authenticator and try again.'));
-        return;
-      }
-      const data = finished.data as Record<string, unknown> | null;
-      const count = typeof data?.passkeys === 'number' ? data.passkeys : state.passkeys + 1;
-      setLabel('');
-      setState(data?.active === true ? { kind: 'active' } : { kind: 'ready', passkeys: count });
-    } finally {
-      setLoading(false);
-    }
-  }
+    // Each start makes a new secret; StrictMode runs effects twice, so start once.
+    if (token === null || started.current) return;
+    started.current = true;
+    void startEnrolment(token, fetchImpl).then((result) => {
+      const setup = readSetup(result);
+      if (setup) setState({ kind: 'setup', setup });
+      else if (result.kind === 'rejected' && result.code === 'invitation_invalid') setState({ kind: 'invalid' });
+      else setState({ kind: 'error', message: problemText(result, 'Setup could not start. Reload the page to try again.') });
+    });
+  }, [token, fetchImpl]);
 
   return (
     <StaffAuthLayout>
       <div className="pc-auth__form" aria-live="polite">
+        {state.kind === 'starting' && (
+          <p className="pc-loading" role="status">
+            Checking your invitation…
+          </p>
+        )}
         {state.kind === 'invalid' && (
           <div>
             <h1>This invitation is not valid</h1>
@@ -145,64 +245,123 @@ function EnrolScreen({ initialHash, fetchImpl, credentials }: { initialHash?: st
             </p>
           </div>
         )}
-        {state.kind === 'limit' && (
-          <div>
-            <h1>Passkey limit reached</h1>
-            <p className="pc-muted">This account already has the maximum number of passkeys. Ask a security administrator for help.</p>
-          </div>
+        {state.kind === 'error' && <Alert tone="danger">{state.message}</Alert>}
+        {state.kind === 'setup' && token !== null && (
+          <>
+            <div>
+              <h1>Set up your staff sign-in</h1>
+              <p className="pc-muted">
+                {state.setup.fullName !== '' ? `Welcome, ${state.setup.fullName}. ` : ''}You will sign in with this password, a code from your authenticator app and a
+                code we email to {state.setup.email || 'you'}.
+              </p>
+            </div>
+            <SetupForm
+              setup={state.setup}
+              submit={(password, code) => finishEnrolment(token, password, code, fetchImpl)}
+              onFinished={(codes) => setState({ kind: 'codes', codes })}
+              onInvitationDead={() => setState({ kind: 'invalid' })}
+            />
+          </>
+        )}
+        {state.kind === 'codes' && (
+          <RecoveryCodesView codes={state.codes} title="PaxofiCloud Admin recovery codes" fileName="paxoficloud-admin-recovery-codes.txt" onDone={() => setState({ kind: 'active' })} />
         )}
         {state.kind === 'active' && (
           <>
             <div>
               <h1>Your staff account is active</h1>
-              <p className="pc-muted">Both passkeys are registered. Sign in with either of them.</p>
+              <p className="pc-muted">Sign in with your email address, your password and the codes.</p>
             </div>
             <a className="pc-button pc-button--primary pc-button--md pc-button--block" href="/">
               <span>Sign in</span>
             </a>
           </>
         )}
-        {state.kind === 'ready' && (
-          <form className="pc-auth__form" onSubmit={addPasskey} noValidate>
-            <div>
-              <h1>{state.passkeys === 0 ? 'Set up your staff passkeys' : 'Add your second passkey'}</h1>
-              <p className="pc-muted">
-                {state.passkeys === 0
-                  ? 'Staff sign in with passkeys only. Register two (for example a security key and this computer) so losing one does not lock you out.'
-                  : 'One passkey is registered. Register a second, different authenticator to activate your account.'}
-              </p>
-            </div>
-            <p className="pc-muted">Passkey {Math.min(state.passkeys + 1, 2)} of 2</p>
-            {problem && <Alert tone="danger">{problem}</Alert>}
-            <TextField
-              label="Name for this passkey (optional)"
-              hint="For example: YubiKey, Work laptop"
-              maxLength={64}
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-            />
-            <Button type="submit" block loading={loading}>
-              {state.passkeys === 0 ? 'Register first passkey' : 'Register second passkey'}
-            </Button>
-          </form>
-        )}
       </div>
     </StaffAuthLayout>
   );
 }
 
+type SignInStep = 'password' | 'totp' | 'email';
+
 function SignIn({ fetchImpl, credentials, onSignedIn }: { fetchImpl?: typeof fetch | undefined; credentials?: CredentialsApi | null | undefined; onSignedIn: () => void }) {
+  const [step, setStep] = useState<SignInStep>('password');
+  const [notice, setNotice] = useState<string | null>(null);
+
+  /** The ticket ended (expired, used up, or too many wrong codes): start again from the password. */
+  const restart = useCallback(() => {
+    setNotice('Your sign-in timed out or had too many wrong codes. Please start again.');
+    setStep('password');
+  }, []);
+
+  return (
+    <StaffAuthLayout>
+      <div className="pc-auth__form" aria-live="polite">
+        {step === 'password' && (
+          <PasswordStep
+            notice={notice}
+            fetchImpl={fetchImpl}
+            credentials={credentials}
+            onNext={() => {
+              setNotice(null);
+              setStep('totp');
+            }}
+            onSignedIn={onSignedIn}
+          />
+        )}
+        {step === 'totp' && <AuthenticatorStep fetchImpl={fetchImpl} onNext={() => setStep('email')} onRestart={restart} />}
+        {step === 'email' && <EmailCodeStep fetchImpl={fetchImpl} onSignedIn={onSignedIn} onRestart={restart} />}
+      </div>
+    </StaffAuthLayout>
+  );
+}
+
+function PasswordStep({
+  notice,
+  fetchImpl,
+  credentials,
+  onNext,
+  onSignedIn,
+}: {
+  notice: string | null;
+  fetchImpl?: typeof fetch | undefined;
+  credentials?: CredentialsApi | null | undefined;
+  onNext: () => void;
+  onSignedIn: () => void;
+}) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
 
-  async function signIn() {
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (email.trim() === '' || password === '') {
+      setProblem('Enter your email address and password.');
+      return;
+    }
     setProblem(null);
     setLoading(true);
+    const result = await signInWithPassword(email.trim(), password, fetchImpl);
+    setLoading(false);
+    if (result.kind === 'ok') {
+      setPassword('');
+      onNext();
+      return;
+    }
+    setPassword('');
+    setProblem(problemText(result, 'The email address or password is incorrect.'));
+  }
+
+  async function signInWithPasskey() {
+    setProblem(null);
+    setPasskeyLoading(true);
     try {
       const started = await signInOptions(fetchImpl);
       const begun = ceremony(started);
       if (begun === null) {
-        setProblem(ceremonyProblem(started, 'We could not start sign-in. Please try again.'));
+        setProblem(problemText(started, 'We could not start passkey sign-in. Please try again.'));
         return;
       }
       const asserted = await getPasskey(begun.options, credentials === undefined ? undefined : credentials);
@@ -211,30 +370,170 @@ function SignIn({ fetchImpl, credentials, onSignedIn }: { fetchImpl?: typeof fet
         return;
       }
       if (asserted.kind === 'cancelled') {
-        setProblem('Sign-in was cancelled or timed out. Please try again.');
+        setProblem('Passkey sign-in was cancelled or timed out. Please try again.');
         return;
       }
       const finished = await finishSignIn(begun.ceremonyId, asserted.credential, fetchImpl);
       if (finished.kind === 'ok') onSignedIn();
-      else setProblem(ceremonyProblem(finished, 'Sign-in failed. Use a passkey registered for your PaxofiCloud staff account.'));
+      else setProblem(problemText(finished, 'Passkey sign-in failed. Use a passkey you added to your staff account, or sign in with your password.'));
     } finally {
-      setLoading(false);
+      setPasskeyLoading(false);
     }
   }
 
   return (
-    <StaffAuthLayout>
-      <div className="pc-auth__form">
-        <div>
-          <h1>Staff sign-in</h1>
-          <p className="pc-muted">Use one of the passkeys you registered for your staff account.</p>
-        </div>
-        {problem && <Alert tone="danger">{problem}</Alert>}
-        <Button block loading={loading} onClick={() => void signIn()}>
-          Sign in with a passkey
-        </Button>
+    <form className="pc-auth__form" onSubmit={submit} noValidate>
+      <div>
+        <h1>Staff sign-in</h1>
+        <p className="pc-muted">Step 1 of 3: your email address and password.</p>
       </div>
-    </StaffAuthLayout>
+      {notice && <Alert tone="warning">{notice}</Alert>}
+      {problem && <Alert tone="danger">{problem}</Alert>}
+      <TextField label="Email address" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+      <TextField label="Password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      <Button type="submit" block loading={loading}>
+        Continue
+      </Button>
+      <Button type="button" variant="ghost" block loading={passkeyLoading} onClick={() => void signInWithPasskey()}>
+        Sign in with a passkey instead
+      </Button>
+    </form>
+  );
+}
+
+function AuthenticatorStep({ fetchImpl, onNext, onRestart }: { fetchImpl?: typeof fetch | undefined; onNext: () => void; onRestart: () => void }) {
+  const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const value = code.trim();
+    if (useRecovery ? value === '' : !/^\d{6}$/.test(value)) {
+      setError(useRecovery ? 'Enter one of your recovery codes.' : 'Enter the 6-digit code from your app.');
+      return;
+    }
+    setError(undefined);
+    setProblem(null);
+    setLoading(true);
+    const result = await submitAuthenticatorCode(value, fetchImpl);
+    setLoading(false);
+    setCode('');
+    if (result.kind === 'ok') onNext();
+    else if (result.kind === 'rejected' && result.code === 'code_invalid') setError(useRecovery ? 'That recovery code is not right or was already used.' : CODE_WRONG);
+    else if (result.kind === 'rejected') onRestart();
+    else setProblem(problemText(result, 'Something went wrong. Please try again.'));
+  }
+
+  return (
+    <form className="pc-auth__form" onSubmit={submit} noValidate>
+      <div>
+        <h1>Enter your authenticator code</h1>
+        <p className="pc-muted">Step 2 of 3: the 6-digit code your authenticator app shows for PaxofiCloud Admin.</p>
+      </div>
+      {problem && <Alert tone="danger">{problem}</Alert>}
+      <TextField
+        label={useRecovery ? 'Recovery code' : 'Code from your app'}
+        inputMode={useRecovery ? 'text' : 'numeric'}
+        autoComplete="one-time-code"
+        maxLength={useRecovery ? 24 : 6}
+        value={code}
+        onChange={(e) => setCode(useRecovery ? e.target.value : e.target.value.replace(/\D/g, ''))}
+        error={error}
+        required
+      />
+      <Button type="submit" block loading={loading}>
+        Continue
+      </Button>
+      <button
+        type="button"
+        className="pc-link-button"
+        onClick={() => {
+          setUseRecovery((v) => !v);
+          setCode('');
+          setError(undefined);
+        }}
+      >
+        {useRecovery ? 'Use a code from my app instead' : 'Lost your phone? Use a recovery code'}
+      </button>
+    </form>
+  );
+}
+
+function EmailCodeStep({ fetchImpl, onSignedIn, onRestart }: { fetchImpl?: typeof fetch | undefined; onSignedIn: () => void; onRestart: () => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(EMAIL_RESEND_SECONDS);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(code)) {
+      setError('Enter the 6-digit code from the email.');
+      return;
+    }
+    setError(undefined);
+    setMessage(null);
+    setLoading(true);
+    const result = await submitEmailCode(code, fetchImpl);
+    setLoading(false);
+    setCode('');
+    if (result.kind === 'ok') onSignedIn();
+    else if (result.kind === 'rejected' && result.code === 'code_invalid') setError('That code is not right. Use the newest email we sent.');
+    else if (result.kind === 'rejected') onRestart();
+    else setMessage({ tone: 'danger', text: problemText(result, 'Something went wrong. Please try again.') });
+  }
+
+  async function resend() {
+    setMessage(null);
+    setResending(true);
+    const result = await resendEmailCode(fetchImpl);
+    setResending(false);
+    if (result.kind === 'ok') {
+      setCooldown(EMAIL_RESEND_SECONDS);
+      setMessage({ tone: 'success', text: 'We sent a new code. The old one no longer works.' });
+    } else if (result.kind === 'throttled') {
+      setMessage({ tone: 'danger', text: `You cannot get another code yet. Try again in ${describeWait(result.retryAfterSeconds)}, or start again.` });
+    } else if (result.kind === 'rejected') onRestart();
+    else setMessage({ tone: 'danger', text: problemText(result, 'A new code could not be sent.') });
+  }
+
+  return (
+    <form className="pc-auth__form" onSubmit={submit} noValidate>
+      <div>
+        <h1>Check your email</h1>
+        <p className="pc-muted">
+          Step 3 of 3: we sent a 6-digit code to your staff email address. It expires in 10 minutes. Only enter it on this site ({window.location.host}).
+        </p>
+      </div>
+      {message && <Alert tone={message.tone}>{message.text}</Alert>}
+      <TextField
+        label="Code from the email"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+        error={error}
+        required
+      />
+      <Button type="submit" block loading={loading}>
+        Sign in
+      </Button>
+      <Button type="button" variant="ghost" block loading={resending} disabled={cooldown > 0} onClick={() => void resend()}>
+        {cooldown > 0 ? `Send a new code (${cooldown} s)` : 'Send a new code'}
+      </Button>
+    </form>
   );
 }
 
@@ -273,10 +572,22 @@ function Console({ fetchImpl, credentials }: { fetchImpl?: typeof fetch | undefi
     );
   }
 
-  return <Dashboard session={state.session} fetchImpl={fetchImpl} onSignedOut={reload} />;
+  return <Dashboard session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
 }
 
-function Dashboard({ session, fetchImpl, onSignedOut }: { session: StaffSession; fetchImpl?: typeof fetch | undefined; onSignedOut: () => void }) {
+function Dashboard({
+  session,
+  fetchImpl,
+  credentials,
+  onSignedOut,
+  onChanged,
+}: {
+  session: StaffSession;
+  fetchImpl?: typeof fetch | undefined;
+  credentials?: CredentialsApi | null | undefined;
+  onSignedOut: () => void;
+  onChanged: () => void;
+}) {
   const [signingOut, setSigningOut] = useState(false);
   const canManage = session.permissions.includes('staff.manage');
 
@@ -318,9 +629,190 @@ function Dashboard({ session, fetchImpl, onSignedOut }: { session: StaffSession;
             )}
           </p>
         </Card>
+        <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />
         {canManage && <StaffManagement session={session} fetchImpl={fetchImpl} />}
       </main>
     </div>
+  );
+}
+
+type MethodsState =
+  | { kind: 'idle' }
+  | { kind: 'setup'; setup: SignInSetup }
+  | { kind: 'codes'; codes: string[] }
+  | { kind: 'passkey' };
+
+/** §6.20: the member's own sign-in methods: password + authenticator once, and optional passkeys. */
+function SignInMethods({
+  session,
+  fetchImpl,
+  credentials,
+  onChanged,
+}: {
+  session: StaffSession;
+  fetchImpl?: typeof fetch | undefined;
+  credentials?: CredentialsApi | null | undefined;
+  onChanged: () => void;
+}) {
+  const [state, setState] = useState<MethodsState>({ kind: 'idle' });
+  const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function startSetup() {
+    setMessage(null);
+    setLoading(true);
+    const result = await startMemberSetup(session.csrfToken, fetchImpl);
+    setLoading(false);
+    const setup = readSetup(result);
+    if (setup) setState({ kind: 'setup', setup });
+    else setMessage({ tone: 'danger', text: problemText(result, 'Setup could not start. Reload the page and try again.') });
+  }
+
+  return (
+    <Card title="Your sign-in">
+      {message && <Alert tone={message.tone}>{message.text}</Alert>}
+      {state.kind === 'setup' && (
+        <SetupForm
+          setup={state.setup}
+          submit={(password, code) => finishMemberSetup(session.csrfToken, password, code, fetchImpl)}
+          onFinished={(codes) => setState({ kind: 'codes', codes })}
+        />
+      )}
+      {state.kind === 'codes' && (
+        <RecoveryCodesView
+          codes={state.codes}
+          title="PaxofiCloud Admin recovery codes"
+          fileName="paxoficloud-admin-recovery-codes.txt"
+          onDone={() => {
+            setState({ kind: 'idle' });
+            onChanged();
+          }}
+        />
+      )}
+      {state.kind === 'passkey' && (
+        <AddPasskeyForm
+          session={session}
+          fetchImpl={fetchImpl}
+          credentials={credentials}
+          onCancel={() => setState({ kind: 'idle' })}
+          onAdded={() => {
+            setState({ kind: 'idle' });
+            setMessage({ tone: 'success', text: 'Passkey added. Next time you can sign in with it instead of the codes.' });
+            onChanged();
+          }}
+        />
+      )}
+      {state.kind === 'idle' && !session.signIn.password && (
+        <div className="pc-stack">
+          <Alert tone="warning">Set up password sign-in so you can still sign in if you lose your passkey.</Alert>
+          <div>
+            <Button loading={loading} onClick={() => void startSetup()}>
+              Set up password and authenticator app
+            </Button>
+          </div>
+        </div>
+      )}
+      {state.kind === 'idle' && session.signIn.password && (
+        <div className="pc-stack">
+          <p>
+            Password, authenticator app and email code: <Badge tone="success">set up</Badge>
+          </p>
+          <p className="pc-muted">
+            {session.signIn.passkeys === 0
+              ? 'No passkeys yet. A passkey (Windows Hello, Touch ID, your phone or a security key) is optional, faster, and cannot be phished.'
+              : `${session.signIn.passkeys} passkey${session.signIn.passkeys === 1 ? '' : 's'} added. You can sign in with a passkey instead of the codes.`}
+          </p>
+          <div>
+            <Button variant="secondary" onClick={() => setState({ kind: 'passkey' })}>
+              Add a passkey
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AddPasskeyForm({
+  session,
+  fetchImpl,
+  credentials,
+  onCancel,
+  onAdded,
+}: {
+  session: StaffSession;
+  fetchImpl?: typeof fetch | undefined;
+  credentials?: CredentialsApi | null | undefined;
+  onCancel: () => void;
+  onAdded: () => void;
+}) {
+  const [code, setCode] = useState('');
+  const [label, setLabel] = useState('');
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(code)) {
+      setError('Enter the 6-digit code from your app.');
+      return;
+    }
+    setError(undefined);
+    setProblem(null);
+    setLoading(true);
+    try {
+      const started = await addPasskeyOptions(session.csrfToken, code, fetchImpl);
+      setCode('');
+      const begun = ceremony(started);
+      if (begun === null) {
+        if (started.kind === 'rejected' && started.code === 'code_invalid') setError(CODE_WRONG);
+        else if (started.kind === 'rejected' && started.code === 'passkey_limit_reached') setProblem('You already have the maximum of 5 passkeys.');
+        else setProblem(problemText(started, 'Passkey setup could not start. Please try again.'));
+        return;
+      }
+      const created = await createPasskey(begun.options, credentials === undefined ? undefined : credentials);
+      if (created.kind === 'unsupported') {
+        setProblem(UNSUPPORTED);
+        return;
+      }
+      if (created.kind === 'cancelled') {
+        setProblem('Passkey setup was cancelled or timed out. Enter a new code to try again.');
+        return;
+      }
+      const finished = await addPasskey(session.csrfToken, begun.ceremonyId, created.credential, label.trim(), fetchImpl);
+      if (finished.kind === 'ok') onAdded();
+      else setProblem(problemText(finished, 'This passkey could not be added. It may already be registered; try a different one.'));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form className="pc-stack" onSubmit={submit} noValidate>
+      <h2>Add a passkey</h2>
+      <p className="pc-muted">To confirm it is you, enter the current code from your authenticator app. Your browser will then ask you to create the passkey.</p>
+      {problem && <Alert tone="danger">{problem}</Alert>}
+      <TextField
+        label="Code from your app"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+        error={error}
+        required
+      />
+      <TextField label="Name for this passkey (optional)" hint="For example: Work laptop, YubiKey" maxLength={64} value={label} onChange={(e) => setLabel(e.target.value)} />
+      <div className="pc-row">
+        <Button type="submit" loading={loading}>
+          Create passkey
+        </Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -450,14 +942,14 @@ function InviteForm({ session, fetchImpl, onInvited }: { session: StaffSession; 
     } else if (response.kind === 'rejected' || response.kind === 'invalid') {
       setResult({ tone: 'danger', text: 'Check the email address, name and role, then try again.' });
     } else {
-      setResult({ tone: 'danger', text: ceremonyProblem(response, 'The invitation could not be sent.') });
+      setResult({ tone: 'danger', text: problemText(response, 'The invitation could not be sent.') });
     }
   }
 
   return (
     <Card title="Invite a staff member">
       <form className="pc-auth__form" onSubmit={submit} noValidate>
-        <p className="pc-muted">They get an email with a link to register two passkeys. Super admin can only be granted later, with a second approver.</p>
+        <p className="pc-muted">They get an email with a link to choose a password and add an authenticator app. Super admin can only be granted later, with a second approver.</p>
         {result && <Alert tone={result.tone}>{result.text}</Alert>}
         <TextField label="Work email address" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} />
         <TextField label="Full name" autoComplete="off" value={fullName} onChange={(e) => setFullName(e.target.value)} error={errors.fullName} />

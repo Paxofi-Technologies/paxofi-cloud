@@ -18,6 +18,8 @@ final class PasskeyRejected extends \RuntimeException
     public const string INVITATION = 'invitation';
     public const string LIMIT = 'limit';
     public const string THROTTLED = 'throttled';
+    /** §6.20: adding a passkey needs a current authenticator code. */
+    public const string STEP_UP = 'step_up';
 
     public function __construct(public readonly string $reason, public readonly int $retryAfter = 0)
     {

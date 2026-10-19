@@ -27,7 +27,9 @@ use PaxofiCloud\Http\Controllers\SignOutController;
 use PaxofiCloud\Http\Controllers\VerifyEmailController;
 use PaxofiCloud\Http\Admin\AdminGate;
 use PaxofiCloud\Http\Admin\AdminRoutes;
+use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
+use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\Middleware\AdminApiGuardMiddleware;
@@ -104,6 +106,8 @@ final class HttpProvider implements Provider
             static fn (): AdminAuthController => Resolve::get($c, AdminAuthController::class),
             static fn (): AdminEnrolmentController => Resolve::get($c, AdminEnrolmentController::class),
             static fn (): AdminStaffController => Resolve::get($c, AdminStaffController::class),
+            static fn (): AdminCodeSignInController => Resolve::get($c, AdminCodeSignInController::class),
+            static fn (): AdminAccountController => Resolve::get($c, AdminAccountController::class),
         );
     }
 

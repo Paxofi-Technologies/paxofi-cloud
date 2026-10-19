@@ -7,7 +7,7 @@ namespace PaxofiCloud\Application\Contracts;
 use PaxofiCloud\Application\Staff\Passkeys\StoredPasskey;
 use PaxofiCloud\Application\Staff\Passkeys\VerifiedPasskey;
 
-/** Staff invitations and passkeys (migration 0008; threat model §6.17). */
+/** Staff invitations and passkeys (migration 0008; threat model §6.17, §6.20). */
 interface StaffPasskeyStore
 {
     public function staffExistsWithEmail(string $emailLookup): bool;
@@ -23,6 +23,13 @@ interface StaffPasskeyStore
      * @return array{staff_id: string, email: string, full_name: string, user_handle: string}|null
      */
     public function openInvitationForUpdate(string $tokenHash, \DateTimeImmutable $now): ?array;
+
+    /**
+     * An active member's details for a passkey registration (§6.20).
+     *
+     * @return array{email: string, full_name: string, user_handle: string}|null
+     */
+    public function activeMemberForPasskeys(string $staffId): ?array;
 
     /** @return list<string> raw credential IDs of the member's passkeys, disabled ones included */
     public function credentialIdsOf(string $staffId): array;

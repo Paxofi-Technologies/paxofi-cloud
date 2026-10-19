@@ -56,7 +56,14 @@ function authenticator(): CredentialsApi & { create: ReturnType<typeof vi.fn>; g
 }
 
 const manager = {
-  staff: { id: 's-1', full_name: 'Ada Lovelace', email: 'ada@example.ng', roles: ['security_admin'], permissions: ['staff.manage', 'audit.view'] },
+  staff: {
+    id: 's-1',
+    full_name: 'Ada Lovelace',
+    email: 'ada@example.ng',
+    roles: ['security_admin'],
+    permissions: ['staff.manage', 'audit.view'],
+    sign_in: { password: true, passkeys: 0 },
+  },
   csrf_token: 'c'.repeat(43),
 };
 
@@ -68,83 +75,204 @@ describe('invitationToken', () => {
   });
 });
 
-describe('Staff enrolment (D-11)', () => {
-  it('registers two passkeys, then the account is active', async () => {
+const setup = {
+  full_name: 'Ada Lovelace',
+  email: 'ada@example.ng',
+  secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+  uri: 'otpauth://totp/PaxofiCloud%20Admin:ada%40example.ng?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=PaxofiCloud%20Admin',
+};
+const recoveryCodes = Array.from({ length: 10 }, (_, i) => `AAAA-BBBB-CCCC-DD${String(i).padStart(2, '2')}`);
+const PASSWORD = 'correct horse battery staple';
+
+describe('Staff sign-in setup with an invitation (D-11, §6.20)', () => {
+  it('sets a password and an authenticator app, shows recovery codes once, then the account is active', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({
-      'POST /admin-api/v1/enrolment/options': { status: 200, body: { ceremony_id: 'cer-1', options: creationOptions } },
-      'POST /admin-api/v1/enrolment': [
-        { status: 200, body: { passkeys: 1, active: false } },
-        { status: 200, body: { passkeys: 2, active: true } },
-      ],
+      'POST /admin-api/v1/enrolment/start': { status: 200, body: setup },
+      'POST /admin-api/v1/enrolment': { status: 200, body: { recovery_codes: recoveryCodes } },
     });
-    const credentials = authenticator();
-    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} credentials={credentials} />);
+    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} />);
 
-    await user.type(screen.getByLabelText('Name for this passkey (optional)'), ' YubiKey ');
-    await user.click(screen.getByRole('button', { name: 'Register first passkey' }));
-    await screen.findByRole('heading', { name: 'Add your second passkey' });
-    await user.click(screen.getByRole('button', { name: 'Register second passkey' }));
+    await screen.findByRole('heading', { name: 'Set up your staff sign-in' });
+    expect(screen.getByRole('img', { name: 'QR code for your authenticator app' })).toBeInTheDocument();
+    expect(screen.getByText('JBSW Y3DP EHPK 3PXP JBSW Y3DP EHPK 3PXP')).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^Password/), PASSWORD);
+    await user.type(screen.getByLabelText('Confirm password'), PASSWORD);
+    await user.type(screen.getByLabelText('Code from your app'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Finish setup' }));
+
+    await screen.findByRole('heading', { name: 'Save your recovery codes' });
+    expect(screen.getAllByRole('listitem')).toHaveLength(10);
+    await user.click(screen.getByLabelText('I have saved these codes somewhere safe'));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
     await screen.findByRole('heading', { name: 'Your staff account is active' });
 
-    expect(credentials.create).toHaveBeenCalledTimes(2);
-    const finishes = calls(fetchImpl, 'POST /admin-api/v1/enrolment');
-    const first = JSON.parse(String(finishes[0]?.body)) as Record<string, unknown>;
-    expect(first.token).toBe(TOKEN);
-    expect(first.ceremony_id).toBe('cer-1');
-    expect(first.label).toBe('YubiKey');
-    expect((first.credential as Record<string, unknown>).type).toBe('public-key');
-    expect(JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/enrolment/options')[0]?.body))).toEqual({ token: TOKEN });
+    expect(calls(fetchImpl, 'POST /admin-api/v1/enrolment/start')).toHaveLength(1);
+    expect(JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/enrolment')[0]?.body))).toEqual({ token: TOKEN, password: PASSWORD, code: '123456' });
   });
 
-  it('removes the invitation token from the address bar and history (§6.19)', () => {
+  it('checks the password length and confirmation before calling the server', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({ 'POST /admin-api/v1/enrolment/start': { status: 200, body: setup } });
+    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} />);
+    await screen.findByRole('heading', { name: 'Set up your staff sign-in' });
+
+    await user.type(screen.getByLabelText(/^Password/), 'too short');
+    await user.type(screen.getByLabelText('Confirm password'), 'different');
+    await user.click(screen.getByRole('button', { name: 'Finish setup' }));
+
+    expect(screen.getByText(/Use at least 15 characters/)).toBeInTheDocument();
+    expect(screen.getByText('The two passwords do not match.')).toBeInTheDocument();
+    expect(screen.getByText('Enter the 6-digit code shown in your app.')).toBeInTheDocument();
+    expect(calls(fetchImpl, 'POST /admin-api/v1/enrolment')).toHaveLength(0);
+  });
+
+  it('explains server field errors: breached password, wrong code', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'POST /admin-api/v1/enrolment/start': { status: 200, body: setup },
+      'POST /admin-api/v1/enrolment': { status: 422, body: { code: 'validation_failed', errors: { password: 'breached', code: 'invalid' } } },
+    });
+    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} />);
+    await screen.findByRole('heading', { name: 'Set up your staff sign-in' });
+    await user.type(screen.getByLabelText(/^Password/), PASSWORD);
+    await user.type(screen.getByLabelText('Confirm password'), PASSWORD);
+    await user.type(screen.getByLabelText('Code from your app'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Finish setup' }));
+
+    await screen.findByText(/appeared in a data breach/);
+    expect(screen.getByText(/That code is not right/)).toBeInTheDocument();
+  });
+
+  it('removes the invitation token from the address bar and history (§6.19)', async () => {
     window.history.replaceState(null, '', `/enrol#token=${TOKEN}`);
-    render(<AdminApp path="/enrol" fetchImpl={adminApi({})} credentials={authenticator()} />);
+    render(<AdminApp path="/enrol" fetchImpl={adminApi({ 'POST /admin-api/v1/enrolment/start': { status: 200, body: setup } })} />);
     expect(window.location.hash).toBe('');
     expect(window.location.pathname).toBe('/enrol');
-    expect(screen.getByRole('button', { name: 'Register first passkey' })).toBeInTheDocument();
+    await screen.findByRole('heading', { name: 'Set up your staff sign-in' });
   });
 
   it('explains a dead invitation without contacting the server for a malformed link', () => {
     const fetchImpl = adminApi({});
-    render(<AdminApp path="/enrol" initialHash="#token=nope" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/enrol" initialHash="#token=nope" fetchImpl={fetchImpl} />);
     expect(screen.getByRole('heading', { name: 'This invitation is not valid' })).toBeInTheDocument();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('shows the invalid-invitation page when the server refuses the token', async () => {
-    const user = userEvent.setup();
-    const fetchImpl = adminApi({ 'POST /admin-api/v1/enrolment/options': { status: 400, body: { code: 'invitation_invalid' } } });
-    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} credentials={authenticator()} />);
-    await user.click(screen.getByRole('button', { name: 'Register first passkey' }));
+    const fetchImpl = adminApi({ 'POST /admin-api/v1/enrolment/start': { status: 400, body: { code: 'invitation_invalid' } } });
+    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} />);
     await screen.findByRole('heading', { name: 'This invitation is not valid' });
-  });
-
-  it('does not call the server to finish when the passkey prompt is cancelled', async () => {
-    const user = userEvent.setup();
-    const fetchImpl = adminApi({ 'POST /admin-api/v1/enrolment/options': { status: 200, body: { ceremony_id: 'cer-1', options: creationOptions } } });
-    const credentials = authenticator();
-    credentials.create.mockImplementation(() => Promise.reject(new DOMException('no', 'NotAllowedError')));
-    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} credentials={credentials} />);
-    await user.click(screen.getByRole('button', { name: 'Register first passkey' }));
-    await screen.findByText(/cancelled or timed out/);
-    expect(calls(fetchImpl, 'POST /admin-api/v1/enrolment')).toHaveLength(0);
-  });
-
-  it('says so when the browser cannot use passkeys', async () => {
-    const user = userEvent.setup();
-    const fetchImpl = adminApi({ 'POST /admin-api/v1/enrolment/options': { status: 200, body: { ceremony_id: 'cer-1', options: creationOptions } } });
-    render(<AdminApp path="/enrol" initialHash={`#token=${TOKEN}`} fetchImpl={fetchImpl} credentials={null} />);
-    await user.click(screen.getByRole('button', { name: 'Register first passkey' }));
-    await screen.findByText(/cannot use passkeys/);
   });
 });
 
-describe('Staff sign-in (IAM-008)', () => {
-  it('signs in with a passkey, then shows the console', async () => {
+const signedOut = { status: 401, body: { code: 'unauthenticated' } };
+const codeRequired = (next: 'totp' | 'email') => ({ status: 200, body: { status: 'code_required', next, expires_in: 600 } });
+
+describe('Staff sign-in: password, authenticator code, email code (§6.20)', () => {
+  it('walks the three steps, then shows the console', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({
-      'GET /admin-api/v1/auth/session': [{ status: 401, body: { code: 'unauthenticated' } }, { status: 200, body: manager }],
+      'GET /admin-api/v1/auth/session': [signedOut, { status: 200, body: manager }],
+      'POST /admin-api/v1/auth/password': codeRequired('totp'),
+      'POST /admin-api/v1/auth/authenticator-code': codeRequired('email'),
+      'POST /admin-api/v1/auth/email-code': { status: 200, body: { status: 'signed_in', csrf_token: manager.csrf_token } },
+      'GET /admin-api/v1/staff': { status: 200, body: { staff: [], pending_grants: [] } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.type(await screen.findByLabelText('Email address'), 'ada@example.ng');
+    await user.type(screen.getByLabelText('Password'), PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.type(await screen.findByLabelText('Code from your app'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Check your email' });
+    expect(screen.getByRole('button', { name: /Send a new code \(\d+ s\)/ })).toBeDisabled();
+    await user.type(screen.getByLabelText('Code from the email'), '654321');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByRole('heading', { name: 'Staff console' });
+
+    expect(JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/auth/password')[0]?.body))).toEqual({ email: 'ada@example.ng', password: PASSWORD });
+    expect(JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/auth/authenticator-code')[0]?.body))).toEqual({ code: '123456' });
+    expect(JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/auth/email-code')[0]?.body))).toEqual({ code: '654321' });
+  });
+
+  it('shows one generic message for a wrong email address or password', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': signedOut,
+      'POST /admin-api/v1/auth/password': { status: 401, body: { code: 'sign_in_failed' } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.type(await screen.findByLabelText('Email address'), 'ada@example.ng');
+    await user.type(screen.getByLabelText('Password'), 'wrong');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('The email address or password is incorrect.');
+    expect(screen.getByLabelText('Password')).toHaveValue('');
+  });
+
+  it('accepts a recovery code instead of the app code; a wrong code keeps the step', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': signedOut,
+      'POST /admin-api/v1/auth/password': codeRequired('totp'),
+      'POST /admin-api/v1/auth/authenticator-code': [{ status: 401, body: { code: 'code_invalid' } }, codeRequired('email')],
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.type(await screen.findByLabelText('Email address'), 'ada@example.ng');
+    await user.type(screen.getByLabelText('Password'), PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Lost your phone? Use a recovery code' }));
+    await user.type(screen.getByLabelText('Recovery code'), 'aaaa-bbbb-cccc-dddd');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText(/That recovery code is not right/);
+    await user.type(screen.getByLabelText('Recovery code'), 'AAAA-BBBB-CCCC-DDDE');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Check your email' });
+    expect(JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/auth/authenticator-code')[1]?.body))).toEqual({ code: 'AAAA-BBBB-CCCC-DDDE' });
+  });
+
+  it('starts again from the password when the ticket has ended', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': signedOut,
+      'POST /admin-api/v1/auth/password': codeRequired('totp'),
+      'POST /admin-api/v1/auth/authenticator-code': codeRequired('email'),
+      'POST /admin-api/v1/auth/email-code': { status: 401, body: { code: 'sign_in_expired' } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.type(await screen.findByLabelText('Email address'), 'ada@example.ng');
+    await user.type(screen.getByLabelText('Password'), PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.type(await screen.findByLabelText('Code from your app'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.type(await screen.findByLabelText('Code from the email'), '654321');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await screen.findByText(/Your sign-in timed out or had too many wrong codes/);
+    expect(screen.getByRole('heading', { name: 'Staff sign-in' })).toBeInTheDocument();
+  });
+
+  it('reports throttling with the wait', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': signedOut,
+      'POST /admin-api/v1/auth/password': { status: 429, body: { code: 'too_many_attempts' }, headers: { 'retry-after': '120' } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.type(await screen.findByLabelText('Email address'), 'ada@example.ng');
+    await user.type(screen.getByLabelText('Password'), PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Too many attempts. Please try again in 2 minutes.');
+  });
+});
+
+describe('Optional passkey sign-in (§6.17, §6.20)', () => {
+  it('signs in with a passkey instead of the codes', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': [signedOut, { status: 200, body: manager }],
       'POST /admin-api/v1/auth/passkey/options': { status: 200, body: { ceremony_id: 'cer-2', options: requestOptions } },
       'POST /admin-api/v1/auth/passkey': { status: 200, body: { status: 'signed_in', csrf_token: manager.csrf_token } },
       'GET /admin-api/v1/staff': { status: 200, body: { staff: [], pending_grants: [] } },
@@ -152,7 +280,7 @@ describe('Staff sign-in (IAM-008)', () => {
     const credentials = authenticator();
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={credentials} />);
 
-    await user.click(await screen.findByRole('button', { name: 'Sign in with a passkey' }));
+    await user.click(await screen.findByRole('button', { name: 'Sign in with a passkey instead' }));
     await screen.findByRole('heading', { name: 'Staff console' });
     expect(credentials.get).toHaveBeenCalledOnce();
     const body = JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/auth/passkey')[0]?.body)) as Record<string, unknown>;
@@ -163,24 +291,84 @@ describe('Staff sign-in (IAM-008)', () => {
   it('shows one generic message when the server refuses the passkey', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({
-      'GET /admin-api/v1/auth/session': { status: 401 },
+      'GET /admin-api/v1/auth/session': signedOut,
       'POST /admin-api/v1/auth/passkey/options': { status: 200, body: { ceremony_id: 'cer-2', options: requestOptions } },
       'POST /admin-api/v1/auth/passkey': { status: 401, body: { code: 'sign_in_failed' } },
     });
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
-    await user.click(await screen.findByRole('button', { name: 'Sign in with a passkey' }));
-    await screen.findByText(/Sign-in failed\. Use a passkey registered/);
+    await user.click(await screen.findByRole('button', { name: 'Sign in with a passkey instead' }));
+    await screen.findByText(/Passkey sign-in failed/);
   });
 
-  it('reports throttling with the wait', async () => {
+  it('says so when the browser cannot use passkeys', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({
-      'GET /admin-api/v1/auth/session': { status: 401 },
-      'POST /admin-api/v1/auth/passkey/options': { status: 429, body: { code: 'too_many_attempts' }, headers: { 'retry-after': '120' } },
+      'GET /admin-api/v1/auth/session': signedOut,
+      'POST /admin-api/v1/auth/passkey/options': { status: 200, body: { ceremony_id: 'cer-2', options: requestOptions } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={null} />);
+    await user.click(await screen.findByRole('button', { name: 'Sign in with a passkey instead' }));
+    await screen.findByText(/cannot use passkeys/);
+  });
+});
+
+describe('Your sign-in (§6.20)', () => {
+  it('adds a passkey after a current authenticator code', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': [
+        { status: 200, body: { ...manager, staff: { ...manager.staff, permissions: [] } } },
+        { status: 200, body: { ...manager, staff: { ...manager.staff, permissions: [], sign_in: { password: true, passkeys: 1 } } } },
+      ],
+      'POST /admin-api/v1/account/passkeys/options': [{ status: 401, body: { code: 'code_invalid' } }, { status: 200, body: { ceremony_id: 'cer-3', options: creationOptions } }],
+      'POST /admin-api/v1/account/passkeys': { status: 200, body: { passkeys: 1 } },
+    });
+    const credentials = authenticator();
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={credentials} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Add a passkey' }));
+    await user.type(screen.getByLabelText('Code from your app'), '000000');
+    await user.click(screen.getByRole('button', { name: 'Create passkey' }));
+    await screen.findByText(/That code is not right/);
+    expect(credentials.create).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText('Code from your app'), '123456');
+    await user.type(screen.getByLabelText('Name for this passkey (optional)'), ' Laptop ');
+    await user.click(screen.getByRole('button', { name: 'Create passkey' }));
+    await screen.findByText(/Passkey added/);
+    await screen.findByText(/1 passkey added/);
+
+    const options = calls(fetchImpl, 'POST /admin-api/v1/account/passkeys/options');
+    expect((options[1]?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
+    expect(JSON.parse(String(options[1]?.body))).toEqual({ code: '123456' });
+    const added = JSON.parse(String(calls(fetchImpl, 'POST /admin-api/v1/account/passkeys')[0]?.body)) as Record<string, unknown>;
+    expect(added.ceremony_id).toBe('cer-3');
+    expect(added.label).toBe('Laptop');
+  });
+
+  it('lets a passkey-only member set up password sign-in once', async () => {
+    const user = userEvent.setup();
+    const passkeyOnly = { ...manager, staff: { ...manager.staff, permissions: [], sign_in: { password: false, passkeys: 2 } } };
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': [{ status: 200, body: passkeyOnly }, { status: 200, body: { ...manager, staff: { ...manager.staff, permissions: [] } } }],
+      'POST /admin-api/v1/account/sign-in-setup/start': { status: 200, body: setup },
+      'POST /admin-api/v1/account/sign-in-setup': { status: 200, body: { recovery_codes: recoveryCodes } },
     });
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
-    await user.click(await screen.findByRole('button', { name: 'Sign in with a passkey' }));
-    await screen.findByText('Too many attempts. Please try again in 2 minutes.');
+
+    await user.click(await screen.findByRole('button', { name: 'Set up password and authenticator app' }));
+    await user.type(await screen.findByLabelText(/^Password/), PASSWORD);
+    await user.type(screen.getByLabelText('Confirm password'), PASSWORD);
+    await user.type(screen.getByLabelText('Code from your app'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Finish setup' }));
+    await screen.findByRole('heading', { name: 'Save your recovery codes' });
+    await user.click(screen.getByLabelText('I have saved these codes somewhere safe'));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await screen.findByRole('button', { name: 'Add a passkey' });
+
+    const [init] = calls(fetchImpl, 'POST /admin-api/v1/account/sign-in-setup');
+    expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
+    expect(JSON.parse(String(init?.body))).toEqual({ password: PASSWORD, code: '123456' });
   });
 });
 
@@ -256,7 +444,7 @@ describe('Staff console', () => {
     });
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
     await user.click(await screen.findByRole('button', { name: 'Sign out' }));
-    await screen.findByRole('button', { name: 'Sign in with a passkey' });
+    await screen.findByRole('heading', { name: 'Staff sign-in' });
     expect((calls(fetchImpl, 'POST /admin-api/v1/auth/sign-out')[0]?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
   });
 });

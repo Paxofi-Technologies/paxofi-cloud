@@ -31,6 +31,7 @@ final readonly class EmailTemplates
     public const string SECURITY_CHANGE = 'security-change';
     public const string STAFF_INVITATION = 'staff-invitation';
     public const string STAFF_ACTIVATED = 'staff-activated';
+    public const string STAFF_SIGN_IN_CODE = 'staff-sign-in-code';
 
     /** Changes the security-change email can report, with how they read. */
     public const array SECURITY_CHANGES = [
@@ -55,7 +56,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_SIGN_IN_CODE];
     }
 
     /** @param array<string, string> $parameters */
@@ -68,6 +69,7 @@ final readonly class EmailTemplates
             self::ACCOUNT_EXISTS => $this->accountExists($to, $name, $idempotencyKey),
             self::STAFF_INVITATION => $this->staffInvitation($to, $name, self::token($parameters), $idempotencyKey),
             self::STAFF_ACTIVATED => $this->staffActivated($to, $name, self::personName($parameters['staff_name'] ?? ''), $idempotencyKey),
+            self::STAFF_SIGN_IN_CODE => $this->staffSignInCode($to, $name, $parameters, $idempotencyKey),
             self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
@@ -107,11 +109,11 @@ final readonly class EmailTemplates
         $text = <<<TXT
             Hi {$name},
 
-            You have been invited to the {$this->productName} admin console. Set up your sign-in with two passkeys or security keys:
+            You have been invited to the {$this->productName} admin console. Set up your sign-in: choose a password and add an authenticator app (such as Google Authenticator or Microsoft Authenticator):
 
             {$link}
 
-            This link expires in 24 hours. There is no password: you will sign in with your passkeys only. If you did not expect this invitation, ignore this email and tell the security team.
+            This link expires in 24 hours. If you did not expect this invitation, ignore this email and tell the security team.
 
             {$this->productName}
             TXT;
@@ -119,10 +121,10 @@ final readonly class EmailTemplates
         return new EmailMessage($to, "Your {$this->productName} admin invitation", $text, $this->html(
             "Your {$this->productName} admin invitation",
             sprintf('Hi %s,', self::e($name)),
-            sprintf('You have been invited to the %s admin console. Set up your sign-in with two passkeys or security keys.', self::e($this->productName)),
-            'Set up passkeys',
+            sprintf('You have been invited to the %s admin console. Set up your sign-in: choose a password and add an authenticator app (such as Google Authenticator or Microsoft Authenticator).', self::e($this->productName)),
+            'Set up sign-in',
             $link,
-            'This link expires in 24 hours. There is no password: you will sign in with your passkeys only. If you did not expect this invitation, ignore this email and tell the security team.',
+            'This link expires in 24 hours. If you did not expect this invitation, ignore this email and tell the security team.',
         ), self::STAFF_INVITATION, $key);
     }
 
@@ -136,7 +138,7 @@ final readonly class EmailTemplates
         $text = <<<TXT
             Hi {$name},
 
-            {$staffName} finished setting up passkeys and can now sign in to the {$this->productName} admin console.
+            {$staffName} finished setting up their sign-in and can now sign in to the {$this->productName} admin console.
 
             If you did not expect this, disable this staff member now:
 
@@ -148,11 +150,55 @@ final readonly class EmailTemplates
         return new EmailMessage($to, 'A new staff member can now sign in', $text, $this->html(
             'A new staff member can now sign in',
             sprintf('Hi %s,', self::e($name)),
-            sprintf('%s finished setting up passkeys and can now sign in to the %s admin console.', self::e($staffName), self::e($this->productName)),
+            sprintf('%s finished setting up their sign-in and can now sign in to the %s admin console.', self::e($staffName), self::e($this->productName)),
             'Review staff',
             $link,
             'If you did not expect this, disable this staff member now.',
         ), self::STAFF_ACTIVATED, $key);
+    }
+
+    /**
+     * §6.20: the third sign-in step. The email names the device, location and
+     * IP signing in and where the code may be typed, so a member being phished
+     * through a look-alike page has a chance to notice (R-5). No link.
+     *
+     * @param array<string, string> $parameters
+     */
+    private function staffSignInCode(EmailAddress $to, string $name, array $parameters, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff sign-in codes cannot be sent.');
+        }
+        $code = $parameters['code'] ?? '';
+        if (preg_match('/^\d{6}$/', $code) !== 1) {
+            throw new \InvalidArgumentException('Template parameter "code" is missing or malformed.');
+        }
+        $host = (string) parse_url($this->adminUrl, PHP_URL_HOST);
+        $product = $this->productName;
+        $details = [
+            'Device' => self::device($parameters['device'] ?? ''),
+            'Location' => self::location($parameters['location'] ?? ''),
+            'IP address' => self::ip($parameters['ip'] ?? ''),
+            'Time' => self::time($parameters['time'] ?? ''),
+        ];
+        $lines = '';
+        foreach ($details as $label => $value) {
+            $lines .= "{$label}: {$value}\n";
+        }
+        $lead = "Someone signed in to the {$product} admin console with your password and authenticator code. Your sign-in code is:";
+        $warning = "Only type this code on {$host}. It expires in 10 minutes. If this was not you, do not use the code: someone knows your password and has your authenticator. Tell the security team now.";
+        $text = "Hi {$name},\n\n{$lead}\n\n{$code}\n\n{$lines}\n{$warning}\n\n{$product}\n";
+
+        return new EmailMessage($to, "Your {$product} admin sign-in code", $text, $this->html(
+            "Your {$product} admin sign-in code",
+            sprintf('Hi %s,', self::e($name)),
+            self::e($lead),
+            '',
+            '',
+            $warning,
+            $details,
+            $code,
+        ), self::STAFF_SIGN_IN_CODE, $key);
     }
 
     /** A full name reduced to letters, spaces, apostrophes and hyphens (it came from an invitation form). */
@@ -255,9 +301,14 @@ final readonly class EmailTemplates
     }
 
     /** @param array<string, string> $details label => value, escaped here */
-    private function html(string $title, string $greeting, string $lead, string $button, string $link, string $footer, array $details = []): string
+    private function html(string $title, string $greeting, string $lead, string $button, string $link, string $footer, array $details = [], string $code = ''): string
     {
         $href = self::e($link);
+        $action = $button === ''
+            ? ''
+            : '<p style="margin:32px 0"><a href="' . $href . '" style="background:#2F6BFF;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;display:inline-block">' . self::e($button) . '</a></p>'
+                . '<p style="font-size:13px;color:#4a5568">Or paste this link into your browser:<br>' . $href . '</p>';
+        $codeBlock = $code === '' ? '' : '<p style="font-size:32px;font-weight:bold;letter-spacing:8px;margin:24px 0;font-family:Consolas,Menlo,monospace">' . self::e($code) . '</p>';
         $rows = '';
         foreach ($details as $label => $value) {
             $rows .= '<tr><td style="padding:4px 16px 4px 0;color:#4a5568;white-space:nowrap">' . self::e($label) . '</td><td style="padding:4px 0">' . self::e($value) . '</td></tr>';
@@ -268,9 +319,8 @@ final readonly class EmailTemplates
             . '<body style="margin:0;padding:24px;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#0B1F3A">'
             . '<table role="presentation" width="100%" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px">'
             . '<tr><td><p style="font-size:18px;font-weight:bold;margin:0 0 24px">' . self::e($this->productName) . '</p>'
-            . '<p>' . $greeting . '</p><p>' . $lead . '</p>' . $table
-            . '<p style="margin:32px 0"><a href="' . $href . '" style="background:#2F6BFF;color:#ffffff;padding:12px 20px;border-radius:6px;text-decoration:none;display:inline-block">' . self::e($button) . '</a></p>'
-            . '<p style="font-size:13px;color:#4a5568">Or paste this link into your browser:<br>' . $href . '</p>'
+            . '<p>' . $greeting . '</p><p>' . $lead . '</p>' . $codeBlock . $table
+            . $action
             . '<p style="font-size:13px;color:#4a5568">' . self::e($footer) . '</p>'
             . '</td></tr></table></body></html>';
     }

@@ -14,7 +14,9 @@ use PaxofiCloud\Domain\Staff\StaffRole;
 use PaxofiCloud\Http\Admin\AdminGate;
 use PaxofiCloud\Http\Admin\AdminRoute;
 use PaxofiCloud\Http\Admin\AdminRoutes;
+use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
+use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\StaffSessionCookie;
@@ -36,11 +38,15 @@ final class AdminRouteCoverageTest extends TestCase
     private const string NOBODY = 'b0000000000000000000000000000000';
     private const string MANAGER = 'a0000000000000000000000000000000';
 
-    /** The only routes that may be called without a staff session: the passkey ceremonies. */
+    /** The only routes that may be called without a staff session: the sign-in steps and invitation setup (§6.20). */
     private const array PUBLIC = [
+        'POST /admin-api/v1/auth/password',
+        'POST /admin-api/v1/auth/authenticator-code',
+        'POST /admin-api/v1/auth/email-code',
+        'POST /admin-api/v1/auth/email-code/resend',
         'POST /admin-api/v1/auth/passkey/options',
         'POST /admin-api/v1/auth/passkey',
-        'POST /admin-api/v1/enrolment/options',
+        'POST /admin-api/v1/enrolment/start',
         'POST /admin-api/v1/enrolment',
     ];
 
@@ -167,6 +173,8 @@ final class AdminRouteCoverageTest extends TestCase
             static fn (): AdminAuthController => throw new ReachedController(),
             static fn (): AdminEnrolmentController => throw new ReachedController(),
             static fn (): AdminStaffController => throw new ReachedController(),
+            static fn (): AdminCodeSignInController => throw new ReachedController(),
+            static fn (): AdminAccountController => throw new ReachedController(),
         );
     }
 }

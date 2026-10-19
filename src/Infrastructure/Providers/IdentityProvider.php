@@ -23,13 +23,20 @@ use PaxofiCloud\Application\Identity\Registration\VerifyEmail;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Application\Identity\SignIn\SignIn;
 use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
-use PaxofiCloud\Application\Staff\Passkeys\StaffEnrolment;
+use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeyRegistration;
 use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeySignIn;
 use PaxofiCloud\Application\Staff\Session\StaffSessions;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
 use PaxofiCloud\Http\Admin\AdminGate;
+use PaxofiCloud\Application\Contracts\StaffCredentialStore;
+use PaxofiCloud\Application\Staff\Setup\StaffSignInSetup;
+use PaxofiCloud\Application\Staff\SignIn\StaffCodeSignIn;
+use PaxofiCloud\Application\Staff\SignIn\StaffSecondFactor;
+use PaxofiCloud\Infrastructure\Staff\MysqlStaffCredentialStore;
+use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
+use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Infrastructure\Session\RedisStaffSessionStore;
@@ -255,10 +262,38 @@ final class IdentityProvider implements Provider
             new SystemClock(),
             Resolve::get($c, AuditTrail::class),
         ));
-        $container->singleton(StaffEnrolment::class, static fn (Container $c): StaffEnrolment => new StaffEnrolment(
+        // Staff sign-in with password + authenticator + emailed code; passkeys optional (§6.20).
+        $container->singleton(StaffCredentialStore::class, static fn (Container $c): StaffCredentialStore => new MysqlStaffCredentialStore(
+            Resolve::get($c, Connection::class),
+            Resolve::get($c, Repository::class),
+        ));
+        $container->singleton(StaffSecondFactor::class, static function (Container $c): StaffSecondFactor {
+            $crypto = self::mfaCrypto($c) ?? throw new \InvalidArgumentException('MFA keys must be set for staff sign-in codes.');
+
+            return new StaffSecondFactor(Resolve::get($c, StaffCredentialStore::class), $crypto, new SystemClock());
+        });
+        $container->singleton(StaffCodeSignIn::class, static function (Container $c): StaffCodeSignIn {
+            $hasher = new Argon2idPasswordHasher();
+
+            return new StaffCodeSignIn(
+                Resolve::get($c, StaffCredentialStore::class),
+                $hasher,
+                $hasher,
+                self::staffSecondFactor($c),
+                new RedisCeremonyStore(Resolve::get($c, RedisClient::class), 'pc:staff:step:'),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                Resolve::get($c, EmailOutbox::class),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+                Resolve::get($c, Logger::class),
+            );
+        });
+        $container->singleton(StaffSignInSetup::class, static fn (Container $c): StaffSignInSetup => new StaffSignInSetup(
+            Resolve::get($c, StaffCredentialStore::class),
             Resolve::get($c, StaffPasskeyStore::class),
-            Resolve::get($c, PasskeyCeremonies::class),
-            Resolve::get($c, CeremonyStore::class),
+            self::mfaCrypto($c),
+            new Argon2idPasswordHasher(),
+            self::breachedPasswordCheck($c),
             Resolve::get($c, TransactionManager::class),
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
             new SystemClock(),
@@ -266,6 +301,16 @@ final class IdentityProvider implements Provider
             Resolve::get($c, StaffDirectory::class),
             Resolve::get($c, EmailOutbox::class),
             Resolve::get($c, Logger::class),
+        ));
+        $container->singleton(StaffPasskeyRegistration::class, static fn (Container $c): StaffPasskeyRegistration => new StaffPasskeyRegistration(
+            Resolve::get($c, StaffPasskeyStore::class),
+            Resolve::get($c, PasskeyCeremonies::class),
+            Resolve::get($c, CeremonyStore::class),
+            self::staffSecondFactor($c),
+            Resolve::get($c, TransactionManager::class),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            new SystemClock(),
+            Resolve::get($c, AuditTrail::class),
         ));
         $container->singleton(StaffPasskeySignIn::class, static fn (Container $c): StaffPasskeySignIn => new StaffPasskeySignIn(
             Resolve::get($c, StaffPasskeyStore::class),
@@ -292,9 +337,19 @@ final class IdentityProvider implements Provider
             Resolve::get($c, StaffSessions::class),
             Resolve::get($c, StaffDirectory::class),
             Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, StaffCredentialStore::class),
+            Resolve::get($c, StaffPasskeyStore::class),
         ));
         $container->singleton(AdminEnrolmentController::class, static fn (Container $c): AdminEnrolmentController => new AdminEnrolmentController(
-            Resolve::get($c, StaffEnrolment::class),
+            Resolve::get($c, StaffSignInSetup::class),
+        ));
+        $container->singleton(AdminCodeSignInController::class, static fn (Container $c): AdminCodeSignInController => new AdminCodeSignInController(
+            Resolve::get($c, StaffCodeSignIn::class),
+            Resolve::get($c, StaffSessions::class),
+        ));
+        $container->singleton(AdminAccountController::class, static fn (Container $c): AdminAccountController => new AdminAccountController(
+            Resolve::get($c, StaffSignInSetup::class),
+            Resolve::get($c, StaffPasskeyRegistration::class),
         ));
         $container->singleton(AdminStaffController::class, static fn (Container $c): AdminStaffController => new AdminStaffController(
             Resolve::get($c, StaffDirectory::class),
@@ -333,6 +388,12 @@ final class IdentityProvider implements Provider
         }
 
         return new MfaCrypto(new SecretCipher($ring), new RecoveryCodes($recoveryKey));
+    }
+
+    /** §6.20: null without MFA keys, so staff code sign-in answers "unavailable" instead of failing to build. */
+    private static function staffSecondFactor(Container $c): ?StaffSecondFactor
+    {
+        return self::mfaCrypto($c) === null ? null : Resolve::get($c, StaffSecondFactor::class);
     }
 
     /** §6.12: Turnstile when both keys are set; off otherwise, never in production. */

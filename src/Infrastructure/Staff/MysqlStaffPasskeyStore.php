@@ -64,6 +64,23 @@ final readonly class MysqlStaffPasskeyStore implements StaffPasskeyStore
         ];
     }
 
+    public function activeMemberForPasskeys(string $staffId): ?array
+    {
+        $rows = $this->repository->fetchAll(
+            'SELECT email, full_name, webauthn_user_handle FROM staff_members WHERE id = :id AND status = \'active\'',
+            ['id' => $staffId],
+        );
+        if ($rows === []) {
+            return null;
+        }
+
+        return [
+            'email' => Row::string($rows[0], 'email'),
+            'full_name' => Row::string($rows[0], 'full_name'),
+            'user_handle' => Row::string($rows[0], 'webauthn_user_handle'),
+        ];
+    }
+
     public function credentialIdsOf(string $staffId): array
     {
         $rows = $this->repository->fetchAll(

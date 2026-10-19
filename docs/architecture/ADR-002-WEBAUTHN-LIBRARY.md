@@ -1,12 +1,12 @@
 # ADR-002 — WebAuthn verification library for staff sign-in
 
-- **Status:** Accepted (CEO decision, 18 Oct 2026)
+- **Status:** Accepted (CEO decision, 18 Oct 2026). **Amended 19 Oct 2026 (CEO decision):** passkeys are now optional for staff; the default staff sign-in is password + authenticator code + emailed code (identity threat model §6.20, residual risk R-5). This library stays for the optional passkeys.
 - **Scope:** Staff authentication (SRS IAM-008, ACC-005; identity threat model D-10, T-29, T-30; closes open item O-1)
 - **Date:** 2026-10-18
 
 ## Context
 
-Staff must sign in with WebAuthn only (passkeys or security keys). Verifying a WebAuthn ceremony means parsing CBOR, COSE keys and attestation statements and checking signatures. The company rule is that we never write our own cryptography, and threat model D-10 asks for a vetted, maintained library rather than our own parsers.
+Staff must sign in with WebAuthn only (passkeys or security keys). *(Superseded 19 Oct 2026: passkeys are optional; see Status.)* Verifying a WebAuthn ceremony means parsing CBOR, COSE keys and attestation statements and checking signatures. The company rule is that we never write our own cryptography, and threat model D-10 asks for a vetted, maintained library rather than our own parsers.
 
 Candidates assessed on 18 Oct 2026:
 

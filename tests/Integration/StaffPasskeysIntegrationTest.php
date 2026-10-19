@@ -5,11 +5,21 @@ declare(strict_types=1);
 namespace PaxofiCloud\Tests\Integration;
 
 use Paxofi\Core\Contracts\Connection;
+use Paxofi\Core\Contracts\RedisClient;
 use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Application\Audit\AuditEventType;
 use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Staff\Passkeys\PasskeyRejected;
-use PaxofiCloud\Application\Staff\Passkeys\StaffEnrolment;
+use PaxofiCloud\Application\Identity\Mfa\MfaCrypto;
+use PaxofiCloud\Application\Identity\Mfa\RecoveryCodes;
+use PaxofiCloud\Application\Identity\Mfa\Totp;
+use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeyRegistration;
+use PaxofiCloud\Application\Staff\Setup\StaffSignInSetup;
+use PaxofiCloud\Application\Staff\SignIn\StaffCodeSignIn;
+use PaxofiCloud\Application\Staff\SignIn\StaffSecondFactor;
+use PaxofiCloud\Application\Staff\SignIn\StaffSignInRefused;
+use PaxofiCloud\Infrastructure\Secrets\KeyRing;
+use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
 use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeySignIn;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
@@ -26,19 +36,25 @@ use PaxofiCloud\Tests\Support\SoftwareAuthenticator;
 use PDO;
 
 /**
- * Staff passkeys on MySQL 8.4 and Redis 7 (migration 0008; SRS IAM-008;
- * threat model D-10, D-11, T-29, T-30, §6.17): operator bootstrap, two-passkey
- * enrolment, usernameless sign-in, single-use Redis ceremonies, clone
- * detection, and the database CHECKs.
+ * Staff sign-in on MySQL 8.4 and Redis 7 (migrations 0008, 0009; SRS IAM-008;
+ * threat model D-10, D-11, T-29, T-30, §6.17, §6.20): operator bootstrap,
+ * password + authenticator setup, three-step code sign-in, optional passkeys
+ * with step-up, usernameless passkey sign-in, single-use Redis ceremonies and
+ * tickets, clone detection, and the database CHECKs.
  */
 final class StaffPasskeysIntegrationTest extends IntegrationTestCase
 {
     private const string ORIGIN = 'https://admin.example.test';
+    private const string PASSWORD = 'correct horse battery staple';
+
+    private int $totpOffset = 0;
 
     private OutboxSealer $opener;
     private PDO $pdo;
     private StaffInvitations $invitations;
-    private StaffEnrolment $enrolment;
+    private StaffSignInSetup $setup;
+    private StaffCodeSignIn $codes;
+    private StaffPasskeyRegistration $registration;
     private StaffPasskeySignIn $signIn;
     private StaffAuthorizer $authorizer;
     private ClientContext $client;
@@ -57,10 +73,21 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         (new Migrator(Resolve::get($app->container(), Connection::class), $repository, new MysqlAdvisoryLock($repository)))
             ->migrate((new MigrationLoader())->load(self::basePath() . '/migrations'));
         $this->invitations = Resolve::get($app->container(), StaffInvitations::class);
-        $this->enrolment = Resolve::get($app->container(), StaffEnrolment::class);
+        $this->setup = Resolve::get($app->container(), StaffSignInSetup::class);
+        $this->codes = Resolve::get($app->container(), StaffCodeSignIn::class);
+        $this->registration = Resolve::get($app->container(), StaffPasskeyRegistration::class);
         $this->signIn = Resolve::get($app->container(), StaffPasskeySignIn::class);
         $this->authorizer = Resolve::get($app->container(), StaffAuthorizer::class);
         $this->pdo = self::pdo();
+        // The per-address password limit is not per IP, so its Redis window would outlive one test.
+        foreach (['ada@example.test', 'sam@example.test', 'nobody@example.test'] as $address) {
+            Resolve::get($app->container(), RedisClient::class)->delete('pc:ratelimit:staff:password:address:' . hash('sha256', $address));
+        }
+        // TOTP: do not start in the last seconds of a 30-second step (see nextTotp).
+        $left = Totp::PERIOD - time() % Totp::PERIOD;
+        if ($left <= 10) {
+            sleep($left);
+        }
         // Fresh IP per test: Redis rate-limit windows outlive a single test.
         $this->client = ClientContext::from('198.18.' . random_int(0, 255) . '.' . random_int(1, 254), 'phpunit', 'NG', null, null, 'req-staff-it');
     }
@@ -84,46 +111,90 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         self::assertSame('invited', $this->scalar('SELECT status FROM staff_members WHERE id = ?', [$staffId]));
         self::assertSame(hash('sha256', $token), $this->scalar('SELECT token_hash FROM staff_invitations WHERE staff_id = ?', [$staffId]));
 
-        $key1 = new SoftwareAuthenticator(self::ORIGIN);
-        $key2 = new SoftwareAuthenticator(self::ORIGIN, -8);
-        self::assertSame(['passkeys' => 1, 'active' => false], $this->enrol($token, $key1));
-        self::assertSame(['passkeys' => 2, 'active' => true], $this->enrol($token, $key2));
+        // §6.20: password and authenticator with the invitation; the member is active at once.
+        $recovery = $this->activate($token, $staffId);
+        self::assertCount(10, $recovery);
         self::assertSame('active', $this->scalar('SELECT status FROM staff_members WHERE id = ?', [$staffId]));
         self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM staff_invitations WHERE staff_id = ? AND used_at IS NOT NULL', [$staffId]));
-        self::assertSame('-7,-8', $this->scalar('SELECT GROUP_CONCAT(algorithm ORDER BY algorithm DESC) FROM staff_passkeys WHERE staff_id = ?', [$staffId]));
-        self::assertSame(hash('sha256', $key1->credentialId), $this->scalar('SELECT credential_lookup FROM staff_passkeys WHERE algorithm = -7', []));
+        self::assertStringStartsWith('$argon2id$v=19$m=65536,t=3,p=1$', $this->scalar('SELECT password_hash FROM staff_members WHERE id = ?', [$staffId]));
+        self::assertStringStartsWith('v1.', $this->scalar('SELECT secret_envelope FROM staff_totp WHERE staff_id = ? AND confirmed_at IS NOT NULL', [$staffId]));
+        self::assertSame('10', $this->scalar('SELECT COUNT(*) FROM staff_recovery_codes WHERE staff_id = ?', [$staffId]));
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM staff_recovery_codes WHERE code_hash = ?', [strtoupper(str_replace('-', '', $recovery[0]))]));
 
         // Bootstrap is now refused: an active staff manager exists.
         self::assertSame(2, $command->execute(['bob@example.test', 'Bob']));
 
-        $handle = $this->scalar('SELECT webauthn_user_handle FROM staff_members WHERE id = ?', [$staffId]);
-        $signedIn = [$this->signInWith($key1, $handle), $this->signInWith($key1, $handle)];
-        self::assertSame([$staffId, $staffId], $signedIn);
-        self::assertSame('2', $this->scalar('SELECT sign_count FROM staff_passkeys WHERE algorithm = -7', []));
-        self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM staff_passkeys WHERE last_used_at IS NOT NULL', []));
+        // Password, authenticator code, emailed code; the ticket lives in Redis between steps.
+        self::assertSame($staffId, $this->signInWithCodes($staffId));
         $this->authorizer->authorize($staffId, Permission::StaffManage, $this->client);
+
+        // An optional passkey needs a current authenticator code, then signs in on its own.
+        $key1 = new SoftwareAuthenticator(self::ORIGIN);
+        $begun = $this->registration->begin($staffId, $this->nextTotp($staffId), $this->client);
+        self::assertSame(['passkeys' => 1], $this->registration->finish($staffId, $begun['ceremony_id'], $key1->register($begun['options']), 'Laptop', $this->client));
+        $handle = $this->scalar('SELECT webauthn_user_handle FROM staff_members WHERE id = ?', [$staffId]);
+        self::assertSame([$staffId, $staffId], [$this->signInWith($key1, $handle), $this->signInWith($key1, $handle)]);
+        self::assertSame('2', $this->scalar('SELECT sign_count FROM staff_passkeys WHERE staff_id = ?', [$staffId]));
 
         $types = $this->pdo->query('SELECT event_type FROM audit_events ORDER BY seq');
         self::assertInstanceOf(\PDOStatement::class, $types);
         self::assertSame([
             AuditEventType::STAFF_BOOTSTRAP_INVITED,
             AuditEventType::STAFF_INVITATION_REFUSED,
-            AuditEventType::STAFF_PASSKEY_REGISTERED,
-            AuditEventType::STAFF_PASSKEY_REGISTERED,
+            AuditEventType::STAFF_SIGN_IN_SET_UP,
             AuditEventType::STAFF_ACTIVATED,
             AuditEventType::STAFF_INVITATION_REFUSED,
+            AuditEventType::STAFF_PASSWORD_ACCEPTED,
+            AuditEventType::STAFF_CODE_ACCEPTED,
+            AuditEventType::STAFF_EMAIL_CODE_SENT,
+            AuditEventType::STAFF_SIGNED_IN,
+            AuditEventType::STAFF_PASSKEY_REGISTERED,
             AuditEventType::STAFF_SIGNED_IN,
             AuditEventType::STAFF_SIGNED_IN,
         ], $types->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    /** §6.20: Redis tickets work once; a recovery code works once; wrong codes end the ticket. */
+    public function testRedisTicketsAndRecoveryCodesWorkOnce(): void
+    {
+        $this->invitations->bootstrap('ada@example.test', 'Ada', $this->client);
+        $staffId = $this->scalar('SELECT id FROM staff_members', []);
+        $recovery = $this->activate($this->invitationToken(), $staffId);
+
+        $first = $this->codes->password('ada@example.test', self::PASSWORD, $this->client);
+        $next = $this->codes->authenticatorCode($first->ticket, $recovery[0], $this->client);
+        $this->expectRefused(StaffSignInRefused::EXPIRED, fn () => $this->codes->authenticatorCode($first->ticket, $recovery[1], $this->client));
+        self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM staff_recovery_codes WHERE staff_id = ? AND used_at IS NOT NULL', [$staffId]));
+
+        $ticket = $next->ticket;
+        for ($i = 1; $i < StaffCodeSignIn::MAX_WRONG_CODES_PER_TICKET; $i++) {
+            $ticket = (string) $this->expectRefused(StaffSignInRefused::CODE_INVALID, fn () => $this->codes->emailCode($ticket, $this->wrongEmailCode(), $this->client))->ticket;
+        }
+        // The fifth wrong code ends the ticket; after that not even the right code works.
+        $this->expectRefused(StaffSignInRefused::EXPIRED, fn () => $this->codes->emailCode($ticket, $this->wrongEmailCode(), $this->client));
+        $this->expectRefused(StaffSignInRefused::EXPIRED, fn () => $this->codes->emailCode($ticket, $this->lastEmailCode(), $this->client));
+
+        $again = $this->codes->password('ada@example.test', self::PASSWORD, $this->client);
+        $this->expectRefused(StaffSignInRefused::CODE_INVALID, fn () => $this->codes->authenticatorCode($again->ticket, $recovery[0], $this->client));
+    }
+
+    public function testDatabaseRefusesANonArgon2idStaffPassword(): void
+    {
+        $this->invitations->bootstrap('ada@example.test', 'Ada', $this->client);
+        $staffId = $this->scalar('SELECT id FROM staff_members', []);
+
+        $this->assertRefusedByDatabase(fn () => $this->pdo->prepare('UPDATE staff_members SET password_hash = ? WHERE id = ?')->execute(['$2y$10$abcdefghijklmnopqrstuv', $staffId]));
+        $this->assertRefusedByDatabase(fn () => $this->pdo->prepare('INSERT INTO staff_totp (staff_id, secret_envelope) VALUES (?, ?)')->execute([$staffId, 'plain-secret']));
+    }
+
     public function testRedisCeremoniesAreSingleUseAndClonesAreDisabled(): void
     {
         $this->invitations->bootstrap('ada@example.test', 'Ada', $this->client);
-        $token = $this->invitationToken();
+        $staffId = $this->scalar('SELECT id FROM staff_members', []);
+        $this->activate($this->invitationToken(), $staffId);
         $key1 = new SoftwareAuthenticator(self::ORIGIN);
-        $this->enrol($token, $key1);
-        $this->enrol($token, new SoftwareAuthenticator(self::ORIGIN));
+        $begun = $this->registration->begin($staffId, $this->nextTotp($staffId), $this->client);
+        $this->registration->finish($staffId, $begun['ceremony_id'], $key1->register($begun['options']), '', $this->client);
         $handle = $this->scalar('SELECT webauthn_user_handle FROM staff_members', []);
 
         $begun = $this->signIn->begin($this->client);
@@ -164,12 +235,61 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         $this->assertRefusedByDatabase(fn () => $this->pdo->prepare($invite)->execute([str_repeat('b', 64), $staffId, $staffId, '2026-10-26 09:00:00', '2026-10-27 09:00:00']));
     }
 
-    /** @return array{passkeys: int, active: bool} */
-    private function enrol(string $token, SoftwareAuthenticator $authenticator): array
+    /** @return list<string> */
+    private function activate(string $token, string $staffId): array
     {
-        $begun = $this->enrolment->begin($token, $this->client);
+        $this->setup->startWithInvitation($token, $this->client);
 
-        return $this->enrolment->finish($token, $begun['ceremony_id'], $authenticator->register($begun['options']), '', $this->client);
+        $this->totpOffset = -1;
+
+        return $this->setup->finishWithInvitation($token, self::PASSWORD, $this->totpAt($staffId, -1), $this->client);
+    }
+
+    private function signInWithCodes(string $staffId): string
+    {
+        $step = $this->codes->password('ada@example.test', self::PASSWORD, $this->client);
+        $step = $this->codes->authenticatorCode($step->ticket, $this->nextTotp($staffId), $this->client);
+
+        return $this->codes->emailCode($step->ticket, $this->lastEmailCode(), $this->client);
+    }
+
+    /**
+     * Each code works once per 30-second step, so a test walks through the
+     * three steps the server accepts (previous, current, next); setUp avoids
+     * starting just before a step boundary.
+     */
+    private function nextTotp(string $staffId): string
+    {
+        return $this->totpAt($staffId, ++$this->totpOffset);
+    }
+
+    private function totpAt(string $staffId, int $offset): string
+    {
+        $crypto = new MfaCrypto(
+            new SecretCipher(KeyRing::fromNamedProcessEnvironment('MFA_SECRET_KEYS', 'MFA_SECRET_ACTIVE_KEY') ?? throw new \LogicException('MFA keys')),
+            new RecoveryCodes(str_repeat("\x22", 32)),
+        );
+        $secret = $crypto->secrets->decrypt($this->scalar('SELECT secret_envelope FROM staff_totp WHERE staff_id = ?', [$staffId]), StaffSecondFactor::associatedData($staffId));
+
+        return Totp::code($secret, Totp::step(new \DateTimeImmutable()) + $offset);
+    }
+
+    private function lastEmailCode(): string
+    {
+        $sealed = $this->scalar("SELECT payload FROM email_outbox WHERE template = 'staff-sign-in-code' ORDER BY created_at DESC LIMIT 1", []);
+        $payload = json_decode($this->opener->open($sealed), true, 8, JSON_THROW_ON_ERROR);
+        self::assertIsArray($payload);
+        $parameters = $payload['parameters'] ?? null;
+        self::assertIsArray($parameters);
+        $code = $parameters['code'] ?? null;
+        self::assertIsString($code);
+
+        return $code;
+    }
+
+    private function wrongEmailCode(): string
+    {
+        return $this->lastEmailCode() === '000000' ? '000001' : '000000';
     }
 
     private function signInWith(SoftwareAuthenticator $authenticator, string $handle): string
@@ -212,6 +332,19 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         } catch (PasskeyRejected $e) {
             self::assertSame($reason, $e->reason);
         }
+    }
+
+    /** @param callable(): mixed $action */
+    private function expectRefused(string $reason, callable $action): StaffSignInRefused
+    {
+        try {
+            $action();
+        } catch (StaffSignInRefused $e) {
+            self::assertSame($reason, $e->reason);
+
+            return $e;
+        }
+        self::fail('Expected refusal: ' . $reason);
     }
 
     /** @param callable(): mixed $write */

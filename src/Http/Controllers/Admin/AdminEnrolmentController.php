@@ -6,8 +6,9 @@ namespace PaxofiCloud\Http\Controllers\Admin;
 
 use Paxofi\Core\Contracts\HttpRequest;
 use Paxofi\Core\Contracts\HttpResponse;
-use PaxofiCloud\Application\Staff\Passkeys\PasskeyRejected;
-use PaxofiCloud\Application\Staff\Passkeys\StaffEnrolment;
+use PaxofiCloud\Application\Staff\Setup\InvalidStaffSetup;
+use PaxofiCloud\Application\Staff\Setup\StaffSetupRefused;
+use PaxofiCloud\Application\Staff\Setup\StaffSignInSetup;
 use PaxofiCloud\Http\Admin\AdminContext;
 use PaxofiCloud\Http\JsonBody;
 use PaxofiCloud\Http\ProblemDetails;
@@ -15,17 +16,17 @@ use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 
 /**
- * Passkey enrolment with an invitation token (D-11, §6.17). A dead invitation
- * is reported as such (only its holder can ask); every other failure is one
- * generic code.
+ * Setting up sign-in with an invitation token (D-11, §6.20): a password and
+ * an authenticator app. A dead invitation is reported as such (only its
+ * holder can ask); field errors name the field, never echo the value.
  */
 final readonly class AdminEnrolmentController
 {
-    public function __construct(private StaffEnrolment $enrolment)
+    public function __construct(private StaffSignInSetup $setup)
     {
     }
 
-    public function options(HttpRequest $request, AdminContext $context): HttpResponse
+    public function start(HttpRequest $request, AdminContext $context): HttpResponse
     {
         $data = JsonBody::object($request);
         $token = $data === null ? null : AdminJson::string($data, 'token', 64);
@@ -33,9 +34,9 @@ final readonly class AdminEnrolmentController
             return ProblemDetails::response(400, 'malformed_request', RequestId::of($request));
         }
         try {
-            return AdminJson::ok($this->enrolment->begin($token, RequestClient::of($request)));
-        } catch (PasskeyRejected $e) {
-            return self::rejected($e, $request);
+            return AdminJson::ok($this->setup->startWithInvitation($token, RequestClient::of($request)));
+        } catch (StaffSetupRefused $e) {
+            return self::refused($e, $request);
         }
     }
 
@@ -43,26 +44,29 @@ final readonly class AdminEnrolmentController
     {
         $data = JsonBody::object($request);
         $token = $data === null ? null : AdminJson::string($data, 'token', 64);
-        $ceremony = $data === null ? null : AdminJson::string($data, 'ceremony_id', 64);
-        $credential = $data === null ? null : AdminJson::credential($data);
-        $label = $data === null ? '' : (AdminJson::string($data, 'label', 256) ?? '');
-        if ($token === null || $ceremony === null || $credential === null) {
+        $password = $data === null ? null : AdminJson::string($data, 'password', 1024);
+        $code = $data === null ? null : AdminJson::string($data, 'code', 32);
+        if ($token === null || $password === null || $code === null) {
             return ProblemDetails::response(400, 'malformed_request', RequestId::of($request));
         }
         try {
-            return AdminJson::ok($this->enrolment->finish($token, $ceremony, $credential, $label, RequestClient::of($request)));
-        } catch (PasskeyRejected $e) {
-            return self::rejected($e, $request);
+            return AdminJson::ok(['recovery_codes' => $this->setup->finishWithInvitation($token, $password, $code, RequestClient::of($request))]);
+        } catch (StaffSetupRefused $e) {
+            return self::refused($e, $request);
+        } catch (InvalidStaffSetup $e) {
+            return ProblemDetails::response(422, 'validation_failed', RequestId::of($request), errors: $e->errors);
         }
     }
 
-    private static function rejected(PasskeyRejected $e, HttpRequest $request): HttpResponse
+    public static function refused(StaffSetupRefused $e, HttpRequest $request): HttpResponse
     {
+        $id = RequestId::of($request);
+
         return match ($e->reason) {
-            PasskeyRejected::THROTTLED => ProblemDetails::response(429, 'too_many_attempts', RequestId::of($request), headers: ['retry-after' => (string) max(1, $e->retryAfter)]),
-            PasskeyRejected::INVITATION => ProblemDetails::response(400, 'invitation_invalid', RequestId::of($request)),
-            PasskeyRejected::LIMIT => ProblemDetails::response(409, 'passkey_limit_reached', RequestId::of($request)),
-            default => ProblemDetails::response(400, 'passkey_rejected', RequestId::of($request)),
+            StaffSetupRefused::THROTTLED => ProblemDetails::response(429, 'too_many_attempts', $id, headers: ['retry-after' => (string) max(1, $e->retryAfter)]),
+            StaffSetupRefused::INVITATION => ProblemDetails::response(400, 'invitation_invalid', $id),
+            StaffSetupRefused::UNAVAILABLE => ProblemDetails::response(503, 'setup_unavailable', $id),
+            default => ProblemDetails::response(409, 'setup_not_allowed', $id),
         };
     }
 }
