@@ -158,6 +158,36 @@ final readonly class MfaSettings
         $this->alerts->securityChanged($identityId, $client, 'mfa_disabled');
     }
 
+    /**
+     * Re-authentication before signing other devices out (§6.21, T-22): the
+     * password, plus a current code or an unused recovery code while two-step
+     * verification is on, so a stolen session alone cannot sign the owner out.
+     * Wrong passwords share the per-identity limit with the two-step settings.
+     *
+     * @param array<array-key, mixed> $data `{password}`, `{password, code}` or `{password, recovery_code}`
+     * @throws InvalidMfaInput|MfaThrottled|MfaUnavailable
+     */
+    public function stepUp(string $identityId, #[\SensitiveParameter] array $data, ClientContext $client, string $action): void
+    {
+        $enabled = $this->isEnabled($identityId);
+        $second = array_key_exists('recovery_code', $data) ? 'recovery_code' : 'code';
+        $fields = self::fields($data, $enabled ? ['password', $second] : ['password']);
+        $this->assertPassword($identityId, $fields['password'], $client, $action);
+        if (!$enabled) {
+            return;
+        }
+        $this->throttle('mfa:step_up:' . $identityId, self::CODE_LIMIT);
+
+        $verifier = new SecondFactor($this->mfa, $this->crypto(), $this->clock);
+        $ok = $second === 'code'
+            ? $verifier->verifyCode($identityId, $fields['code'])
+            : $verifier->verifyRecoveryCode($identityId, $fields['recovery_code']);
+        if (!$ok) {
+            $this->refused($client, $identityId, $action, $second === 'code' ? 'wrong_code' : 'wrong_recovery_code');
+            throw new InvalidMfaInput([$second => 'incorrect']);
+        }
+    }
+
     /** @return list<string> */
     private function newRecoveryCodes(string $identityId, MfaCrypto $crypto): array
     {

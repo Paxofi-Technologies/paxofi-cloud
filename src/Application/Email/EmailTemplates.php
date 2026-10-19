@@ -38,6 +38,8 @@ final readonly class EmailTemplates
         'mfa_enabled' => 'Two-step verification was turned on',
         'mfa_disabled' => 'Two-step verification was turned off',
         'recovery_codes_regenerated' => 'New recovery codes were created; the old ones no longer work',
+        'session_revoked' => 'Another device was signed out of your account',
+        'other_sessions_revoked' => 'All other devices were signed out of your account',
     ];
 
     private const string DISPLAY_TIMEZONE = 'Africa/Lagos';
