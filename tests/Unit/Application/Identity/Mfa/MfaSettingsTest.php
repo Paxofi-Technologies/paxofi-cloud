@@ -206,6 +206,54 @@ final class MfaSettingsTest extends TestCase
         $settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
     }
 
+    /** §6.21 / T-22: signing devices out needs the password, plus a code while two-step is on. */
+    public function testStepUpNeedsThePasswordAndASecondFactorWhenOn(): void
+    {
+        $this->settings->stepUp('id-1', ['password' => self::PASSWORD], AuditFixtures::client(), 'sign_out_device');
+        $this->assertStepUpRefused(['password' => 'incorrect'], ['password' => 'wrong password here']);
+        $this->assertStepUpRefused(['password' => 'required'], []);
+        $this->assertStepUpRefused(['code' => 'unknown_field'], ['password' => self::PASSWORD, 'code' => '123456']);
+
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
+        $codes = $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
+        $this->clock->advance('+30 seconds');
+        $this->limiter->hits = [];
+
+        $this->assertStepUpRefused(['code' => 'required'], ['password' => self::PASSWORD]);
+        $this->assertStepUpRefused(['code' => 'incorrect'], ['password' => self::PASSWORD, 'code' => '000000']);
+        $this->assertStepUpRefused(['password' => 'incorrect'], ['password' => 'wrong password here', 'code' => $this->currentCode()]);
+        $this->settings->stepUp('id-1', ['password' => self::PASSWORD, 'code' => $this->currentCode()], AuditFixtures::client(), 'sign_out_device');
+        // The same code cannot be replayed for a second sign-out.
+        $this->assertStepUpRefused(['code' => 'incorrect'], ['password' => self::PASSWORD, 'code' => $this->currentCode()]);
+        $this->limiter->hits = [];
+        $this->settings->stepUp('id-1', ['password' => self::PASSWORD, 'recovery_code' => $codes[0]], AuditFixtures::client(), 'sign_out_other_devices');
+        $this->assertStepUpRefused(['recovery_code' => 'incorrect'], ['password' => self::PASSWORD, 'recovery_code' => $codes[0]]);
+    }
+
+    public function testStepUpCodesAreThrottled(): void
+    {
+        $this->settings->setup('id-1', 'ada@example.ng', ['password' => self::PASSWORD], AuditFixtures::client());
+        $this->settings->confirm('id-1', ['code' => $this->currentCode()], AuditFixtures::client());
+        $this->limiter->hits['mfa:step_up:id-1'] = MfaSettings::CODE_LIMIT;
+
+        $this->expectException(MfaThrottled::class);
+        $this->settings->stepUp('id-1', ['password' => self::PASSWORD, 'code' => '000000'], AuditFixtures::client(), 'sign_out_device');
+    }
+
+    /**
+     * @param array<string, string> $errors
+     * @param array<string, string> $data
+     */
+    private function assertStepUpRefused(array $errors, array $data): void
+    {
+        try {
+            $this->settings->stepUp('id-1', $data, AuditFixtures::client(), 'sign_out_device');
+            self::fail('Step-up accepted');
+        } catch (InvalidMfaInput $e) {
+            self::assertSame($errors, $e->errors);
+        }
+    }
+
     private function currentCode(): string
     {
         $setup = $this->mfa->totp['id-1'] ?? null;

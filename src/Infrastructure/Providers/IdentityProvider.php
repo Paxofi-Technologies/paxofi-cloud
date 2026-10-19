@@ -204,7 +204,9 @@ final class IdentityProvider implements Provider
 
         $container->singleton(AccountSessionsController::class, static fn (Container $c): AccountSessionsController => new AccountSessionsController(
             Resolve::get($c, Sessions::class),
+            Resolve::get($c, MfaSettings::class),
             Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, SignInAlerts::class),
         ));
 
         $container->singleton(AuditLog::class, static fn (Container $c): AuditLog => new MysqlAuditLog(

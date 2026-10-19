@@ -118,7 +118,7 @@ export function SecurityScreen({ csrfToken, fetchImpl, onStatusChange }: Securit
           </>
         )}
       </Card>
-      <SignedInDevices csrfToken={csrfToken} fetchImpl={fetchImpl} refreshKey={activityKey} onChanged={() => setActivityKey((key) => key + 1)} />
+      <SignedInDevices csrfToken={csrfToken} mfaEnabled={status !== 'loading' && status !== null && status.totpEnabled} fetchImpl={fetchImpl} refreshKey={activityKey} onChanged={() => setActivityKey((key) => key + 1)} />
       <RecentActivity fetchImpl={fetchImpl} refreshKey={activityKey} />
     </div>
   );

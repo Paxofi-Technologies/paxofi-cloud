@@ -132,16 +132,26 @@ final class SignInIntegrationTest extends IntegrationTestCase
         self::assertIsArray($strangerList);
         $strangerRow = $strangerList[0] ?? null;
         self::assertIsArray($strangerRow);
-        self::assertSame(404, $this->post('/api/v1/account/sessions/revoke', ['id' => $strangerRow['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+        self::assertSame(404, $this->post('/api/v1/account/sessions/revoke', ['id' => $strangerRow['id'], 'password' => self::PASSWORD], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
         self::assertSame(409, $this->post('/api/v1/account/sessions/revoke', ['id' => $current['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
         self::assertSame(400, $this->post('/api/v1/account/sessions/revoke', ['id' => 'nope'], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
 
-        self::assertSame(200, $this->post('/api/v1/account/sessions/revoke', ['id' => $other['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+        // Step-up (T-22): the session alone is not enough; a wrong password ends nothing.
+        $bare = $this->post('/api/v1/account/sessions/revoke', ['id' => $other['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf]);
+        self::assertSame(422, $bare->status());
+        self::assertSame(['password' => 'required'], self::json($bare)['errors'] ?? null);
+        $wrong = $this->post('/api/v1/account/sessions/revoke', ['id' => $other['id'], 'password' => 'not the password'], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf]);
+        self::assertSame(['password' => 'incorrect'], self::json($wrong)['errors'] ?? null);
+        self::assertSame(422, $this->post('/api/v1/account/sessions/revoke-others', [], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+        self::assertSame(200, $this->get('/api/v1/auth/session', $phoneId)->status());
+        self::assertSame(200, $this->get('/api/v1/auth/session', $tabletId)->status());
+
+        self::assertSame(200, $this->post('/api/v1/account/sessions/revoke', ['id' => $other['id'], 'password' => self::PASSWORD], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
         $remaining = [$this->get('/api/v1/auth/session', $phoneId)->status(), $this->get('/api/v1/auth/session', $tabletId)->status()];
         sort($remaining);
         self::assertSame([200, 401], $remaining, 'exactly the named session ended');
 
-        $all = $this->post('/api/v1/account/sessions/revoke-others', [], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf]);
+        $all = $this->post('/api/v1/account/sessions/revoke-others', ['password' => self::PASSWORD], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf]);
         self::assertSame(['status' => 'revoked', 'count' => 1], self::json($all));
         self::assertSame(401, $this->get('/api/v1/auth/session', $phoneId)->status());
         self::assertSame(401, $this->get('/api/v1/auth/session', $tabletId)->status());
@@ -151,6 +161,9 @@ final class SignInIntegrationTest extends IntegrationTestCase
         $types = self::pdo()->query("SELECT event_type FROM audit_events WHERE event_type LIKE 'auth.session%' ORDER BY seq");
         self::assertNotFalse($types);
         self::assertSame(['auth.session.revoked', 'auth.sessions.revoked_others'], $types->fetchAll(\PDO::FETCH_COLUMN));
+        $refused = self::pdo()->query("SELECT COUNT(*) FROM audit_events WHERE event_type = 'mfa.change_refused'");
+        self::assertNotFalse($refused);
+        self::assertSame(1, (int) $refused->fetchColumn(), 'the wrong password inside a live session is recorded');
     }
 
     public function testWrongPasswordAndUnknownEmailGetTheSameResponse(): void
