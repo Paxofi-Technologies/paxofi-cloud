@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Card, RecentActivity, TextField } from '../components';
+import { Alert, Badge, Button, Card, RecentActivity, SignedInDevices, TextField } from '../components';
 import { QrCode } from '../components/QrCode';
 import { RecoveryCodesView } from '../components/RecoveryCodesView';
 import { describeWait, type ApiResult } from '../lib/api';
@@ -118,6 +118,7 @@ export function SecurityScreen({ csrfToken, fetchImpl, onStatusChange }: Securit
           </>
         )}
       </Card>
+      <SignedInDevices csrfToken={csrfToken} fetchImpl={fetchImpl} refreshKey={activityKey} onChanged={() => setActivityKey((key) => key + 1)} />
       <RecentActivity fetchImpl={fetchImpl} refreshKey={activityKey} />
     </div>
   );

@@ -21,6 +21,8 @@ final class AuditEventType
     public const string MFA_FAILED = 'auth.mfa.failed';
     public const string MFA_LOCKED = 'auth.mfa.locked';
     public const string SIGNED_OUT = 'auth.signed_out';
+    public const string SESSION_REVOKED = 'auth.session.revoked';
+    public const string SESSIONS_REVOKED_OTHERS = 'auth.sessions.revoked_others';
     public const string MFA_ENABLED = 'mfa.enabled';
     public const string MFA_DISABLED = 'mfa.disabled';
     public const string RECOVERY_CODES_REGENERATED = 'mfa.recovery_codes_regenerated';

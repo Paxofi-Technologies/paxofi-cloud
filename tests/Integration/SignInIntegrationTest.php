@@ -96,6 +96,63 @@ final class SignInIntegrationTest extends IntegrationTestCase
         self::assertSame(401, $this->get('/api/v1/auth/session', $sessionId)->status());
     }
 
+    /** T-23, §6.21: list, revoke one, revoke others; other customers' sessions are out of reach. */
+    public function testSessionListAndRevokeOverHttp(): void
+    {
+        $email = $this->activeCustomer();
+        $laptop = $this->post('/api/v1/auth/sign-in', ['email' => $email, 'password' => self::PASSWORD], server: ['HTTP_USER_AGENT' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/146.0.0.0', 'HTTP_CF_IPCOUNTRY' => 'NG']);
+        $laptopId = $this->sessionIdOf($laptop);
+        $csrf = self::json($laptop)['csrf_token'] ?? null;
+        self::assertIsString($csrf);
+        $phoneId = $this->sessionIdOf($this->post('/api/v1/auth/sign-in', ['email' => $email, 'password' => self::PASSWORD]));
+        $tabletId = $this->sessionIdOf($this->post('/api/v1/auth/sign-in', ['email' => $email, 'password' => self::PASSWORD]));
+        $strangerId = $this->sessionIdOf($this->post('/api/v1/auth/sign-in', ['email' => $this->activeCustomer(), 'password' => self::PASSWORD]));
+
+        self::assertSame(401, $this->get('/api/v1/account/sessions', null)->status());
+        $list = self::json($this->get('/api/v1/account/sessions', $laptopId))['sessions'] ?? null;
+        self::assertIsArray($list);
+        self::assertCount(3, $list, 'only this customer\'s sessions');
+        $byCurrent = array_column($list, 'current');
+        self::assertSame(1, count(array_filter($byCurrent)));
+        /** @var array{id: string, current: bool, ip: ?string, location: ?string, device: array{label: string, type: string}} $current */
+        $current = array_values(array_filter($list, static fn ($r) => is_array($r) && $r['current'] === true))[0];
+        self::assertSame('Chrome 146 on Windows (desktop)', $current['device']['label']);
+        self::assertSame('Nigeria', $current['location']);
+        self::assertSame($this->ip, $current['ip']);
+        foreach ($list as $row) {
+            self::assertIsArray($row);
+            self::assertStringNotContainsString(hash('sha256', $laptopId), (string) json_encode($row));
+        }
+
+        // Writes need the CSRF token; the stranger's session cannot be named; the current one ends via sign-out.
+        /** @var array{id: string} $other */
+        $other = array_values(array_filter($list, static fn ($r) => is_array($r) && $r['current'] === false))[0];
+        self::assertSame(403, $this->post('/api/v1/account/sessions/revoke', ['id' => $other['id']], $laptopId)->status());
+        $strangerList = self::json($this->get('/api/v1/account/sessions', $strangerId))['sessions'] ?? [];
+        self::assertIsArray($strangerList);
+        $strangerRow = $strangerList[0] ?? null;
+        self::assertIsArray($strangerRow);
+        self::assertSame(404, $this->post('/api/v1/account/sessions/revoke', ['id' => $strangerRow['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+        self::assertSame(409, $this->post('/api/v1/account/sessions/revoke', ['id' => $current['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+        self::assertSame(400, $this->post('/api/v1/account/sessions/revoke', ['id' => 'nope'], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+
+        self::assertSame(200, $this->post('/api/v1/account/sessions/revoke', ['id' => $other['id']], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf])->status());
+        $remaining = [$this->get('/api/v1/auth/session', $phoneId)->status(), $this->get('/api/v1/auth/session', $tabletId)->status()];
+        sort($remaining);
+        self::assertSame([200, 401], $remaining, 'exactly the named session ended');
+
+        $all = $this->post('/api/v1/account/sessions/revoke-others', [], $laptopId, ['HTTP_X_CSRF_TOKEN' => $csrf]);
+        self::assertSame(['status' => 'revoked', 'count' => 1], self::json($all));
+        self::assertSame(401, $this->get('/api/v1/auth/session', $phoneId)->status());
+        self::assertSame(401, $this->get('/api/v1/auth/session', $tabletId)->status());
+        self::assertSame(200, $this->get('/api/v1/auth/session', $laptopId)->status());
+        self::assertSame(200, $this->get('/api/v1/auth/session', $strangerId)->status(), 'another customer is untouched');
+
+        $types = self::pdo()->query("SELECT event_type FROM audit_events WHERE event_type LIKE 'auth.session%' ORDER BY seq");
+        self::assertNotFalse($types);
+        self::assertSame(['auth.session.revoked', 'auth.sessions.revoked_others'], $types->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
     public function testWrongPasswordAndUnknownEmailGetTheSameResponse(): void
     {
         $email = $this->activeCustomer();

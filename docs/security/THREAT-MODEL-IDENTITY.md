@@ -367,6 +367,15 @@ WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-
 - **Audit.** Each step's success and failure (fixed reason codes), lock-outs, recovery-code use, email-code sends and passkey additions; staff ID in details, never the codes or address.
 - **Not in this change.** Self-service password change and authenticator reset, and an admin reset of another member's sign-in (Sprint 9 console). Until then a member who loses both phone and recovery codes needs an operator reset.
 
+### 6.21 Customer session list and sign-out of other devices (Sprint 1, T-23)
+
+- **What the customer sees.** The Security page lists every live session of their own identity: approximate device (browser, OS, type), approximate location and IP recorded when the session started, sign-in time and last activity, with "This device" on the current one. There is no identity or account parameter: the list is read for the session's own identity only (D-13).
+- **Index.** Each session record stays under `pc:sess:{SHA-256 of the session ID}` (D-2). A per-identity Redis set `pc:sess:idx:{identity}` holds those hashes, written in the same Lua call as the record and expiring with the absolute session lifetime. Entries whose record has expired are removed when the list is read, so the set cannot grow without bound. The record now also keeps the approximate location string from Cloudflare (no extra personal data beyond what the audit context already holds).
+- **Public session IDs.** The list never shows the record key: each session is identified by the first 32 hex characters of SHA-256(`session-list|` + key). Knowing it does not let anyone use or look up the session; it only names a row the owner can already see.
+- **Revoke.** `POST /api/v1/account/sessions/revoke` with that ID ends the matching session of the same identity only (unknown or someone else's ID: 404, so IDs cannot be probed). `POST /api/v1/account/sessions/revoke-others` ends every session of the identity except the current one. Both are session + CSRF writes (T-21), audited (`auth.session.revoked`, `auth.sessions.revoked_others` with the count, fixed codes only). Ending the current session stays the normal sign-out.
+- **MFA changes.** Turning two-step verification on or off and generating new recovery codes end every other session of the identity (deferred item of §6.13), so a stolen session cannot outlive the owner securing the account.
+- **Not covered here.** A session that is already being used by an attacker can also see this list and revoke the owner's own session; the owner then signs in again (password + code) and revokes theirs. Password change will end all other sessions when it lands (IAM-012, with password reset).
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -401,5 +410,6 @@ WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-
 | 2026-10-18 | §6.18 staff sessions + admin API notes (separate Strict cookie and Redis prefix, 15 min/8 h, admin host only, single route table with one access rule per route, activation alert); written before the code | Claude (security engineering) |
 | 2026-10-18 | §6.17 staff passkey notes (invitation tokens, two-passkey activation, ES256/EdDSA only, discoverable usernameless sign-in, single-use challenges, clone detection disables the credential); written before the staff passkey code | Claude (security engineering) |
 | 2026-10-18 | §6.16 staff RBAC notes (ACC-005 permission catalogue from SRS §2.2, deny by default, two-person Super Admin grants, reason-scoped suspensions); O-1 resolved by ADR-002; written before the staff RBAC code | Claude (security engineering) |
+| 2026-10-19 | §6.21 customer session list and revoke (T-23), other sessions ended on MFA changes; written before the code | Claude (security engineering) |
 | 2026-10-19 | §6.20 staff sign-in with password + TOTP + email code, passkeys optional (CEO decision); D-11 and T-29 amended; R-5 added; written before the code | Claude (security engineering) |
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |

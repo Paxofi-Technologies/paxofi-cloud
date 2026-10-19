@@ -9,5 +9,6 @@ export { Logo } from './Logo';
 export { TextField } from './TextField';
 export { RecentActivity } from './RecentActivity';
 export { RecoveryCodesView } from './RecoveryCodesView';
+export { SignedInDevices } from './SignedInDevices';
 export { ResendVerification, RESEND_COOLDOWN_SECONDS } from './ResendVerification';
 export { Turnstile } from './Turnstile';

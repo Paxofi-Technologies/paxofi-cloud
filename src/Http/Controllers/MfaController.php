@@ -56,26 +56,38 @@ final readonly class MfaController
 
     public function confirm(HttpRequest $request): HttpResponse
     {
-        return $this->write($request, fn (Session $session, array $data, ClientContext $client): HttpResponse => self::json([
-            'status' => 'enabled',
-            'recovery_codes' => $this->mfa->confirm($session->identityId, $data, $client),
-        ]));
+        return $this->write($request, function (Session $session, array $data, ClientContext $client): HttpResponse {
+            $codes = $this->mfa->confirm($session->identityId, $data, $client);
+            $this->endOtherSessions($session);
+
+            return self::json(['status' => 'enabled', 'recovery_codes' => $codes]);
+        });
     }
 
     public function recoveryCodes(HttpRequest $request): HttpResponse
     {
-        return $this->write($request, fn (Session $session, array $data, ClientContext $client): HttpResponse => self::json([
-            'recovery_codes' => $this->mfa->regenerateRecoveryCodes($session->identityId, $data, $client),
-        ]));
+        return $this->write($request, function (Session $session, array $data, ClientContext $client): HttpResponse {
+            $codes = $this->mfa->regenerateRecoveryCodes($session->identityId, $data, $client);
+            $this->endOtherSessions($session);
+
+            return self::json(['recovery_codes' => $codes]);
+        });
     }
 
     public function disable(HttpRequest $request): HttpResponse
     {
         return $this->write($request, function (Session $session, array $data, ClientContext $client): HttpResponse {
             $this->mfa->disable($session->identityId, $data, $client);
+            $this->endOtherSessions($session);
 
             return self::json(['status' => 'disabled']);
         });
+    }
+
+    /** §6.21: after a two-step verification change only the session that made it stays signed in. */
+    private function endOtherSessions(Session $session): void
+    {
+        $this->sessions->revokeOthers($session->identityId, $session);
     }
 
     /** @param \Closure(Session, array<array-key, mixed>, ClientContext): HttpResponse $action */

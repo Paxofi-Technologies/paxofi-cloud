@@ -34,6 +34,7 @@ use PaxofiCloud\Application\Staff\Setup\StaffSignInSetup;
 use PaxofiCloud\Application\Staff\SignIn\StaffCodeSignIn;
 use PaxofiCloud\Application\Staff\SignIn\StaffSecondFactor;
 use PaxofiCloud\Infrastructure\Staff\MysqlStaffCredentialStore;
+use PaxofiCloud\Http\Controllers\AccountSessionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
@@ -199,6 +200,11 @@ final class IdentityProvider implements Provider
             Resolve::get($c, MfaSettings::class),
             Resolve::get($c, Sessions::class),
             Resolve::get($c, SignInStore::class),
+        ));
+
+        $container->singleton(AccountSessionsController::class, static fn (Container $c): AccountSessionsController => new AccountSessionsController(
+            Resolve::get($c, Sessions::class),
+            Resolve::get($c, AuditTrail::class),
         ));
 
         $container->singleton(AuditLog::class, static fn (Container $c): AuditLog => new MysqlAuditLog(

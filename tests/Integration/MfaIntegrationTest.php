@@ -191,6 +191,22 @@ final class MfaIntegrationTest extends IntegrationTestCase
         return $statement;
     }
 
+    /** §6.21: turning two-step verification on ends every other session of the customer. */
+    public function testEnablingMfaSignsOutOtherSessions(): void
+    {
+        $email = $this->activeCustomer();
+        $this->signInWithPassword($email);
+        $other = $this->sid;
+        $this->signInWithPassword($email);
+        $sessionOf = fn (string $sid): int => $this->send('GET', '/api/v1/auth/session', '', ['HTTP_COOKIE' => SessionCookie::NAME . '=' . $sid])->status();
+        self::assertSame(200, $sessionOf($other));
+
+        $this->enrol();
+
+        self::assertSame(401, $sessionOf($other), 'the other browser is signed out');
+        self::assertSame(200, $sessionOf($this->sid), 'the browser that made the change stays signed in');
+    }
+
     private function enrol(): string
     {
         $setup = self::json($this->write('/api/v1/account/mfa/totp/setup', ['password' => self::PASSWORD]));

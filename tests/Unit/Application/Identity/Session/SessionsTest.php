@@ -107,4 +107,54 @@ final class SessionsTest extends TestCase
             self::assertNotNull($this->sessions->resume($sessionId), "alive after {$elapsed} min");
         }
     }
+
+    /** §6.21: the list holds only the identity's own live sessions, newest activity first, with where they started. */
+    public function testListShowsOnlyTheIdentitysLiveSessions(): void
+    {
+        $lagos = ClientContext::from('198.51.100.7', 'Mozilla/5.0 (Windows NT 10.0) Chrome/146.0', 'NG', 'Lagos', 'Ikeja', '');
+        $old = $this->sessions->issue('id-1', 'acct-1', $lagos);
+        $this->clock->advance('+5 minutes');
+        $new = $this->sessions->issue('id-1', 'acct-1', $lagos);
+        $this->sessions->issue('id-2', 'acct-2', $lagos);
+
+        $list = $this->sessions->listFor('id-1');
+        self::assertSame([$new->session->idHash, $old->session->idHash], array_map(static fn ($s) => $s->idHash, $list));
+        self::assertSame('Ikeja, Lagos, Nigeria', $list[0]->location);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $list[0]->publicId());
+        self::assertNotSame($list[0]->idHash, $list[0]->publicId());
+
+        // An expired session leaves the list and the store.
+        $this->clock->advance('+26 minutes');
+        self::assertCount(1, $this->sessions->listFor('id-1'));
+        self::assertArrayNotHasKey($old->session->idHash, $this->store->sessions);
+    }
+
+    public function testRevokeEndsOnlyTheIdentitysOwnSession(): void
+    {
+        $client = ClientContext::from('', '', null, null, null, '');
+        $mine = $this->sessions->issue('id-1', 'acct-1', $client);
+        $theirs = $this->sessions->issue('id-2', 'acct-2', $client);
+
+        self::assertFalse($this->sessions->revoke('id-1', $theirs->session->publicId()), 'another identity\'s session cannot be named');
+        self::assertNotNull($this->sessions->resume($theirs->sessionId));
+        self::assertFalse($this->sessions->revoke('id-1', str_repeat('0', 32)));
+
+        self::assertTrue($this->sessions->revoke('id-1', $mine->session->publicId()));
+        self::assertNull($this->sessions->resume($mine->sessionId));
+    }
+
+    public function testRevokeOthersKeepsOnlyTheCurrentSession(): void
+    {
+        $client = ClientContext::from('', '', null, null, null, '');
+        $current = $this->sessions->issue('id-1', 'acct-1', $client);
+        $other1 = $this->sessions->issue('id-1', 'acct-1', $client);
+        $other2 = $this->sessions->issue('id-1', 'acct-1', $client);
+        $someoneElse = $this->sessions->issue('id-2', 'acct-2', $client);
+
+        self::assertSame(2, $this->sessions->revokeOthers('id-1', $current->session));
+        self::assertNotNull($this->sessions->resume($current->sessionId));
+        self::assertNull($this->sessions->resume($other1->sessionId));
+        self::assertNull($this->sessions->resume($other2->sessionId));
+        self::assertNotNull($this->sessions->resume($someoneElse->sessionId));
+    }
 }

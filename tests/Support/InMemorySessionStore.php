@@ -30,4 +30,9 @@ final class InMemorySessionStore implements SessionStore
     {
         unset($this->sessions[$sessionIdHash], $this->ttls[$sessionIdHash]);
     }
+
+    public function forIdentity(string $identityId): array
+    {
+        return array_values(array_filter($this->sessions, static fn (Session $s): bool => $s->identityId === $identityId));
+    }
 }
