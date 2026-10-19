@@ -50,7 +50,8 @@
   `compose.yaml`), which routes only `/health/*` and `/admin-api/*` to PHP and
   has a stricter CSP. The customer host refuses `/admin-api` and `admin.html`
   (identity threat model §6.19). Both hosts sit behind the same Cloudflare
-  Access email gate; staff then sign in with a passkey.
+  Access email gate; staff then sign in with password, authenticator code and
+  emailed code, or with an optional passkey (§6.20).
 - **Exposure:** only Nginx is published, on `127.0.0.1:8080`. `cloudflared` on
   the host forwards to it. MySQL and Redis sit on an internal network.
 
@@ -96,9 +97,12 @@ the smoke test.
    (also listed in `STAGING_ALLOWED_EMAILS`, so Access lets you in and the mail
    worker may send to it) and the variable `STAGING_FIRST_ADMIN_NAME`.
 2. Run **PaxofiCloud Staging Deploy** with `action: staff-bootstrap`.
-3. Open the "staff invitation" email on the device that has your passkeys and
-   follow the link within 24 hours: `https://cloud-staging-admin.paxofi.com/enrol`.
-   Register **two** passkeys (for example a security key and the computer's own
-   passkey); the account becomes active with the second.
-4. Sign in at `https://cloud-staging-admin.paxofi.com/` and invite further
-   staff from the console. The bootstrap action refuses from now on.
+3. Open the "staff invitation" email and follow the link within 24 hours:
+   `https://cloud-staging-admin.paxofi.com/enrol`. Choose a password (15+
+   characters), scan the QR code with an authenticator app (Google
+   Authenticator, Microsoft Authenticator, …), enter its code, and save the 10
+   recovery codes. The account is active at once.
+4. Sign in at `https://cloud-staging-admin.paxofi.com/`: email and password,
+   then the authenticator code, then the 6-digit code emailed to you. From
+   "Your sign-in" you can add an optional passkey. Invite further staff from
+   the console. The bootstrap action refuses from now on.

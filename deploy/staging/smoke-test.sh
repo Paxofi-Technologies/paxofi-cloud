@@ -93,6 +93,11 @@ test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/index.html")
 test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "${admin[@]}" --data '{}' "$base/admin-api/v1/auth/passkey/options")" = 403 || fail "admin write accepted without Origin"
 curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{}' "$base/admin-api/v1/auth/passkey/options" \
   | grep -q '"rpId":"cloud-staging-admin.paxofi.com"' || fail "passkey sign-in options not issued"
+# §6.20: code sign-in is wired (MFA keys, Argon2id, Redis): an unknown address gets the uniform 401, not 503.
+curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{"email":"nobody@example.test","password":"not a real password at all"}' "$base/admin-api/v1/auth/password" \
+  | grep -q '"code":"sign_in_failed"' || fail "staff password sign-in not wired"
+curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{"token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}' "$base/admin-api/v1/enrolment/start" \
+  | grep -q '"code":"invitation_invalid"' || fail "staff sign-in setup not wired"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin-api/v1/auth/session")" = 404 || fail "admin API reachable on the customer host"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin.html")" = 404 || fail "admin console served on the customer host"
 curl -s "$base/" | grep -q '<title>PaxofiCloud</title>' || fail "customer host does not serve the portal"

@@ -58,6 +58,16 @@ final class InMemoryStaffPasskeyStore implements StaffPasskeyStore
         return ['staff_id' => $invitation['staff_id'], 'email' => $profile['email'], 'full_name' => $profile['name'], 'user_handle' => $profile['handle']];
     }
 
+    public function activeMemberForPasskeys(string $staffId): ?array
+    {
+        $profile = $this->profiles[$staffId] ?? null;
+        if ($profile === null || ($this->directory->members[$staffId] ?? null) !== 'active') {
+            return null;
+        }
+
+        return ['email' => $profile['email'], 'full_name' => $profile['name'], 'user_handle' => $profile['handle']];
+    }
+
     public function credentialIdsOf(string $staffId): array
     {
         $ids = [];

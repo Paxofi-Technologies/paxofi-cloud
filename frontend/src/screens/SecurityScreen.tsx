@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Card, Checkbox, RecentActivity, TextField } from '../components';
+import { Alert, Badge, Button, Card, RecentActivity, TextField } from '../components';
 import { QrCode } from '../components/QrCode';
+import { RecoveryCodesView } from '../components/RecoveryCodesView';
 import { describeWait, type ApiResult } from '../lib/api';
 import {
   confirmSetup,
@@ -310,57 +311,6 @@ function ScanStep({
         </Button>
       </div>
     </form>
-  );
-}
-
-function RecoveryCodesView({ codes, onDone }: { codes: string[]; onDone: () => void }) {
-  const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const text = `PaxofiCloud recovery codes\nEach code works once.\n\n${codes.join('\n')}\n`;
-
-  return (
-    <div className="pc-stack">
-      <h2>Save your recovery codes</h2>
-      <Alert tone="warning">
-        If you lose your phone, a recovery code is the only way back in without contacting support. Each code works once. They will not be shown again.
-      </Alert>
-      <ol className="pc-recovery-codes" aria-label="Recovery codes">
-        {codes.map((code) => (
-          <li key={code}>
-            <code>{code}</code>
-          </li>
-        ))}
-      </ol>
-      <div className="pc-row">
-        <Button
-          variant="secondary"
-          onClick={() => {
-            void navigator.clipboard?.writeText(text).then(() => setCopied(true));
-          }}
-        >
-          {copied ? 'Copied' : 'Copy codes'}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => {
-            const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = 'paxoficloud-recovery-codes.txt';
-            link.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          Download
-        </Button>
-      </div>
-      <Checkbox checked={saved} onChange={(e) => setSaved(e.target.checked)} label="I have saved these codes somewhere safe" />
-      <div>
-        <Button disabled={!saved} onClick={onDone}>
-          Done
-        </Button>
-      </div>
-    </div>
   );
 }
 
