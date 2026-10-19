@@ -35,8 +35,9 @@ export function screenForPath(path: string): Screen | null {
  * crafted `?next=` can never send anyone off-site (open redirect).
  */
 export function returnPath(search: string): string {
-  const next = new URLSearchParams(search).get('next');
-  return next !== null && screenForPath(next) !== null ? next : '/';
+  const screen = screenForPath(new URLSearchParams(search).get('next') ?? '');
+  // Return our own constant, never the query value itself.
+  return screen !== null ? SCREEN_PATHS[screen] : '/';
 }
 
 export interface AppProps {
@@ -81,7 +82,10 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
     let active = true;
     void fetchSession(fetchImpl).then((next) => {
       if (!active) return;
-      if (next.kind === 'signed_out') navigate(screenForPath(path) !== null && path !== '/' ? `/sign-in?next=${encodeURIComponent(path)}` : '/sign-in');
+      if (next.kind === 'signed_out') {
+        const wanted = screenForPath(path);
+        navigate(wanted !== null && wanted !== 'dashboard' ? `/sign-in?next=${encodeURIComponent(SCREEN_PATHS[wanted])}` : '/sign-in');
+      }
       setState(next);
       if (next.kind === 'signed_in') {
         void fetchMfaStatus(fetchImpl).then((status) => {
