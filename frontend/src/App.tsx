@@ -22,8 +22,27 @@ const NAV: readonly NavItem[] = [
 
 type Screen = 'dashboard' | 'domains' | 'security';
 
+/** Each portal page has its own address, so refresh, links in emails and back/forward land on it. */
+const SCREEN_PATHS: Readonly<Record<Screen, string>> = { dashboard: '/', domains: '/domains', security: '/security' };
+
+export function screenForPath(path: string): Screen | null {
+  const match = (Object.keys(SCREEN_PATHS) as Screen[]).find((screen) => SCREEN_PATHS[screen] === path);
+  return match ?? null;
+}
+
+/**
+ * Where to go after signing in. Only exact portal paths are accepted, so a
+ * crafted `?next=` can never send anyone off-site (open redirect).
+ */
+export function returnPath(search: string): string {
+  const screen = screenForPath(new URLSearchParams(search).get('next') ?? '');
+  // Return our own constant, never the query value itself.
+  return screen !== null ? SCREEN_PATHS[screen] : '/';
+}
+
 export interface AppProps {
   path?: string;
+  search?: string;
   fetchImpl?: typeof fetch | undefined;
   /** Full-page navigation; tests replace it. */
   navigate?: (path: string) => void;
@@ -36,26 +55,37 @@ const assign = (to: string): void => window.location.assign(to);
  * sign-in needs a session: the portal asks the API who is signed in and sends
  * anyone else to /sign-in (threat model §6.11).
  */
-export function App({ path = window.location.pathname, fetchImpl, navigate = assign }: AppProps) {
+export function App({ path = window.location.pathname, search = window.location.search, fetchImpl, navigate = assign }: AppProps) {
   if (path === '/register') return <RegisterScreen fetchImpl={fetchImpl} />;
   if (path === '/verify-email') return <VerifyEmailScreen fetchImpl={fetchImpl} />;
-  if (path === '/sign-in') return <SignInScreen fetchImpl={fetchImpl} onSignedIn={() => navigate('/')} />;
+  if (path === '/sign-in') return <SignInScreen fetchImpl={fetchImpl} onSignedIn={() => navigate(returnPath(search))} />;
 
-  return <Portal fetchImpl={fetchImpl} navigate={navigate} />;
+  return <Portal path={path} fetchImpl={fetchImpl} navigate={navigate} />;
 }
 
-function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined; navigate: (path: string) => void }) {
+function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeof fetch | undefined; navigate: (path: string) => void }) {
   const [state, setState] = useState<SessionState | 'loading'>('loading');
-  const [screen, setScreen] = useState<Screen>('dashboard');
+  const [screen, setScreen] = useState<Screen>(() => screenForPath(path) ?? 'dashboard');
   const [attempt, setAttempt] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
   const [mfaEnabled, setMfaEnabled] = useState<boolean | null>(null);
+
+  // Unknown addresses show the dashboard under its own address; back/forward follow the address bar.
+  useEffect(() => {
+    if (screenForPath(window.location.pathname) === null && window.location.pathname === path) window.history.replaceState(null, '', '/');
+    const onPop = () => setScreen(screenForPath(window.location.pathname) ?? 'dashboard');
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [path]);
 
   useEffect(() => {
     let active = true;
     void fetchSession(fetchImpl).then((next) => {
       if (!active) return;
-      if (next.kind === 'signed_out') navigate('/sign-in');
+      if (next.kind === 'signed_out') {
+        const wanted = screenForPath(path);
+        navigate(wanted !== null && wanted !== 'dashboard' ? `/sign-in?next=${encodeURIComponent(SCREEN_PATHS[wanted])}` : '/sign-in');
+      }
       setState(next);
       if (next.kind === 'signed_in') {
         void fetchMfaStatus(fetchImpl).then((status) => {
@@ -66,7 +96,7 @@ function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined;
     return () => {
       active = false;
     };
-  }, [fetchImpl, navigate, attempt]);
+  }, [fetchImpl, navigate, attempt, path]);
 
   if (state === 'loading' || state.kind === 'signed_out') {
     return (
@@ -88,6 +118,11 @@ function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined;
 
   const { session } = state;
 
+  function go(next: Screen) {
+    setScreen(next);
+    if (window.location.pathname !== SCREEN_PATHS[next]) window.history.pushState(null, '', SCREEN_PATHS[next]);
+  }
+
   async function handleSignOut() {
     setSigningOut(true);
     const result = await signOut(session.csrfToken, fetchImpl);
@@ -100,14 +135,14 @@ function Portal({ fetchImpl, navigate }: { fetchImpl?: typeof fetch | undefined;
     <AppShell
       nav={NAV}
       current={screen}
-      onNavigate={(id) => setScreen(id === 'domains' || id === 'security' ? id : 'dashboard')}
+      onNavigate={(id) => go(id === 'domains' || id === 'security' ? id : 'dashboard')}
       userName={session.fullName}
       onSignOut={() => {
         if (!signingOut) void handleSignOut();
       }}
     >
       {screen === 'dashboard' && (
-        <DashboardScreen fullName={session.fullName} mfaEnabled={mfaEnabled ?? true} onFindDomain={() => setScreen('domains')} onSetUpMfa={() => setScreen('security')} />
+        <DashboardScreen fullName={session.fullName} mfaEnabled={mfaEnabled ?? true} onFindDomain={() => go('domains')} onSetUpMfa={() => go('security')} />
       )}
       {screen === 'domains' && <DomainSearchScreen />}
       {screen === 'security' && <SecurityScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} onStatusChange={(status) => setMfaEnabled(status.totpEnabled)} />}

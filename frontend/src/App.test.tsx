@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { App } from './App';
+import { App, returnPath } from './App';
 
 const SESSION = { identity: { full_name: 'Ada Okafor', email: 'ada@example.ng' }, csrf_token: 'csrf-123' };
 
@@ -84,5 +84,62 @@ describe('App routing and session (§6.11)', () => {
     expect(await screen.findByRole('heading', { name: 'Welcome back, Ada' })).toBeInTheDocument();
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledWith('/api/v1/account/mfa', expect.anything()));
     expect(screen.queryByText('Protect your account')).not.toBeInTheDocument();
+  });
+
+  it('opens the page in the address bar, so refresh and links in emails land on it', async () => {
+    window.history.replaceState(null, '', '/security');
+    const fetchImpl = vi.fn((path: string) =>
+      Promise.resolve(path === '/api/v1/auth/session' ? json(200, SESSION) : path === '/api/v1/account/mfa' ? json(200, { totp_enabled: true, recovery_codes_left: 10 }) : json(200, { sessions: [], events: [] })),
+    ) as unknown as typeof fetch;
+    render(<App path="/security" fetchImpl={fetchImpl} navigate={vi.fn()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
+    expect(screen.queryByText(/Welcome back/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the address in step with the page and follows back/forward', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchImpl = vi.fn((path: string) =>
+      Promise.resolve(path === '/api/v1/auth/session' ? json(200, SESSION) : path === '/api/v1/account/mfa' ? json(200, { totp_enabled: true, recovery_codes_left: 10 }) : json(200, { sessions: [], events: [] })),
+    ) as unknown as typeof fetch;
+    render(<App path="/" fetchImpl={fetchImpl} navigate={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'Welcome back, Ada' });
+    await userEvent.click(screen.getByRole('button', { name: /Security/ }));
+    expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/security');
+
+    window.history.replaceState(null, '', '/');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(await screen.findByRole('heading', { name: 'Welcome back, Ada' })).toBeInTheDocument();
+  });
+
+  it('sends a signed-out visitor to sign-in and back to the page they asked for', async () => {
+    const navigate = vi.fn();
+    const fetchImpl = vi.fn(() => Promise.resolve(json(401, { code: 'not_signed_in' }))) as unknown as typeof fetch;
+    render(<App path="/security" fetchImpl={fetchImpl} navigate={navigate} />);
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/sign-in?next=%2Fsecurity'));
+  });
+
+  it('returns to the requested page after signing in', async () => {
+    const navigate = vi.fn();
+    const fetchImpl = vi.fn(() => Promise.resolve(json(200, { status: 'signed_in', csrf_token: 'x' }))) as unknown as typeof fetch;
+    render(<App path="/sign-in" search="?next=%2Fsecurity" fetchImpl={fetchImpl} navigate={navigate} />);
+
+    await userEvent.type(screen.getByLabelText('Email address'), 'ada@example.ng');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct horse battery');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/security'));
+  });
+
+  it('only returns to known portal pages after sign-in (no open redirect)', () => {
+    expect(returnPath('?next=%2Fsecurity')).toBe('/security');
+    expect(returnPath('?next=%2Fdomains')).toBe('/domains');
+    expect(returnPath('')).toBe('/');
+    for (const bad of ['//evil.example', 'https://evil.example/security', '/security/../..', '/\\evil.example', 'javascript:alert(1)', '/sign-in']) {
+      expect(returnPath(`?next=${encodeURIComponent(bad)}`)).toBe('/');
+    }
   });
 });
