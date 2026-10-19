@@ -16,11 +16,18 @@ final readonly class Session
         public \DateTimeImmutable $lastSeenAt,
         public string $clientIp,
         public string $userAgent,
+        public string $location = '',
     ) {
+    }
+
+    /** §6.21: the name the session list uses for this session; not the store key. */
+    public function publicId(): string
+    {
+        return substr(hash('sha256', 'session-list|' . $this->idHash), 0, 32);
     }
 
     public function seenAt(\DateTimeImmutable $now): self
     {
-        return new self($this->idHash, $this->identityId, $this->accountId, $this->csrfToken, $this->createdAt, $now, $this->clientIp, $this->userAgent);
+        return new self($this->idHash, $this->identityId, $this->accountId, $this->csrfToken, $this->createdAt, $now, $this->clientIp, $this->userAgent, $this->location);
     }
 }

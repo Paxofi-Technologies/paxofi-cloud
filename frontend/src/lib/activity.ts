@@ -72,6 +72,8 @@ const LABELS: Record<string, string> = {
   'auth.mfa.failed': 'Two-step code rejected',
   'auth.mfa.locked': 'Two-step sign-in locked for 15 minutes',
   'auth.signed_out': 'Signed out',
+  'auth.session.revoked': 'Signed out another device',
+  'auth.sessions.revoked_others': 'Signed out all other devices',
   'mfa.enabled': 'Two-step verification turned on',
   'mfa.disabled': 'Two-step verification turned off',
   'mfa.recovery_codes_regenerated': 'New recovery codes created',

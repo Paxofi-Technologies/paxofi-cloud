@@ -29,7 +29,7 @@ final readonly class Sessions
         $sessionId = self::token();
         $csrf = self::token();
         $now = $this->clock->now();
-        $session = new Session(self::hash($sessionId), $identityId, $accountId, $csrf, $now, $now, $client->ip, mb_substr($client->userAgent, 0, 255));
+        $session = new Session(self::hash($sessionId), $identityId, $accountId, $csrf, $now, $now, $client->ip, mb_substr($client->userAgent, 0, 255), mb_substr($client->location(), 0, 200));
         $this->store->save($session, self::IDLE_SECONDS);
 
         return new IssuedSession($sessionId, $csrf, $session);
@@ -46,8 +46,7 @@ final readonly class Sessions
             return null;
         }
         $now = $this->clock->now();
-        if ($session->lastSeenAt->getTimestamp() + self::IDLE_SECONDS <= $now->getTimestamp()
-            || $session->createdAt->getTimestamp() + self::ABSOLUTE_SECONDS <= $now->getTimestamp()) {
+        if ($this->expired($session)) {
             $this->store->delete($session->idHash);
 
             return null;
@@ -66,10 +65,67 @@ final readonly class Sessions
         }
     }
 
+    /**
+     * §6.21: the identity's live sessions, most recently used first. Expired
+     * ones are deleted on the way.
+     *
+     * @return list<Session>
+     */
+    public function listFor(string $identityId): array
+    {
+        $live = [];
+        foreach ($this->store->forIdentity($identityId) as $session) {
+            if ($this->expired($session)) {
+                $this->store->delete($session->idHash);
+                continue;
+            }
+            $live[] = $session;
+        }
+        usort($live, static fn (Session $a, Session $b): int => $b->lastSeenAt <=> $a->lastSeenAt);
+
+        return $live;
+    }
+
+    /** Ends one of the identity's own sessions by its public ID; false when there is none. */
+    public function revoke(string $identityId, string $publicId): bool
+    {
+        foreach ($this->listFor($identityId) as $session) {
+            if (hash_equals($session->publicId(), $publicId)) {
+                $this->store->delete($session->idHash);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Ends every session of the identity except `$keep`; returns how many ended. */
+    public function revokeOthers(string $identityId, Session $keep): int
+    {
+        $ended = 0;
+        foreach ($this->listFor($identityId) as $session) {
+            if ($session->idHash !== $keep->idHash) {
+                $this->store->delete($session->idHash);
+                $ended++;
+            }
+        }
+
+        return $ended;
+    }
+
     /** T-21: constant-time comparison of the presented token with the session's. */
     public function csrfMatches(Session $session, #[\SensitiveParameter] ?string $token): bool
     {
         return $token !== null && $token !== '' && hash_equals($session->csrfToken, $token);
+    }
+
+    private function expired(Session $session): bool
+    {
+        $now = $this->clock->now()->getTimestamp();
+
+        return $session->lastSeenAt->getTimestamp() + self::IDLE_SECONDS <= $now
+            || $session->createdAt->getTimestamp() + self::ABSOLUTE_SECONDS <= $now;
     }
 
     private static function token(): string
