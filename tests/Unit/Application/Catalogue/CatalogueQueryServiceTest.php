@@ -10,7 +10,7 @@ use PaxofiCloud\Application\Contracts\PricingReader;
 use PaxofiCloud\Application\Contracts\RequestContext;
 use PaxofiCloud\Application\Contracts\TenantAuthorizer;
 use PaxofiCloud\Application\Identity\UnauthorizedTenantAccess;
-use PaxofiCloud\Domain\Catalogue\Money;
+use PaxofiCloud\Domain\Money\Money;
 use PaxofiCloud\Domain\Catalogue\Product;
 use PaxofiCloud\Domain\Catalogue\ProductId;
 use PaxofiCloud\Domain\Identity\IdentityId;
@@ -31,20 +31,20 @@ final class CatalogueQueryServiceTest extends TestCase
     public function testReturnsAvailableProductWithMinorUnitPrice(): void
     {
         $productId = new ProductId('product-1');
-        $service = $this->service([new Product($productId, 'Cloud VPS', true)], ['product-1' => new Money(2500, 'USD')]);
+        $service = $this->service([new Product($productId, 'Cloud VPS', true)], ['product-1' => Money::of(2500, 'USD')]);
 
         $result = $service->productWithPrice($productId, $this->tenantId, $this->context);
 
         self::assertNotNull($result);
         self::assertSame('Cloud VPS', $result['product']->name);
         self::assertSame(2500, $result['price']->minorUnits);
-        self::assertSame('USD', $result['price']->currency);
+        self::assertSame('USD', $result['price']->currency->value);
     }
 
     public function testReturnsNullForUnavailableProduct(): void
     {
         $productId = new ProductId('product-1');
-        $service = $this->service([new Product($productId, 'Cloud VPS', false)], ['product-1' => new Money(2500, 'USD')]);
+        $service = $this->service([new Product($productId, 'Cloud VPS', false)], ['product-1' => Money::of(2500, 'USD')]);
 
         self::assertNull($service->productWithPrice($productId, $this->tenantId, $this->context));
     }
