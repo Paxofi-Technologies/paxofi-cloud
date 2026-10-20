@@ -50,6 +50,12 @@ run "release $A" 2>/dev/null || fail "release A failed"
 [ "$(current)" = "$A" ] || fail "current is not A"
 grep -qiE 'password=' "$root/var/log/paxoficloud/deploy.log" && fail "a password reached the deploy log"
 [ "$(stat -c %a "$root/etc/paxoficloud/app.env")" = 600 ] || fail "app.env is not 0600"
+[ "$(stat -c %a "$root/etc/paxoficloud/owner.env")" = 600 ] || fail "owner.env is not 0600"
+grep -qx 'DB_USERNAME=paxoficloud_app' "$root/etc/paxoficloud/app.env" || fail "app.env does not use the runtime database user"
+owner_secret="$(sed -n 's/^DB_PASSWORD=//p' "$root/etc/paxoficloud/owner.env")"
+grep -qF -- "$owner_secret" "$root/etc/paxoficloud/app.env" && fail "the owner password is in app.env"
+grep -qF -- "$owner_secret" "$root/var/log/paxoficloud/deploy.log" && fail "the owner password reached the deploy log"
+grep -q 'Runtime grants applied' "$root/var/log/paxoficloud/deploy.log" || fail "db:grants did not run"
 for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env; do
   [ "$(stat -c %a "$root/etc/paxoficloud/$f")" = 600 ] || fail "$f is not 0600"
 done
@@ -141,4 +147,11 @@ for leak in "$password" "$(printf '%s' "$password" | base64 -w0)" example.invali
   grep -qF -- "$leak" <<<"$status_out" && fail "status printed a mail setting value"
 done
 
-echo "OK: deploy agent refuses bad input, releases, rolls back, prunes, bootstraps the first staff admin without logging the address, wires the mail worker (SMTP) and reports mail status without values"
+echo "== a host whose secrets predate the runtime database user refuses to release (§6.22)"
+mv "$root/etc/paxoficloud/owner.env" "$root/etc/paxoficloud/owner.env.bak"
+if run "release $(current)" 2>/dev/null; then fail "released without owner.env"; fi
+grep -q 'secrets predate the runtime database user' "$root/var/log/paxoficloud/deploy.log" || fail "no clear refusal recorded"
+mv "$root/etc/paxoficloud/owner.env.bak" "$root/etc/paxoficloud/owner.env"
+[ "$(health)" = '{"status":"healthy"}' ] || fail "the running release was disturbed by the refused one"
+
+echo "OK: deploy agent refuses bad input, releases, rolls back, prunes, bootstraps the first staff admin without logging the address, wires the mail worker (SMTP) and reports mail status without values, and keeps the app on the runtime database user"
