@@ -69,7 +69,8 @@ services:
   mysql:
     image: mysql:8.4
     environment:
-      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      # Known locally so the runtime-grants integration test can create its user.
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in .env}
       MYSQL_DATABASE: ${DB_DATABASE:-paxoficloud}
       MYSQL_USER: ${DB_USERNAME:?Set DB_USERNAME in .env}
       MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}

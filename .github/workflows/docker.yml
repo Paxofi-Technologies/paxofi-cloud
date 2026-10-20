@@ -69,7 +69,8 @@ jobs:
 
       - name: Tests and static analysis inside the stack
         run: |
-          docker compose exec -T -e PAXOFICLOUD_INTEGRATION=1 php vendor/bin/phpunit
+          # Throwaway root password from this run's .env, for the runtime-grants test (§6.22).
+          DB_ROOT_PASSWORD="$(sed -n 's/^DB_ROOT_PASSWORD=//p' .env)" docker compose exec -T -e PAXOFICLOUD_INTEGRATION=1 -e DB_ROOT_PASSWORD php vendor/bin/phpunit
           docker compose exec -T php php -d memory_limit=1G vendor/bin/phpstan analyse --no-progress
 
       - name: Smoke test through Nginx
