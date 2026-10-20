@@ -96,6 +96,10 @@ services:
       - --default-time-zone=+00:00
       - --sql-mode=STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,ONLY_FULL_GROUP_BY
     volumes: [mysql-data:/var/lib/mysql]
+    # Runs once, as root, when the data volume is empty (identity threat model §6.22).
+    configs:
+      - source: mysql-runtime-user
+        target: /docker-entrypoint-initdb.d/10-runtime-user.sh
     networks: [data]
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
@@ -123,6 +127,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+# §6.22: the web tier and the mail worker connect as paxoficloud_app, which gets
+# per-table grants from RuntimeGrants (db:grants, run by the schema owner after
+# every migration). The owner (MYSQL_USER) only gains GRANT OPTION on its own
+# schema; it cannot create users. Sourced by the MySQL entrypoint, so a failure
+# here stops the first start.
+configs:
+  mysql-runtime-user:
+    content: |
+      if [ -z "$${MYSQL_APP_PASSWORD:-}" ] || [ -z "$${MYSQL_USER:-}" ] || [ -z "$${MYSQL_DATABASE:-}" ]; then
+        echo 'runtime user: MYSQL_APP_PASSWORD, MYSQL_USER and MYSQL_DATABASE are required' >&2
+        exit 1
+      fi
+      docker_process_sql --database=mysql <<SQL
+      CREATE USER 'paxoficloud_app'@'%' IDENTIFIED BY '$${MYSQL_APP_PASSWORD}';
+      GRANT ALL PRIVILEGES ON $${MYSQL_DATABASE}.* TO '$${MYSQL_USER}'@'%' WITH GRANT OPTION;
+      SQL
 
 networks:
   edge: {}

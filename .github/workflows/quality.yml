@@ -145,6 +145,9 @@ jobs:
       DB_DSN: 'mysql:host=127.0.0.1;port=3306;dbname=paxoficloud;charset=utf8mb4'
       DB_USERNAME: paxoficloud
       DB_PASSWORD: ci-only
+      # Test-only root of the throwaway service container: the runtime-grants
+      # test creates its own restricted MySQL user (identity threat model §6.22).
+      DB_ROOT_PASSWORD: ci-root-only
       REDIS_HOST: 127.0.0.1
     steps:
       - name: Checkout

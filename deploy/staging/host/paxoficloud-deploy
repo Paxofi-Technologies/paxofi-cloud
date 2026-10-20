@@ -41,6 +41,17 @@ mail_profile() {
 }
 compose() { APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" COMPOSE_PROFILES="$(mail_profile)" docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "${@:2}"; }
 
+RUNTIME_DB_USER=paxoficloud_app
+
+# A one-off php container connected as the schema owner (§6.22). The owner's
+# credentials come from owner.env through this process's environment
+# (`-e NAME` copies the value without putting it on any command line).
+as_owner() {
+  local version="$1"; shift
+  ( set -a; . "$ENV_DIR/owner.env"; set +a
+    compose "$version" run --rm -T --no-deps -e DB_USERNAME -e DB_PASSWORD php bin/paxoficloud "$@" )
+}
+
 random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40; }
 
 ensure_secrets() {
@@ -50,12 +61,19 @@ ensure_secrets() {
     [ -e "$ENV_DIR/$f" ] || install -m 0600 /dev/null "$ENV_DIR/$f"
   done
   if [ ! -s "$ENV_DIR/app.env" ]; then
-    local db redis
-    db="$(random_secret)"; redis="$(random_secret)"
-    printf 'DB_USERNAME=paxoficloud\nDB_PASSWORD=%s\nREDIS_PASSWORD=%s\n' "$db" "$redis" > "$ENV_DIR/app.env"
-    printf 'MYSQL_RANDOM_ROOT_PASSWORD=yes\nMYSQL_DATABASE=paxoficloud\nMYSQL_USER=paxoficloud\nMYSQL_PASSWORD=%s\n' "$db" > "$ENV_DIR/mysql.env"
+    # Two MySQL users (identity threat model §6.22): the schema owner runs only
+    # migrate and db:grants; the long-running containers use the runtime user.
+    local owner app redis
+    owner="$(random_secret)"; app="$(random_secret)"; redis="$(random_secret)"
+    printf 'DB_USERNAME=%s\nDB_PASSWORD=%s\nREDIS_PASSWORD=%s\n' "$RUNTIME_DB_USER" "$app" "$redis" > "$ENV_DIR/app.env"
+    printf 'DB_USERNAME=paxoficloud\nDB_PASSWORD=%s\n' "$owner" > "$ENV_DIR/owner.env"
+    printf 'MYSQL_RANDOM_ROOT_PASSWORD=yes\nMYSQL_DATABASE=paxoficloud\nMYSQL_USER=paxoficloud\nMYSQL_PASSWORD=%s\nMYSQL_APP_PASSWORD=%s\n' "$owner" "$app" > "$ENV_DIR/mysql.env"
     printf 'REDIS_PASSWORD=%s\n' "$redis" > "$ENV_DIR/redis.env"
     log "generated runtime secrets (values not logged)"
+  fi
+  if [ ! -s "$ENV_DIR/owner.env" ] || ! grep -qx "DB_USERNAME=$RUNTIME_DB_USER" "$ENV_DIR/app.env"; then
+    # Secrets from before §6.22 would keep the web tier on the owner account.
+    die "secrets predate the runtime database user; re-apply the staging infrastructure (new server)"
   fi
   if [ ! -s "$ENV_DIR/identity-keys.env" ]; then
     # TOTP secret key ring and recovery-code key (identity threat model §6.13):
@@ -200,8 +218,11 @@ cmd_release() {
   log "release $version (current: ${current:-none})"
   # Data services first, then forward-only migrations with the NEW code (P-8).
   compose "$version" up -d --wait --wait-timeout 180 mysql redis >>"$LOG_FILE" 2>&1 || die "release: mysql/redis did not become healthy"
-  if ! compose "$version" run --rm -T --no-deps php bin/paxoficloud migrate >>"$LOG_FILE" 2>&1; then
+  if ! as_owner "$version" migrate >>"$LOG_FILE" 2>&1; then
     die "release: migration failed; $version not started, ${current:-nothing} still serving"
+  fi
+  if ! as_owner "$version" db:grants "$RUNTIME_DB_USER" >>"$LOG_FILE" 2>&1; then
+    die "release: runtime grants failed; $version not started, ${current:-nothing} still serving"
   fi
 
   if start_version "$version" && healthy; then

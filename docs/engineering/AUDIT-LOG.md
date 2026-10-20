@@ -32,7 +32,9 @@ Country comes from the `CF-IPCountry` header, which Cloudflare always sends. Reg
 
 ## Known gaps (tracked)
 
-- Rows are tamper-*evident*, not tamper-*proof*: the application's database user can still change or delete them. A separate runtime database user without `UPDATE`/`DELETE` on `audit_events` comes with the deploy-agent change (MySQL with binary logging refuses triggers for non-SUPER users).
+- The web tier and the mail worker connect as `paxoficloud_app`. On `audit_events` that user has `SELECT, INSERT` only, so it cannot change or delete an event (MySQL error 1142). On `audit_chain_head` it has `SELECT, UPDATE`; on `audit_event_context` it has `SELECT, INSERT, DELETE` (for the purge).
+- The grants come from `RuntimeGrants::POLICY` and are re-applied by the schema owner after every migration with `bin/paxoficloud db:grants paxoficloud_app`. A new table without a policy entry stops the release. Design: identity threat model §6.22.
+- The schema owner (used only by the deploy agent for `migrate` and `db:grants`) and root on the host can still rewrite rows; `audit:verify` detects that, and the daily external anchor (O-2) will bound it.
 - Verification and purge are run by hand until the job runner (Sprint 4) schedules them.
 
 ## Owner emails (threat model §6.15)

@@ -26,10 +26,13 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # Throwaway secrets: random per run, written 0600, never printed.
 (
   umask 077
-  db_password="smoke-$(openssl rand -hex 16)"
+  owner_password="smoke-$(openssl rand -hex 16)"
+  app_password="smoke-$(openssl rand -hex 16)"
   redis_password="smoke-$(openssl rand -hex 16)"
-  printf 'DB_USERNAME=paxoficloud\nDB_PASSWORD=%s\nREDIS_PASSWORD=%s\n' "$db_password" "$redis_password" > "$env_dir/app.env"
-  printf 'MYSQL_RANDOM_ROOT_PASSWORD=yes\nMYSQL_DATABASE=paxoficloud\nMYSQL_USER=paxoficloud\nMYSQL_PASSWORD=%s\n' "$db_password" > "$env_dir/mysql.env"
+  # Two MySQL users, as on the host (identity threat model §6.22).
+  printf 'DB_USERNAME=paxoficloud_app\nDB_PASSWORD=%s\nREDIS_PASSWORD=%s\n' "$app_password" "$redis_password" > "$env_dir/app.env"
+  printf 'DB_USERNAME=paxoficloud\nDB_PASSWORD=%s\n' "$owner_password" > "$env_dir/owner.env"
+  printf 'MYSQL_RANDOM_ROOT_PASSWORD=yes\nMYSQL_DATABASE=paxoficloud\nMYSQL_USER=paxoficloud\nMYSQL_PASSWORD=%s\nMYSQL_APP_PASSWORD=%s\n' "$owner_password" "$app_password" > "$env_dir/mysql.env"
   printf 'REDIS_PASSWORD=%s\n' "$redis_password" > "$env_dir/redis.env"
   # Email outbox key pair and a fake provider token (nothing is ever sent:
   # the queue is empty and the allow-list matches no real address).
@@ -46,9 +49,28 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 echo "== start"
 "${compose[@]}" up -d --wait --wait-timeout 240
 
-echo "== migrate"
-"${compose[@]}" exec -T php bin/paxoficloud migrate
-"${compose[@]}" exec -T php bin/paxoficloud migrate:status
+echo "== migrate and runtime grants (as the schema owner)"
+as_owner() { ( set -a; . "$env_dir/owner.env"; set +a; "${compose[@]}" run --rm -T --no-deps -e DB_USERNAME -e DB_PASSWORD php bin/paxoficloud "$@" ); }
+"${compose[@]}" exec -T php bin/paxoficloud migrate 2>/dev/null && fail "the runtime user could run migrations"
+as_owner migrate
+as_owner migrate:status
+as_owner db:grants paxoficloud_app
+
+echo "== runtime user is append-only on the audit log (§6.22)"
+php_env="$("${compose[@]}" exec -T php env)"
+grep -qx 'DB_USERNAME=paxoficloud_app' <<<"$php_env" || fail "php does not connect as the runtime user"
+runtime_sql() { "${compose[@]}" exec -T -e "MYSQL_PWD=$(sed -n 's/^MYSQL_APP_PASSWORD=//p' "$env_dir/mysql.env")" mysql mysql -u paxoficloud_app paxoficloud -e "$1" 2>&1; }
+runtime_sql 'SELECT COUNT(*) FROM audit_events' >/dev/null || fail "runtime user cannot read the audit log"
+# Captured first: grep -q in a pipe would close it early and trip pipefail.
+for statement in 'DELETE FROM audit_events' "UPDATE audit_events SET outcome = 'failure'" 'SELECT * FROM schema_migrations' 'CREATE TABLE smoke_ddl (id INT)'; do
+  out="$(runtime_sql "$statement" || true)"
+  grep -q 'ERROR 1142' <<<"$out" || fail "runtime user was allowed: $statement"
+done
+owner_secret="$(sed -n 's/^DB_PASSWORD=//p' "$env_dir/owner.env")"
+for service in php nginx redis; do
+  service_env="$("${compose[@]}" exec -T "$service" env)"
+  grep -qF -- "$owner_secret" <<<"$service_env" && fail "the schema owner password is present in $service"
+done
 
 echo "== serve"
 base=http://127.0.0.1:8080

@@ -5,7 +5,7 @@ The full stack runs in Docker: PHP-FPM 8.4, Nginx 1.28, MySQL 8.4 and Redis 7.
 ## First run
 
 ```bash
-cp .env.example .env            # then change the passwords to your own
+cp .env.example .env            # then change the passwords to your own (incl. DB_ROOT_PASSWORD)
 export COMPOSER_AUTH='{"github-oauth":{"github.com":"<your read-only token>"}}'
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"   # containers write files as you, never root
 docker compose run --rm composer install

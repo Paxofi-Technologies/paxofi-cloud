@@ -378,6 +378,35 @@ WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-
 - **MFA changes.** Turning two-step verification on or off and generating new recovery codes end every other session of the identity (deferred item of §6.13), so a stolen session cannot outlive the owner securing the account.
 - **Not covered here.** An attacker who has the session **and** the password (and the code, if two-step is on) can still revoke the owner's sessions; that attacker already controls the account, and the owner email plus password reset (IAM-012, which will end every other session) is the recovery path. A stolen session alone can still read the list.
 
+### 6.22 Separate runtime database user; append-only audit log at the database (D-14, T-39), 19 Oct 2026
+
+Written before the code. Closes the §6.14 residual: until now the application connected as the schema owner, so a compromised web or worker process could `UPDATE` or `DELETE` audit rows. The hash chain *detected* that (`audit:verify`) but did not *prevent* it.
+
+- **Two MySQL users.**
+  - The **owner** (`paxoficloud`, created by the MySQL image) owns the schema. It is used only by the deploy agent, for `migrate` and `db:grants`, in short-lived containers. Its password lives in `owner.env`, which no long-running container mounts.
+  - The **runtime** user (`paxoficloud_app`) is what the web tier and the mail worker use (`app.env`). Neither user can create users or touch other schemas.
+  - The root password is random and never stored (`MYSQL_RANDOM_ROOT_PASSWORD`).
+  - A one-time init script, run by the MySQL image as root on the first start of an empty volume, creates the runtime user and gives the owner `GRANT OPTION` on the application schema only.
+- **Grants per table, from one policy in code.** `RuntimeGrants` maps every application table to the privileges the runtime user gets.
+  - After every migration, `db:grants` (run as the owner) revokes everything the runtime user holds on the schema, then grants table by table from the policy.
+  - There is never a schema-wide grant, and never DDL, `FILE`, `PROCESS`, `GRANT OPTION`, `CREATE USER` or routines.
+  - Deny by default: a table that exists but is not in the policy stops the release ("unknown table"). Every new table is therefore a reviewed decision, and a unit test checks that the policy names exactly the tables the migrations create.
+- **The policy:**
+  - `audit_events`: `SELECT, INSERT`. Append-only: the runtime user cannot change or delete an event.
+  - `audit_chain_head`: `SELECT, UPDATE`. It moves the single head row forward; it cannot insert or delete it.
+  - `audit_event_context`: `SELECT, INSERT, DELETE`. Deleting is the 180-day privacy purge (T-51). The event keeps the salted commitment, so the chain still verifies; an early deletion looks like a purge. This is accepted, because the event row itself, its outcome and its subject cannot be changed.
+  - `schema_migrations`: no access.
+  - Every other table: `SELECT, INSERT, UPDATE, DELETE`.
+- **Identifiers.** `GRANT` and `REVOKE` cannot bind identifiers as parameters. Table and user names come from `information_schema` or validated configuration, must match `^[a-z0-9_]{1,64}$`, and are quoted with backticks. Privileges come only from the policy constants. Nothing from a request reaches these statements.
+- **Tests.** An integration test connects as a runtime user created for the test and shows the following:
+  - `INSERT` and `SELECT` on `audit_events` work;
+  - `UPDATE` and `DELETE` on `audit_events` are refused with MySQL error 1142;
+  - `schema_migrations` cannot be read;
+  - `CREATE TABLE` is refused;
+  - a table missing from the policy makes `db:grants` fail.
+- **Rollout.** The agent and compose file reach the host through cloud-init, so this needs an infra apply (new server, empty volume). The agent refuses to release on a host whose secrets predate the split rather than silently running as the owner.
+- **Still not covered.** Whoever holds the owner password or root on the host can still rewrite the table. That is limited by the daily external anchor (O-2, R-3).
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -412,6 +441,7 @@ WebAuthn (passkeys and security keys) is the only way staff sign in (IAM-008, D-
 | 2026-10-18 | §6.18 staff sessions + admin API notes (separate Strict cookie and Redis prefix, 15 min/8 h, admin host only, single route table with one access rule per route, activation alert); written before the code | Claude (security engineering) |
 | 2026-10-18 | §6.17 staff passkey notes (invitation tokens, two-passkey activation, ES256/EdDSA only, discoverable usernameless sign-in, single-use challenges, clone detection disables the credential); written before the staff passkey code | Claude (security engineering) |
 | 2026-10-18 | §6.16 staff RBAC notes (ACC-005 permission catalogue from SRS §2.2, deny by default, two-person Super Admin grants, reason-scoped suspensions); O-1 resolved by ADR-002; written before the staff RBAC code | Claude (security engineering) |
+| 2026-10-19 | §6.22 separate runtime DB user and per-table grants (audit log append-only at the database); written before the code | Claude (security engineering) |
 | 2026-10-19 | §6.21 step-up (password + code) for revoking sessions and owner email; written before the code | Claude (security engineering) |
 | 2026-10-19 | §6.21 customer session list and revoke (T-23), other sessions ended on MFA changes; written before the code | Claude (security engineering) |
 | 2026-10-19 | §6.20 staff sign-in with password + TOTP + email code, passkeys optional (CEO decision); D-11 and T-29 amended; R-5 added; written before the code | Claude (security engineering) |
