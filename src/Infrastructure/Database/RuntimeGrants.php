@@ -28,6 +28,17 @@ final readonly class RuntimeGrants
         'audit_chain_head' => ['SELECT', 'UPDATE'],
         // DELETE is the 180-day privacy purge (T-51); the event keeps its commitment.
         'audit_event_context' => ['SELECT', 'INSERT', 'DELETE'],
+        // Catalogue (commerce threat model CD-4, CD-5). Dated price and cost rows
+        // are append-only: a change is a new row from a future date (PRC-005).
+        'catalogue_costs' => ['SELECT', 'INSERT'],
+        'catalogue_option_choices' => self::CRUD,
+        'catalogue_option_prices' => ['SELECT', 'INSERT'],
+        'catalogue_plan_cycles' => self::CRUD,
+        'catalogue_plan_options' => self::CRUD,
+        'catalogue_plans' => self::CRUD,
+        'catalogue_prices' => ['SELECT', 'INSERT'],
+        'catalogue_products' => self::CRUD,
+        'catalogue_provider_mappings' => self::CRUD,
         'email_outbox' => self::CRUD,
         'email_verification_tokens' => self::CRUD,
         'identities' => self::CRUD,

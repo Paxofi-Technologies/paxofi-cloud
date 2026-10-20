@@ -71,6 +71,15 @@ abstract class IntegrationTestCase extends TestCase
         $pdo->exec('DROP TABLE IF EXISTS example_accounts');
         $pdo->exec('DROP TABLE IF EXISTS email_outbox');
         $pdo->exec('DROP TABLE IF EXISTS provider_credentials');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_option_prices');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_option_choices');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_plan_options');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_costs');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_prices');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_provider_mappings');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_plan_cycles');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_plans');
+        $pdo->exec('DROP TABLE IF EXISTS catalogue_products');
         $pdo->exec('DROP TABLE IF EXISTS schema_migrations');
     }
 
