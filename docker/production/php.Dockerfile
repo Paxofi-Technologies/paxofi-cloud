@@ -7,7 +7,7 @@
 FROM php:8.4-fpm@sha256:1071b5609d16d60674f78eea8cf9bd7e9e79169ecb566d015c931c5ee789bb13
 
 RUN set -eux; \
-    docker-php-ext-install -j"$(nproc)" pdo_mysql opcache; \
+    docker-php-ext-install -j"$(nproc)" pdo_mysql opcache bcmath; \
     rm -rf /tmp/* /usr/src/php.tar.xz
 
 COPY docker/php/conf.d/paxoficloud.ini /usr/local/etc/php/conf.d/zz-paxoficloud.ini

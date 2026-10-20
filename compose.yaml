@@ -117,6 +117,8 @@ services:
     environment:
       COMPOSER_AUTH: ${COMPOSER_AUTH:-}
       COMPOSER_HOME: /tmp/composer
+      # The composer image lacks bcmath; the php service image has it.
+      COMPOSER_IGNORE_PLATFORM_REQ: ext-bcmath
     volumes:
       - .:/app
     tmpfs:

@@ -5,7 +5,7 @@
 FROM php:8.4-fpm
 
 RUN set -eux; \
-    docker-php-ext-install -j"$(nproc)" pdo_mysql opcache; \
+    docker-php-ext-install -j"$(nproc)" pdo_mysql opcache bcmath; \
     rm -rf /tmp/*
 
 COPY conf.d/paxoficloud.ini /usr/local/etc/php/conf.d/zz-paxoficloud.ini

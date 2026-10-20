@@ -135,7 +135,8 @@ jobs:
             exit 1
           fi
           export COMPOSER_AUTH="{\"github-oauth\":{\"github.com\":\"${PCF_READ_TOKEN}\"}}"
-          docker run --rm -e COMPOSER_AUTH -v "$PWD:/app" -w /app --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer \
+          # The composer image lacks bcmath; the runtime image has it and the smoke test checks it.
+          docker run --rm -e COMPOSER_AUTH -e COMPOSER_IGNORE_PLATFORM_REQ=ext-bcmath -v "$PWD:/app" -w /app --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer \
             composer:2@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac install --no-dev --no-interaction --no-progress --prefer-dist --classmap-authoritative
 
       - name: Build images

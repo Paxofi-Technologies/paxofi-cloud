@@ -40,6 +40,9 @@ final readonly class RuntimeGrants
         'catalogue_products' => self::CRUD,
         'catalogue_provider_mappings' => self::CRUD,
         'email_outbox' => self::CRUD,
+        // Exchange rates (CD-16): a held set is never edited; confirmations are new sets.
+        'fx_rate_sets' => ['SELECT', 'INSERT'],
+        'fx_rate_values' => ['SELECT', 'INSERT'],
         'email_verification_tokens' => self::CRUD,
         'identities' => self::CRUD,
         'identity_devices' => self::CRUD,
