@@ -102,6 +102,7 @@ Boundaries:
 | CD-9 | **Customer order reads are scoped by the session's account in the query.** There is no account parameter; another account's order ID returns 404 (ORD-004). |
 | CD-10 | **Billing currency is chosen when billing details are first saved:** NGN for Nigeria, USD otherwise. It locks with the first invoice, and the cart prices in that currency only (PRC-003). |
 | CD-11 | **Catalogue text** (names, descriptions, option labels) is plain text with length limits. It is rendered as text, never as HTML, in every frontend. |
+| CD-12 | **Tax rates are a per-country table, not code** (CEO decision, 20 Oct 2026). Each row holds country (ISO 3166-1 alpha-2), tax name, rate in basis points and effective-from date. One fallback row covers every unlisted country, set to 0%. The home country is Nigeria at 7.5%. Each product kind can be marked taxable or not.<br>• Only Finance or Security Admin staff can change rates. Changes are future-dated and audited.<br>• **The tax country is the billing-address country.** The Cloudflare visitor country only pre-fills the form.<br>• Both countries are stored on the order. A mismatch where the billing country has a lower rate than the visitor country flags the order for review; the order is still taxed by billing country.<br>• The rate, tax name and amount are snapshotted on each order line and invoice, so later rate changes never alter past documents.<br>• A country is added only once Paxofi is tax-registered there (accountant to confirm).<br>This replaces the two-rate `VatPolicy` in the billing-details/checkout work. |
 
 ## 6. Threats (STRIDE)
 
@@ -116,6 +117,7 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale.
 | C-03 | T | Integer overflow from huge quantities or amounts wraps a total negative | 1 | 3 | CD-1 bounds; quantity and term limits (CRT-002); checked multiplication | PRC-001, CRT-002 | `MoneyBoundsTest` |
 | C-04 | T | VAT computed on the wrong base, wrongly rounded or applied to the wrong customers | 2 | 3 | CD-2 per-line VAT; rate from configuration (basis points), country rule from billing details; shown separately | PRC-008 | `VatTest` (₦10,000 → ₦750 acceptance case) |
 | C-05 | T | Price changes between "add to cart" and "checkout", or are back-dated to alter past orders | 2 | 2 | CD-4 effective dating with future-only start; checkout re-prices and reports the change; orders snapshot the price row | PRC-005 | `PriceEffectiveDateTest`, `CheckoutRepricesTest` |
+| C-24 | T | Customer picks a zero-rate billing country to avoid VAT | 2 | 2 | CD-12: billing country and Cloudflare country both stored; lower-rate mismatch flags the order for review; rate snapshotted | PRC-008 | `TaxCountryMismatchTest` |
 | C-06 | E | Customer switches billing currency to buy at a cheaper USD/NGN price | 2 | 2 | CD-10 lock after first invoice; cart currency comes from the account, not the request | PRC-003 | `BillingCurrencyLockTest` |
 
 ### 6.2 Catalogue integrity and disclosure (CAT)
@@ -175,11 +177,12 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale.
 | ID | Item | Decision needed by |
 |---|---|---|
 | CO-1 | Launch price points and provider costs for each plan (BR-05) | CEO, before beta |
-| CO-2 | VAT rate and treatment confirmation (BR-06, BR-07) | Accountant, before beta |
-| CO-3 | Coupons (PRC-007, Should): scope for Sprint 2 or later | CEO, Sprint 2 planning |
+| CO-2 | VAT rates and treatment confirmation (BR-06, BR-07): Nigeria rate, taxable product kinds (e.g. domains from foreign registrars), and the countries where Paxofi is tax-registered. Design decided by the CEO (CD-12) | Accountant, before beta |
+| CO-3 | Coupons (PRC-007, Should). **Decided 20 Oct 2026: deferred until after the core purchase flow** (catalogue → cart → checkout → payment) | Closed |
 
 ## 10. Review log
 
 | Date | Change | By |
 |---|---|---|
 | 2026-10-20 | Baseline, written before any commerce code | Claude (security engineering) |
+| 2026-10-20 | CD-12 per-country tax table + C-24 (CEO VAT decision); CO-3 closed (coupons deferred) | Claude (security engineering) |
