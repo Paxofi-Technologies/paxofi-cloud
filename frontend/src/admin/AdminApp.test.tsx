@@ -448,3 +448,107 @@ describe('Staff console', () => {
     expect((calls(fetchImpl, 'POST /admin-api/v1/auth/sign-out')[0]?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
   });
 });
+
+describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
+  const securityAdmin = { ...manager, staff: { ...manager.staff, permissions: ['staff.manage', 'provider_credentials.manage', 'audit.view'] } };
+  const providers = {
+    providers: [
+      {
+        provider: 'domainnameapi',
+        label: 'DomainNameAPI (domain registrar)',
+        credential_id: 'domainnameapi-staging',
+        fields: [
+          { name: 'username', label: 'Reseller username', secret: false },
+          { name: 'password', label: 'Reseller password', secret: true },
+        ],
+        configured_at: null,
+        review_due_on: null,
+        pending_since: null,
+      },
+      {
+        provider: 'hetzner',
+        label: 'Hetzner Cloud (servers)',
+        credential_id: 'hetzner-staging',
+        fields: [{ name: 'api_token', label: 'API token (read & write)', secret: true }],
+        configured_at: '2026-10-20T08:00:00+00:00',
+        review_due_on: '2027-10-20',
+        pending_since: null,
+      },
+    ],
+  };
+  const base = {
+    'GET /admin-api/v1/auth/session': { status: 200, body: securityAdmin },
+    'GET /admin-api/v1/staff': { status: 200, body: { staff: [], pending_grants: [] } },
+  };
+
+  it('shows status only and saves a credential with a fresh code and the CSRF token, then clears the values', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      ...base,
+      'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
+      'POST /admin-api/v1/provider-connections': { status: 202, body: { status: 'pending' } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText('Not connected yet.')).toBeInTheDocument();
+    expect(screen.getByText(/Connected\. Last set 20 Oct 2026, 09:00 WAT; review by 2027-10-20\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Replace credential' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Set credential' }));
+    const password = screen.getByLabelText('Reseller password');
+    expect(password).toHaveAttribute('type', 'password');
+    expect(password).toHaveAttribute('autocomplete', 'new-password');
+    await user.type(screen.getByLabelText('Reseller username'), 'reseller01');
+    await user.type(password, 'S3cret-pass');
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Save credential' }));
+
+    await screen.findByText(/DomainNameAPI \(domain registrar\): saved\./);
+    const [init] = calls(fetchImpl, 'POST /admin-api/v1/provider-connections');
+    expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
+    expect(JSON.parse(String(init?.body))).toEqual({ provider: 'domainnameapi', fields: { username: 'reseller01', password: 'S3cret-pass' }, code: '123456' });
+    expect(screen.queryByLabelText('Reseller password')).toBeNull();
+    expect(document.body.innerHTML).not.toContain('S3cret-pass');
+  });
+
+  it('explains a wrong code and clears what was typed', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      ...base,
+      'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
+      'POST /admin-api/v1/provider-connections': { status: 401, body: { code: 'code_invalid' } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Replace credential' }));
+    await user.type(screen.getByLabelText('API token (read & write)'), 'tok-1');
+    await user.type(screen.getByLabelText('Authenticator code'), '000000');
+    await user.click(screen.getByRole('button', { name: 'Save credential' }));
+
+    expect(await screen.findByText(/That code is not right/)).toBeInTheDocument();
+    expect(screen.getByLabelText('API token (read & write)')).toHaveValue('');
+    expect(screen.getByLabelText('Authenticator code')).toHaveValue('');
+  });
+
+  it('checks the form before sending anything', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Set credential' }));
+    await user.click(screen.getByRole('button', { name: 'Save credential' }));
+
+    expect(screen.getByText('Enter the reseller username.')).toBeInTheDocument();
+    expect(screen.getByText('Enter the 6-digit code from your authenticator app.')).toBeInTheDocument();
+    expect(calls(fetchImpl, 'POST /admin-api/v1/provider-connections')).toHaveLength(0);
+  });
+
+  it('is hidden from staff without provider_credentials.manage', async () => {
+    const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/auth/session': { status: 200, body: manager } });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await screen.findByRole('heading', { name: 'Staff console' });
+    expect(screen.queryByText('Provider connections')).toBeNull();
+    expect(calls(fetchImpl, 'GET /admin-api/v1/provider-connections')).toHaveLength(0);
+  });
+});

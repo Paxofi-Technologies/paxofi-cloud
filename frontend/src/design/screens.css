@@ -82,3 +82,7 @@
 .pc-admin__role { display: inline-block; margin: 0 var(--pc-space-2) var(--pc-space-2) 0; }
 .pc-admin__grants { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--pc-space-3); }
 .pc-admin__grants li { display: flex; align-items: center; justify-content: space-between; gap: var(--pc-space-4); flex-wrap: wrap; }
+.pc-admin__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--pc-space-4); }
+.pc-admin__list > li { padding-top: var(--pc-space-4); border-top: 1px solid var(--pc-semantic-border-default); }
+.pc-admin__list > li:first-child { padding-top: 0; border-top: 0; }
+.pc-admin__row { display: flex; align-items: center; justify-content: space-between; gap: var(--pc-space-4); flex-wrap: wrap; }

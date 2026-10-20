@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type R
 import { Alert, Badge, Button, Card, Logo, RecoveryCodesView, TextField } from '../components';
 import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
+import { formatWhen } from '../lib/activity';
 import { groupSecret, readRecoveryCodes } from '../lib/mfa';
 import {
   INVITABLE_ROLES,
@@ -9,6 +10,7 @@ import {
   addPasskeyOptions,
   approveGrant,
   ceremony,
+  fetchProviderConnections,
   fetchStaff,
   fetchStaffSession,
   finishEnrolment,
@@ -25,6 +27,9 @@ import {
   startMemberSetup,
   submitAuthenticatorCode,
   submitEmailCode,
+  submitProviderCredential,
+  type ProviderConnectionList,
+  type ProviderConnectionStatus,
   type SignInSetup,
   type StaffList,
   type StaffSession,
@@ -590,6 +595,7 @@ function Dashboard({
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const canManage = session.permissions.includes('staff.manage');
+  const canSetCredentials = session.permissions.includes('provider_credentials.manage');
 
   async function signOut() {
     setSigningOut(true);
@@ -631,6 +637,7 @@ function Dashboard({
         </Card>
         <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />
         {canManage && <StaffManagement session={session} fetchImpl={fetchImpl} />}
+        {canSetCredentials && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
       </main>
     </div>
   );
@@ -970,5 +977,191 @@ function InviteForm({ session, fetchImpl, onInvited }: { session: StaffSession; 
         </Button>
       </form>
     </Card>
+  );
+}
+
+/**
+ * Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md). Staff can set
+ * or replace a provider's API credential, never read it back (PC-2). Each
+ * submission needs a fresh authenticator code (PC-3); values are cleared
+ * from page state as soon as they are sent (PC-8).
+ */
+function ProviderConnections({ session, fetchImpl }: { session: StaffSession; fetchImpl?: typeof fetch | undefined }) {
+  const [list, setList] = useState<ProviderConnectionList | 'loading'>('loading');
+  const [version, setVersion] = useState(0);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetchProviderConnections(fetchImpl).then((next) => {
+      if (active) setList(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchImpl, version]);
+
+  // The worker stores a submission within seconds; look again so "being stored" turns into "connected".
+  useEffect(() => {
+    if (list === 'loading' || list.kind !== 'ok' || !list.providers.some((p) => p.pendingSince !== null)) return;
+    const timer = window.setTimeout(() => setVersion((n) => n + 1), 4000);
+    return () => window.clearTimeout(timer);
+  }, [list]);
+
+  return (
+    <Card title="Provider connections">
+      <p className="pc-muted">
+        API credentials PaxofiCloud uses to work with its suppliers. They are encrypted as soon as you save them, and nobody can view them again: to change one,
+        enter it again.
+      </p>
+      {message && <Alert tone={message.tone}>{message.text}</Alert>}
+      {list === 'loading' && <p className="pc-muted">Loading provider connections…</p>}
+      {list !== 'loading' && list.kind === 'failed' && <Alert tone="danger">Provider connections could not be loaded.</Alert>}
+      {list !== 'loading' && list.kind === 'ok' && (
+        <ul className="pc-admin__list">
+          {list.providers.map((provider) => (
+            <li key={provider.provider} className="pc-stack">
+              <div className="pc-admin__row">
+                <div>
+                  <strong>{provider.label}</strong>
+                  <p className="pc-muted">{connectionStatus(provider)}</p>
+                </div>
+                {editing !== provider.provider && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setMessage(null);
+                      setEditing(provider.provider);
+                    }}
+                  >
+                    {provider.configuredAt ? 'Replace credential' : 'Set credential'}
+                  </Button>
+                )}
+              </div>
+              {editing === provider.provider && (
+                <CredentialForm
+                  session={session}
+                  provider={provider}
+                  fetchImpl={fetchImpl}
+                  onCancel={() => setEditing(null)}
+                  onSaved={() => {
+                    setEditing(null);
+                    setMessage({ tone: 'success', text: `${provider.label}: saved. It is encrypted and stored within a few seconds, and every security administrator is emailed.` });
+                    setVersion((n) => n + 1);
+                  }}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function connectionStatus(provider: ProviderConnectionStatus): string {
+  if (provider.pendingSince) return `Saved ${formatWhen(provider.pendingSince)}, being encrypted and stored…`;
+  if (provider.configuredAt) return `Connected. Last set ${formatWhen(provider.configuredAt)}${provider.reviewDueOn ? `; review by ${provider.reviewDueOn}` : ''}.`;
+
+  return 'Not connected yet.';
+}
+
+const CREDENTIAL_ERRORS: Record<string, string> = {
+  code_invalid: CODE_WRONG,
+  unknown_provider: 'This provider is not supported.',
+  intake_unavailable: 'Credentials cannot be saved on this server yet. Ask the engineering team to finish the provider worker setup.',
+};
+
+function CredentialForm({
+  session,
+  provider,
+  fetchImpl,
+  onCancel,
+  onSaved,
+}: {
+  session: StaffSession;
+  provider: ProviderConnectionStatus;
+  fetchImpl?: typeof fetch | undefined;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [code, setCode] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [problem, setProblem] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const next: Record<string, string> = {};
+    for (const field of provider.fields) {
+      if ((values[field.name] ?? '') === '') next[field.name] = `Enter the ${field.label.toLowerCase()}.`;
+    }
+    if (!/^\d{6}$/.test(code)) next.code = 'Enter the 6-digit code from your authenticator app.';
+    setErrors(next);
+    setProblem(null);
+    if (Object.keys(next).length > 0) return;
+
+    setLoading(true);
+    const result = await submitProviderCredential(session.csrfToken, provider.provider, values, code, fetchImpl);
+    setLoading(false);
+    // PC-8: the values leave page state whatever happened; the code is single use anyway.
+    setValues({});
+    setCode('');
+    if (result.kind === 'ok') {
+      onSaved();
+      return;
+    }
+    if (result.kind === 'invalid') {
+      const field = Object.keys(result.errors)[0] ?? '';
+      const label = provider.fields.find((f) => f.name === field)?.label;
+      setProblem(label ? `Check the ${label.toLowerCase()}: it must not be empty, too long, or contain line breaks.` : 'Check the values and try again.');
+      return;
+    }
+    setProblem(result.kind === 'rejected' ? (CREDENTIAL_ERRORS[result.code] ?? 'The credential could not be saved.') : problemText(result, 'The credential could not be saved.'));
+  }
+
+  return (
+    <form className="pc-auth__form" onSubmit={submit} noValidate autoComplete="off">
+      {problem && <Alert tone="danger">{problem}</Alert>}
+      {provider.fields.map((field) => (
+        <TextField
+          key={field.name}
+          label={field.label}
+          type={field.secret ? 'password' : 'text'}
+          autoComplete={field.secret ? 'new-password' : 'off'}
+          spellCheck={false}
+          value={values[field.name] ?? ''}
+          onChange={(e) => setValues((current) => ({ ...current, [field.name]: e.target.value }))}
+          error={errors[field.name]}
+        />
+      ))}
+      <TextField
+        label="Authenticator code"
+        hint="A fresh code from your authenticator app confirms it is you."
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+        error={errors.code}
+      />
+      <div className="pc-admin__row">
+        <Button type="submit" loading={loading}>
+          Save credential
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            setValues({});
+            setCode('');
+            onCancel();
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
