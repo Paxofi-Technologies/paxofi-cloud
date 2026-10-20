@@ -8,7 +8,7 @@ use PaxofiCloud\Application\Contracts\CatalogueReader;
 use PaxofiCloud\Application\Contracts\PricingReader;
 use PaxofiCloud\Application\Contracts\RequestContext;
 use PaxofiCloud\Application\Contracts\TenantAuthorizer;
-use PaxofiCloud\Domain\Catalogue\Money;
+use PaxofiCloud\Domain\Money\Money;
 use PaxofiCloud\Domain\Catalogue\Product;
 use PaxofiCloud\Domain\Catalogue\ProductId;
 use PaxofiCloud\Domain\Tenant\TenantId;
