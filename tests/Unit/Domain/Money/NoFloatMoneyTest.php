@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class NoFloatMoneyTest extends TestCase
 {
-    private const array MONEY_PATHS = ['src/Domain/Money'];
+    private const array MONEY_PATHS = ['src/Domain/Money', 'src/Domain/Pricing'];
 
     /** Functions that return floats or format through floats. */
     private const array FORBIDDEN_FUNCTIONS = ['round', 'floor', 'ceil', 'floatval', 'fdiv', 'number_format', 'fmod', 'pow', 'sqrt'];

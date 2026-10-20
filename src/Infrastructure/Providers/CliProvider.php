@@ -19,6 +19,10 @@ use PaxofiCloud\Cli\StaffBootstrapCommand;
 use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Cli\Console;
 use PaxofiCloud\Cli\DbGrantsCommand;
+use PaxofiCloud\Cli\FxStatusCommand;
+use PaxofiCloud\Cli\FxUpdateCommand;
+use PaxofiCloud\Application\Contracts\FxRateStore;
+use PaxofiCloud\Application\Pricing\FxRateUpdater;
 use PaxofiCloud\Cli\CredentialsListCommand;
 use PaxofiCloud\Cli\CredentialsReencryptCommand;
 use PaxofiCloud\Cli\CredentialsSetCommand;
@@ -91,6 +95,8 @@ final readonly class CliProvider implements Provider
             $auditChain = new MysqlAuditChain(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class));
             $registry->register(new AuditVerifyCommand($auditChain, $console));
             $registry->register(new AuditPurgeContextCommand($auditChain, $console, $clock));
+            $registry->register(new FxUpdateCommand(static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class), $console));
+            $registry->register(new FxStatusCommand(Resolve::get($c, FxRateStore::class), $console));
             $registry->register(new StaffBootstrapCommand(static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class), $console));
 
             return $registry;

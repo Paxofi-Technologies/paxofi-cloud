@@ -5,6 +5,7 @@
   "license": "proprietary",
   "require": {
     "php": ">=8.4",
+    "ext-bcmath": "*",
     "ext-curl": "*",
     "ext-json": "*",
     "ext-sodium": "*",

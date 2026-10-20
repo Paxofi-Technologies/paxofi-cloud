@@ -30,7 +30,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: sodium, pdo_mysql, mbstring
+          extensions: sodium, pdo_mysql, mbstring, bcmath
           tools: composer
           coverage: none
         env:
@@ -96,7 +96,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
-          extensions: sodium, mbstring
+          extensions: sodium, mbstring, bcmath
           tools: composer
           coverage: none
 
@@ -159,7 +159,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: sodium, pdo_mysql, mbstring
+          extensions: sodium, pdo_mysql, mbstring, bcmath
           tools: composer
           coverage: none
 
