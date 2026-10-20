@@ -48,6 +48,8 @@ final readonly class RuntimeGrants
         'identity_devices' => self::CRUD,
         'identity_recovery_codes' => self::CRUD,
         'identity_totp' => self::CRUD,
+        // Sealed boxes waiting for the provider worker (PC-5): replaced by delete + insert, never edited.
+        'provider_credential_intake' => ['SELECT', 'INSERT', 'DELETE'],
         'provider_credentials' => self::CRUD,
         // Migration bookkeeping belongs to the owner alone.
         'schema_migrations' => [],

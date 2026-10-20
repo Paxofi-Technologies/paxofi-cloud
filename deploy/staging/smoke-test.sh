@@ -44,6 +44,11 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
   # Cloudflare's documented always-pass test keys (§6.12); never real ones.
   printf 'TURNSTILE_SITE_KEY=1x00000000000000000000AA\nTURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA\n' > "$env_dir/web.env"
   printf 'MFA_SECRET_KEYS=k1:%s\nMFA_SECRET_ACTIVE_KEY=k1\nMFA_RECOVERY_KEY=%s\n' "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" > "$env_dir/identity-keys.env"
+  # Provider connections (PC-1, PC-6): intake key pair and the provider-credential KEK.
+  intake="$(docker run --rm --entrypoint php "paxoficloud-php:$APP_VERSION" -r '$k = sodium_crypto_box_keypair(); echo base64_encode(sodium_crypto_box_publickey($k)), " ", base64_encode(sodium_crypto_box_secretkey($k));')"
+  printf 'CREDENTIAL_INTAKE_PUBLIC_KEY=%s\n' "${intake% *}" > "$env_dir/credential-intake-public.env"
+  printf 'CREDENTIAL_INTAKE_SECRET_KEY=%s\n' "${intake#* }" > "$env_dir/credential-intake-secret.env"
+  printf 'PROVIDER_CREDENTIAL_KEYS=k1:%s\nPROVIDER_CREDENTIAL_ACTIVE_KEY=k1\n' "$(openssl rand -base64 32)" > "$env_dir/provider-credential-keys.env"
 )
 
 echo "== start"
@@ -138,8 +143,18 @@ grep -q '^TURNSTILE_SECRET_KEY=.' <<<"$web_env" || fail "web tier lacks the Turn
 grep -q '^MFA_RECOVERY_KEY=.' <<<"$web_env" || fail "web tier lacks the MFA keys"
 "${compose[@]}" run --rm -T mail-worker env | grep -qE '^(TURNSTILE_|MFA_)' && fail "web tier keys present in the mail worker"
 
+echo "== provider worker"
+# PC-1/PC-6: it boots with the intake secret key and the KEK, and drains an empty intake.
+"${compose[@]}" exec -T provider-worker php bin/paxoficloud providers:work --once | grep -q 'Handled 0 credential submission(s).' || fail "provider worker does not start"
+grep -q '^CREDENTIAL_INTAKE_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the credential intake public key"
+grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' <<<"$web_env" && fail "credential intake secret key or KEK present in the php container"
+"${compose[@]}" run --rm -T mail-worker env | grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' && fail "credential keys present in the mail worker"
+provider_env="$("${compose[@]}" exec -T provider-worker env)"
+grep -qE '^(TURNSTILE_|MFA_|EMAIL_OUTBOX_SECRET_KEY|SMTP_|POSTMARK_)' <<<"$provider_env" && fail "web or mail secrets present in the provider worker"
+test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/admin-api/v1/provider-connections")" = 401 || fail "provider connections reachable without a staff session"
+
 echo "== hardening"
-for service in php nginx redis; do
+for service in php nginx redis provider-worker; do
   id="$("${compose[@]}" ps -q "$service")"
   test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$id")" = true || fail "$service root filesystem is writable"
   docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$id" | grep -q 'no-new-privileges:true' || fail "$service lacks no-new-privileges"
@@ -150,14 +165,14 @@ test "$("${compose[@]}" exec -T redis id -u)" != 0 || fail "redis runs as root"
 "${compose[@]}" exec -T php env | grep -q '^PROVIDER_CREDENTIAL' && fail "KEK present in the php container"
 # P-5/D-04: secret values live only in env files. They must never appear in a
 # container's command, entrypoint or labels (visible to `docker inspect`).
-for service in php nginx mysql redis; do
+for service in php nginx mysql redis provider-worker; do
   id="$("${compose[@]}" ps -q "$service")"
   config="$(docker inspect -f '{{json .Config.Cmd}}{{json .Config.Entrypoint}}{{json .Config.Labels}}' "$id")"
   test -n "$config" || fail "cannot inspect $service"
   while IFS='=' read -r _ value; do
     [ -n "$value" ] || continue
     grep -qF -- "$value" <<<"$config" && fail "a secret value appears in the $service container definition"
-  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=|^TURNSTILE_SECRET_KEY=|^MFA_(SECRET_KEYS|RECOVERY_KEY)=" "$env_dir"/*.env)
+  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=|^TURNSTILE_SECRET_KEY=|^MFA_(SECRET_KEYS|RECOVERY_KEY)=|^CREDENTIAL_INTAKE_SECRET_KEY=|^PROVIDER_CREDENTIAL_KEYS=" "$env_dir"/*.env)
 done
 # Code inside the image is not writable by the PHP user.
 "${compose[@]}" exec -T php sh -c 'test ! -w /app/src && test ! -w /app/vendor' || fail "application code is writable"

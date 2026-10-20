@@ -17,7 +17,7 @@ use PaxofiCloud\Integration\Provider\ProviderCredentialSource;
  * (threat model D-5). Plaintext tokens exist only in memory, inside
  * ProviderCredential, for the duration of a provider call.
  */
-final class MysqlProviderCredentialStore implements ProviderCredentialSource
+final class MysqlProviderCredentialStore implements ProviderCredentialSource, ProviderCredentialWriter
 {
     public function __construct(
         private readonly Connection $connection,

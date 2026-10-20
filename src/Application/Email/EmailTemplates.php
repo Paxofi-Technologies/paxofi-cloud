@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Application\Email;
 
+use PaxofiCloud\Domain\Providers\ProviderConnection;
+
 /**
  * The transactional email templates, kept in code so they are reviewed like
  * code (threat model E-8):
@@ -32,6 +34,7 @@ final readonly class EmailTemplates
     public const string STAFF_INVITATION = 'staff-invitation';
     public const string STAFF_ACTIVATED = 'staff-activated';
     public const string STAFF_SIGN_IN_CODE = 'staff-sign-in-code';
+    public const string PROVIDER_CREDENTIAL_CHANGED = 'provider-credential-changed';
 
     /** Changes the security-change email can report, with how they read. */
     public const array SECURITY_CHANGES = [
@@ -58,7 +61,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_SIGN_IN_CODE];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED];
     }
 
     /** @param array<string, string> $parameters */
@@ -72,6 +75,7 @@ final readonly class EmailTemplates
             self::STAFF_INVITATION => $this->staffInvitation($to, $name, self::token($parameters), $idempotencyKey),
             self::STAFF_ACTIVATED => $this->staffActivated($to, $name, self::personName($parameters['staff_name'] ?? ''), $idempotencyKey),
             self::STAFF_SIGN_IN_CODE => $this->staffSignInCode($to, $name, $parameters, $idempotencyKey),
+            self::PROVIDER_CREDENTIAL_CHANGED => $this->providerCredentialChanged($to, $name, $parameters, $idempotencyKey),
             self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
@@ -128,6 +132,42 @@ final readonly class EmailTemplates
             $link,
             'This link expires in 24 hours. If you did not expect this invitation, ignore this email and tell the security team.',
         ), self::STAFF_INVITATION, $key);
+    }
+
+    /**
+     * Provider connections PC-7: every staff manager hears that a provider
+     * credential was replaced. Names the provider and time only, never a value.
+     *
+     * @param array<string, string> $parameters
+     */
+    private function providerCredentialChanged(EmailAddress $to, string $name, array $parameters, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff alerts cannot be sent.');
+        }
+        $provider = ProviderConnection::tryFrom($parameters['provider'] ?? '')?->label() ?? 'A provider';
+        $time = self::time($parameters['time'] ?? '');
+        $link = $this->adminUrl . '/providers';
+        $text = <<<TXT
+            Hi {$name},
+
+            The API credential for {$provider} was replaced in the {$this->productName} admin console at {$time}.
+
+            If you did not expect this, check the provider connections page now and re-enter the correct credential:
+
+            {$link}
+
+            {$this->productName}
+            TXT;
+
+        return new EmailMessage($to, 'A provider credential was changed', $text, $this->html(
+            'A provider credential was changed',
+            sprintf('Hi %s,', self::e($name)),
+            sprintf('The API credential for %s was replaced in the %s admin console at %s.', self::e($provider), self::e($this->productName), self::e($time)),
+            'Review provider connections',
+            $link,
+            'If you did not expect this, check the provider connections page now and re-enter the correct credential.',
+        ), self::PROVIDER_CREDENTIAL_CHANGED, $key);
     }
 
     /** §6.18: tells the other staff managers that someone finished enrolment, so a stolen invitation is noticed. */
