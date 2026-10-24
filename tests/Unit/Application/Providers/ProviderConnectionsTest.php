@@ -46,7 +46,7 @@ final class ProviderConnectionsTest extends TestCase
 
     public function testASubmissionIsSealedForTheWorkerAndAudited(): void
     {
-        $this->submit(['username' => 'reseller01', 'password' => self::PASSWORD]);
+        $this->submit(['reseller_id' => '0b6f1c2e-1111-4222-8333-444455556666', 'api_key' => self::PASSWORD]);
 
         $row = $this->intake->rows['domainnameapi-staging'] ?? null;
         self::assertNotNull($row);
@@ -58,7 +58,7 @@ final class ProviderConnectionsTest extends TestCase
         self::assertSame('read-write', $payload['access_level']);
         self::assertSame($this->staffId, $payload['submitted_by']);
         self::assertIsString($payload['secret']);
-        self::assertSame(['username' => 'reseller01', 'password' => self::PASSWORD], json_decode($payload['secret'], true));
+        self::assertSame(['reseller_id' => '0b6f1c2e-1111-4222-8333-444455556666', 'api_key' => self::PASSWORD], json_decode($payload['secret'], true));
 
         $last = end($this->f->audit->events);
         self::assertNotFalse($last);
@@ -70,8 +70,8 @@ final class ProviderConnectionsTest extends TestCase
 
     public function testANewerSubmissionReplacesAPendingOne(): void
     {
-        $this->submit(['username' => 'first', 'password' => 'one']);
-        $this->submit(['username' => 'second', 'password' => 'two']);
+        $this->submit(['reseller_id' => 'first', 'api_key' => 'one']);
+        $this->submit(['reseller_id' => 'second', 'api_key' => 'two']);
 
         self::assertCount(1, $this->intake->rows);
     }
@@ -79,7 +79,7 @@ final class ProviderConnectionsTest extends TestCase
     public function testTheOverviewShowsStatusButNeverASecret(): void
     {
         $this->configured['hetzner-staging'] = ['updated_at' => new \DateTimeImmutable('2026-10-20T08:00:00Z'), 'review_due_on' => new \DateTimeImmutable('2027-10-20')];
-        $this->submit(['username' => 'reseller01', 'password' => self::PASSWORD]);
+        $this->submit(['reseller_id' => '0b6f1c2e-1111-4222-8333-444455556666', 'api_key' => self::PASSWORD]);
 
         $overview = $this->connections->overview($this->staffId, AuditFixtures::client());
         $byProvider = array_column($overview, null, 'provider');
@@ -88,9 +88,9 @@ final class ProviderConnectionsTest extends TestCase
         self::assertNotNull($byProvider['domainnameapi']['pending_since']);
         self::assertNull($byProvider['domainnameapi']['configured_at']);
         self::assertSame('2027-10-20', $byProvider['hetzner']['review_due_on']);
-        self::assertSame([['name' => 'username', 'label' => 'Reseller username', 'secret' => false], ['name' => 'password', 'label' => 'Reseller password', 'secret' => true]], $byProvider['domainnameapi']['fields']);
+        self::assertSame([['name' => 'reseller_id', 'label' => 'Reseller ID', 'secret' => false], ['name' => 'api_key', 'label' => 'API key', 'secret' => true]], $byProvider['domainnameapi']['fields']);
         self::assertStringNotContainsString(self::PASSWORD, (string) json_encode($overview), 'PC-T1: no read path');
-        self::assertStringNotContainsString('reseller01', (string) json_encode($overview));
+        self::assertStringNotContainsString('0b6f1c2e-1111-4222-8333-444455556666', (string) json_encode($overview));
     }
 
     public function testAWrongMissingOrReusedCodeIsRefused(): void
@@ -118,7 +118,7 @@ final class ProviderConnectionsTest extends TestCase
         $this->expectRefused(ProviderConnectionRefused::UNKNOWN_PROVIDER, fn () => $this->connections->submit($this->staffId, 'aws', ['k' => 'v'], '123456', AuditFixtures::client()));
         $this->f->clock->advance('+31 seconds');
         try {
-            $this->connections->submit($this->staffId, 'domainnameapi', ['username' => 'a', 'password' => 'b', 'environment' => 'prod'], $this->f->totpCode($this->staffId), AuditFixtures::client());
+            $this->connections->submit($this->staffId, 'domainnameapi', ['reseller_id' => 'a', 'api_key' => 'b', 'environment' => 'prod'], $this->f->totpCode($this->staffId), AuditFixtures::client());
             self::fail('extra field accepted');
         } catch (ProviderConnectionRefused $e) {
             self::assertSame(ProviderConnectionRefused::INVALID_FIELDS, $e->reason);

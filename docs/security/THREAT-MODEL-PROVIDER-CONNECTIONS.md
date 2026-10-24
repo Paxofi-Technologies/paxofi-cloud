@@ -12,7 +12,7 @@
 
 Until now provider credentials could only be stored with the operator CLI
 `credentials:set`, run inside a container that holds the key-encryption key
-(KEK). The CEO needs to enter the DomainNameAPI reseller login, and later the
+(KEK). The CEO needs to enter the DomainNameAPI Reseller ID and API key, and later the
 Hetzner and Vultr tokens, from the admin console without anyone handling a
 shell. This model covers:
 
@@ -28,7 +28,7 @@ PROVIDER-CREDENTIALS.md, unchanged).
 
 | Asset | Why it matters |
 |---|---|
-| Provider API secrets (DomainNameAPI username and password, Hetzner and Vultr tokens) | Full control of our registrar and server accounts, including spending money and deleting customer servers or domains |
+| Provider API secrets (DomainNameAPI Reseller ID and API key, Hetzner and Vultr tokens) | Full control of our registrar and server accounts, including spending money and deleting customer servers or domains |
 | Provider-credential KEK | Decrypts every stored provider secret |
 | Intake key pair | The secret half opens anything submitted but not yet stored |
 | Audit trail of credential changes | Shows who changed a credential and when (ASVS V7) |

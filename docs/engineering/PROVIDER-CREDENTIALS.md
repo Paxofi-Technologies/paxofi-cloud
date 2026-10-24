@@ -49,6 +49,11 @@ If a provider stays on "being encrypted and stored" for more than a minute, the
 provider worker is not running. Run the Staging Deploy `status` action and check that
 the `provider-worker` container is up, then submit again with a new code. Rejections are recorded in the audit log.
 
+DomainNameAPI takes two values from the reseller panel (My Account > Reseller Settings >
+Integration Information): the **Reseller ID** and an **API key**. There is no password. Staging
+uses the **Test Environment** key; production uses the **Live Environment** key. Never enter the
+live key on staging. If a key is replaced in the panel, enter the new one here again.
+
 Credential IDs are fixed per environment, for example `domainnameapi-staging` and
 `hetzner-prod`. A credential stored this way gets a review date one year ahead.
 

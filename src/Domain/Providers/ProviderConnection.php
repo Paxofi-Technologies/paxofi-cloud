@@ -31,8 +31,8 @@ enum ProviderConnection: string
     {
         return match ($this) {
             self::DomainNameApi => [
-                new ConnectionField('username', 'Reseller username', false, 128),
-                new ConnectionField('password', 'Reseller password', true, 256),
+                new ConnectionField('reseller_id', 'Reseller ID', false, 64),
+                new ConnectionField('api_key', 'API key', true, 256),
             ],
             self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256)],
             self::Vultr => [new ConnectionField('api_key', 'API key', true, 256)],
