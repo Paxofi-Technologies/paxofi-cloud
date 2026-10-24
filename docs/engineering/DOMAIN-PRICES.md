@@ -1,13 +1,21 @@
 # Domain cost prices — runbook
 
-How PaxofiCloud gets the cost of every domain extension from the registrar
-(DomainNameAPI today). Design: `docs/security/THREAT-MODEL-DOMAIN-REGISTRAR.md`
-and CD-13 in `docs/security/THREAT-MODEL-COMMERCE.md`.
+How PaxofiCloud gets the cost of every domain extension from each registrar
+(DomainNameAPI and Namecheap). Design: `docs/security/THREAT-MODEL-DOMAIN-REGISTRAR.md`,
+`docs/security/THREAT-MODEL-DOMAIN-PRICING.md` (NC-1 to NC-9) and CD-13 in
+`docs/security/THREAT-MODEL-COMMERCE.md`.
 
 ## What runs, and when
 
-- The `provider-worker` container checks about once a minute whether the
-  daily sync is due. It runs at **02:30 WAT** each day, once.
+- The `provider-worker` container checks about once a minute whether each
+  registrar's daily sync is due. Each runs at **02:30 WAT** each day, once.
+- DomainNameAPI always runs. Namecheap runs only once its connection has been
+  entered on Provider connections (so an unused registrar never raises alerts);
+  the worker notices a new connection within a minute.
+- Namecheap's price sheet is read as four calls (register, renew, transfer,
+  reactivate = restore), each up to 16 MiB, parsed as a stream. Its cost for a
+  term is the **higher** of `Price` and `YourPrice`, plus the ICANN fee; a
+  promotional one-year price shows the status `promo` and never lowers the cost.
 - It reads the full extension list with one-year register, renew, transfer
   and restore costs, using the credential entered on the admin console's
   Provider connections page.
@@ -67,7 +75,7 @@ Every active staff manager is emailed ("Price sync needs attention") when:
 
 | Problem | When |
 |---|---|
-| Credential refused | The registrar answered 401/403 or the stored credential is unusable. Not retried. One email per streak. Fix: re-enter the credential on Provider connections. |
+| Credential refused | The registrar answered 401/403, Namecheap returned a global-parameter error (API user, key or **client IP not whitelisted**), or the stored credential is unusable. Not retried. One email per streak. Fix: re-enter the credential on Provider connections; for Namecheap also check the whitelisted IP (it changes whenever the staging server is replaced). |
 | Repeated failures | The third failed run in a row (rate limits, provider errors, network). Each run already retried up to 3 times (2 s, 8 s, 30 s). |
 | Quarantined | Every quarantined list. Check the registrar's panel; the Domain costs card shows the held list's summary. A release flow for held lists comes with markup and repricing. |
 
@@ -75,9 +83,13 @@ Every active staff manager is emailed ("Price sync needs attention") when:
 
 | Command | What it does | Exit codes |
 |---|---|---|
-| `prices:sync` | Runs a sync now (`trigger=cli`). Prints provider, outcome, reason and attempts. | 0 accepted, 1 failed, 2 quarantined, 3 another run in progress |
-| `prices:status` | Size of the newest accepted list and the last five runs. Codes, times and counts only. | 0 |
+| `prices:sync [--provider=domainnameapi\|namecheap]` | Runs a sync now for one registrar (`trigger=cli`; default DomainNameAPI). Prints provider, outcome, reason and attempts. | 0 accepted, 1 failed, 2 quarantined, 3 another run in progress |
+| `prices:status` | Per registrar: size of the newest accepted list and the last five runs. Codes, times and counts only. | 0 |
 
 Settings (environment): `DOMAINNAMEAPI_ENVIRONMENT` = `live` (default) or
-`ote`; production refuses `ote`. `REGISTRAR_WRITES=enabled` has an effect only
-in production.
+`ote`; `NAMECHEAP_ENVIRONMENT` = `live` (default) or `sandbox`. Production
+refuses `ote` and `sandbox`. `REGISTRAR_WRITES=enabled` has an effect only in
+production.
+
+The Domain costs page has one tab per registrar; "Sync now" asks only the
+registrar on screen.

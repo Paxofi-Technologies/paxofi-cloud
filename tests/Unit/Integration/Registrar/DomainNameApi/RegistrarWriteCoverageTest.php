@@ -10,6 +10,9 @@ use PaxofiCloud\Application\Registrar\RegistrarWritesDisabled;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiOperation;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapEnvironment;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapOperation;
 use PaxofiCloud\Tests\Support\FakeProviderTransport;
 use PaxofiCloud\Tests\Support\FixedClock;
 use PaxofiCloud\Tests\Support\InMemoryAuditLog;
@@ -65,5 +68,19 @@ final class RegistrarWriteCoverageTest extends TestCase
                 self::assertFalse($action->isWrite(), $path . ' is a GET but classed as a write');
             }
         }
+    }
+
+    public function testNamecheapOperationsAreAllReadsAndAskTheGuardFirst(): void
+    {
+        foreach (NamecheapOperation::cases() as $operation) {
+            self::assertFalse($operation->action()->isWrite(), $operation->value . ': add a write test when Namecheap writes arrive');
+        }
+        // A read passes the guard even with writes disabled, and only then is the credential loaded.
+        $transport = (new FakeProviderTransport())->expectRaw('POST', '/xml.response', 200, '<?xml version="1.0"?><ApiResponse Status="OK"/>');
+        $credentials = new StaticCredentialSource(['namecheap-staging' => '{"api_user":"a","username":"a","api_key":"abcdefgh12","client_ip":"8.8.4.4"}']);
+        $guard = new RegistrarWriteGuard(false, new AuditTrail(new InMemoryAuditLog(), new FixedClock(new \DateTimeImmutable('2026-10-24T06:00:00Z')), new RecordingLogger()));
+        (new NamecheapClient($transport, $credentials, 'namecheap-staging', NamecheapEnvironment::Live, $guard))->send(NamecheapOperation::GetPricing, ['ProductType' => 'DOMAIN'], 'register');
+
+        self::assertSame(1, $credentials->loads);
     }
 }

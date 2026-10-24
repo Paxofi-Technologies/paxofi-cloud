@@ -65,11 +65,11 @@ final class PricesCommandsTest extends TestCase
         $sync = $this->sync();
 
         $streams = new ConsoleStreams();
-        self::assertSame(0, (new PricesSyncCommand(static fn (): DomainCostSync => $sync, $streams->console()))->execute([]));
+        self::assertSame(0, (new PricesSyncCommand(static fn (string $provider): DomainCostSync => $sync, $streams->console()))->execute([]));
         self::assertSame("domainnameapi outcome=accepted reason=- attempts=1\n", $streams->output());
 
         $streams = new ConsoleStreams();
-        self::assertSame(1, (new PricesSyncCommand(static fn (): DomainCostSync => $sync, $streams->console()))->execute([]));
+        self::assertSame(1, (new PricesSyncCommand(static fn (string $provider): DomainCostSync => $sync, $streams->console()))->execute([]));
         self::assertSame("domainnameapi outcome=failed reason=unauthorised attempts=1\n", $streams->output());
         self::assertSame('cli', $this->store->runs[0]->trigger);
     }
@@ -79,24 +79,42 @@ final class PricesCommandsTest extends TestCase
         $this->lock->busy = true;
         $sync = $this->sync();
         $streams = new ConsoleStreams();
-        self::assertSame(3, (new PricesSyncCommand(static fn (): DomainCostSync => $sync, $streams->console()))->execute([]));
+        self::assertSame(3, (new PricesSyncCommand(static fn (string $provider): DomainCostSync => $sync, $streams->console()))->execute([]));
 
         $streams = new ConsoleStreams();
-        $unconfigured = static fn (): DomainCostSync => throw new \InvalidArgumentException('PROVIDER_CREDENTIAL_KEYS is not set.');
+        $unconfigured = static fn (string $provider): DomainCostSync => throw new \InvalidArgumentException('PROVIDER_CREDENTIAL_KEYS is not set.');
         self::assertSame(1, (new PricesSyncCommand($unconfigured, $streams->console()))->execute([]));
         self::assertStringContainsString('not configured', $streams->errors());
+    }
+
+    public function testSyncRunsTheChosenRegistrarAndRefusesOthers(): void
+    {
+        $this->feed->then(ScriptedPriceFeed::list(['com' => 1081]));
+        $sync = $this->sync();
+        $asked = [];
+        $factory = static function (string $provider) use ($sync, &$asked): DomainCostSync {
+            $asked[] = $provider;
+
+            return $sync;
+        };
+
+        self::assertSame(0, (new PricesSyncCommand($factory, (new ConsoleStreams())->console()))->execute(['--provider=namecheap']));
+        $streams = new ConsoleStreams();
+        self::assertSame(1, (new PricesSyncCommand($factory, $streams->console()))->execute(['--provider=godaddy']));
+        self::assertStringContainsString('Unknown provider', $streams->errors());
+        self::assertSame(['namecheap'], $asked, 'an unknown registrar never builds a sync');
     }
 
     public function testStatusPrintsCountsAndRunsOnly(): void
     {
         $streams = new ConsoleStreams();
-        (new PricesStatusCommand($this->store, $streams->console(), 'domainnameapi', 'live'))->execute([]);
+        (new PricesStatusCommand($this->store, $streams->console(), ['domainnameapi' => 'live']))->execute([]);
         self::assertSame("domainnameapi environment=live accepted_extensions=none\nno price sync has run yet\n", $streams->output());
 
         $this->store->saveSnapshot('domainnameapi', ScriptedPriceFeed::list(['com' => 1081, 'ng' => 900]), null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
         $this->store->recordRun(new SyncRun('domainnameapi', 'schedule', 'failed', 'transport', null, 4, new \DateTimeImmutable('2026-10-24T01:30:00Z'), new \DateTimeImmutable('2026-10-24T01:31:00Z')));
         $streams = new ConsoleStreams();
-        (new PricesStatusCommand($this->store, $streams->console(), 'domainnameapi', 'live'))->execute([]);
+        (new PricesStatusCommand($this->store, $streams->console(), ['domainnameapi' => 'live']))->execute([]);
         self::assertSame(
             "domainnameapi environment=live accepted_extensions=2\n2026-10-24T01:30:00Z trigger=schedule outcome=failed reason=transport attempts=4\n",
             $streams->output(),
@@ -107,14 +125,24 @@ final class PricesCommandsTest extends TestCase
     {
         $intake = static fn (): CredentialIntakeWorker => throw new \InvalidArgumentException('no intake keys');
         $built = 0;
-        $prices = function () use (&$built): DomainCostSync {
+        $prices = function () use (&$built): array {
             $built++;
 
-            return $this->sync();
+            return [$this->sync()];
         };
 
         $streams = new ConsoleStreams();
         self::assertSame(1, (new ProvidersWorkCommand($intake, $streams->console(), null, $prices))->execute(['--once']));
         self::assertSame(0, $built, 'an unconfigured worker never builds the price sync');
+    }
+
+    public function testStatusReportsEveryRegistrarInOrder(): void
+    {
+        $streams = new ConsoleStreams();
+        (new PricesStatusCommand($this->store, $streams->console(), ['domainnameapi' => 'live', 'namecheap' => 'sandbox']))->execute([]);
+        self::assertSame(
+            "domainnameapi environment=live accepted_extensions=none\nno price sync has run yet\nnamecheap environment=sandbox accepted_extensions=none\nno price sync has run yet\n",
+            $streams->output(),
+        );
     }
 }

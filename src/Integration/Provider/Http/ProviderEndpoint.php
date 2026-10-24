@@ -13,6 +13,7 @@ namespace PaxofiCloud\Integration\Provider\Http;
  * The endpoint also fixes how the credential is presented: most providers
  * take `Authorization: Bearer <token>`; some (Postmark) use their own header
  * with the raw token, i.e. authHeader "X-Postmark-Server-Token", scheme "".
+ * The accepted media type defaults to JSON; Namecheap answers in XML.
  */
 final class ProviderEndpoint
 {
@@ -23,9 +24,13 @@ final class ProviderEndpoint
         public readonly string $baseUrl,
         public readonly string $authHeader = 'Authorization',
         public readonly string $authScheme = 'Bearer',
+        public readonly string $accept = 'application/json',
     ) {
         if (preg_match('/^[A-Za-z][A-Za-z0-9-]{0,63}$/', $authHeader) !== 1 || preg_match('/^[A-Za-z]{0,16}$/', $authScheme) !== 1) {
             throw new \InvalidArgumentException('Provider auth header must be a plain header name and the scheme a plain word.');
+        }
+        if (preg_match('#^[a-z]+/[a-z0-9.+-]+$#', $accept) !== 1) {
+            throw new \InvalidArgumentException('Provider accept type must be a plain media type.');
         }
         $parts = parse_url($baseUrl);
         if (!is_array($parts) || ($parts['scheme'] ?? null) !== 'https' || !isset($parts['host'])) {

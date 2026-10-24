@@ -79,6 +79,16 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         self::assertSame(1250, ($latest ?? [])['ext250']->register->minor);
     }
 
+    public function testNamecheapSandboxSnapshotsAreKeptApartFromLivePrices(): void
+    {
+        $sandbox = new TldCostList(array_values(ScriptedPriceFeed::list(['com' => 998])->items), [], 'sandbox');
+        $this->store->saveSnapshot('namecheap', $sandbox, null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
+
+        self::assertCount(1, $this->store->latestAccepted('namecheap', 'sandbox') ?? []);
+        self::assertNull($this->store->latestAccepted('namecheap', 'live'), 'NC-2: sandbox prices never count as live');
+        self::assertNull($this->store->latestAccepted('domainnameapi', 'sandbox'));
+    }
+
     public function testRecordsRunsNewestFirst(): void
     {
         $snapshot = $this->store->saveSnapshot('domainnameapi', ScriptedPriceFeed::list(['com' => 1081]), null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));

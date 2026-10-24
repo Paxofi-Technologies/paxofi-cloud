@@ -12,17 +12,30 @@ namespace PaxofiCloud\Domain\Providers;
 enum ProviderConnection: string
 {
     case DomainNameApi = 'domainnameapi';
+    case Namecheap = 'namecheap';
     case Hetzner = 'hetzner';
     case Vultr = 'vultr';
 
     public const int SECRET_MAX_BYTES = 2048;
+    /** How the admin console groups connections, in display order. */
+    public const array CATEGORIES = ['domains' => 'Domain providers', 'servers' => 'Server providers'];
 
     public function label(): string
     {
         return match ($this) {
             self::DomainNameApi => 'DomainNameAPI (domain registrar)',
+            self::Namecheap => 'Namecheap (domain registrar)',
             self::Hetzner => 'Hetzner Cloud (servers)',
             self::Vultr => 'Vultr (servers)',
+        };
+    }
+
+    /** @return key-of<self::CATEGORIES> */
+    public function category(): string
+    {
+        return match ($this) {
+            self::DomainNameApi, self::Namecheap => 'domains',
+            self::Hetzner, self::Vultr => 'servers',
         };
     }
 
@@ -34,12 +47,19 @@ enum ProviderConnection: string
                 new ConnectionField('reseller_id', 'Reseller ID', false, 64),
                 new ConnectionField('api_key', 'API key', true, 256),
             ],
+            // NC-3: Namecheap takes four values; the client IP is the server address whitelisted in the Namecheap account.
+            self::Namecheap => [
+                new ConnectionField('api_user', 'API user', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/'),
+                new ConnectionField('username', 'User name', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/'),
+                new ConnectionField('api_key', 'API key', true, 128),
+                new ConnectionField('client_ip', 'Server IPv4 address (whitelisted in Namecheap)', false, 15, '/^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$/'),
+            ],
             self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256)],
             self::Vultr => [new ConnectionField('api_key', 'API key', true, 256)],
         };
     }
 
-    /** All three register or create on our behalf, so their keys must be able to write. */
+    /** All of them register or create on our behalf, so their keys must be able to write. */
     public function accessLevel(): string
     {
         return 'read-write';
@@ -74,7 +94,8 @@ enum ProviderConnection: string
             $value = $values[$field->name] ?? null;
             if (!is_string($value) || $value === '' || strlen($value) > $field->maxLength
                 || preg_match('//u', $value) !== 1 || preg_match('/[\x00-\x1F\x7F]/', $value) === 1
-                || (!$field->secret && trim($value) !== $value)) {
+                || (!$field->secret && trim($value) !== $value)
+                || ($field->pattern !== null && preg_match($field->pattern, $value) !== 1)) {
                 throw new InvalidConnectionFields($field->name);
             }
             $clean[$field->name] = $value;

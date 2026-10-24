@@ -41,6 +41,61 @@ final class ProviderRequestTest extends TestCase
         self::assertSame('/instances/cb676a46-66fd-4dfb-b839-443f2e6c0b60', ProviderRequest::delete('/instances/cb676a46-66fd-4dfb-b839-443f2e6c0b60')->path);
     }
 
+    public function testDottedSegmentsAreAllowedButNeverTraversal(): void
+    {
+        self::assertSame('/xml.response', ProviderRequest::postForm('/xml.response', ['Command' => 'x'])->path);
+
+        foreach (['/.hidden', '/a/..', '/a..b/c', '/xml.'] as $path) {
+            try {
+                ProviderRequest::get($path);
+                self::fail($path . ' accepted');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testFormBodiesAreValidatedRedactedAndNeverSerialised(): void
+    {
+        $request = ProviderRequest::postForm('/xml.response', ['ApiKey' => 'secret-value-123', 'Command' => 'namecheap.users.getPricing']);
+
+        self::assertStringNotContainsString('secret-value-123', print_r($request, true));
+        self::assertStringNotContainsString('secret-value-123', var_export($request->__debugInfo(), true));
+
+        $this->expectException(\LogicException::class);
+        serialize($request);
+    }
+
+    /** @return iterable<string, array{array<string, string>}> */
+    public static function badForms(): iterable
+    {
+        yield 'empty' => [[]];
+        yield 'newline in value' => [['ApiKey' => "a\r\nX-Injected: 1"]];
+        yield 'odd field name' => [['Api Key' => 'a']];
+        yield 'too long' => [['ApiKey' => str_repeat('a', 1025)]];
+    }
+
+    /** @param array<string, string> $form */
+    #[DataProvider('badForms')]
+    public function testBadFormsAreRefused(array $form): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        ProviderRequest::postForm('/xml.response', $form);
+    }
+
+    public function testFormAndJsonAreExclusiveAndNeverOnGet(): void
+    {
+        foreach ([['POST', ['a' => 1]], ['GET', null]] as [$method, $json]) {
+            try {
+                new ProviderRequest($method, '/x', [], $json, [], ['a' => 'b']);
+                self::fail($method . ' accepted a form');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
     public function testRejectsBodiesOnGetAndDelete(): void
     {
         $this->expectException(\InvalidArgumentException::class);
