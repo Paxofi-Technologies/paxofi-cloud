@@ -60,6 +60,10 @@ final class AuditEventType
     public const string PROVIDER_PRICES_SYNC_REQUESTED = 'provider_prices.sync_requested';
     public const string PROVIDER_PRICES_SYNC_REQUEST_REFUSED = 'provider_prices.sync_request_refused';
     public const string AUDIT_VIEWED = 'audit.viewed';
+    public const string STAFF_SESSION_REVOKED = 'staff.session.revoked';
+    public const string STAFF_SESSIONS_REVOKED_OTHERS = 'staff.sessions.revoked_others';
+    public const string STAFF_SESSIONS_ENDED = 'staff.sessions.ended';
+    public const string STAFF_SESSION_CHANGE_REFUSED = 'staff.session_change.refused';
 
     private function __construct()
     {

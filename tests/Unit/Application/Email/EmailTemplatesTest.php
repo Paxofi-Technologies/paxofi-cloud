@@ -188,6 +188,28 @@ final class EmailTemplatesTest extends TestCase
         $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_ROLES_ADDED, ['name' => 'Ada', 'roles' => 'super_admin'], 'k6');
     }
 
+    /** §6.25: staff session changes say what happened, from where, and link only to the admin sign-in page. */
+    public function testStaffSecurityChangeDescribesTheChangeAndWhereItCameFrom(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com');
+        $parameters = ['name' => 'Bob', 'device' => 'Chrome 146 on Windows (desktop)', 'location' => 'Ikeja, Lagos, Nigeria', 'ip' => '203.0.113.45', 'time' => '2026-10-24T15:00:00Z'];
+
+        $forced = $templates->render(new EmailAddress('bob@example.ng'), EmailTemplates::STAFF_SECURITY_CHANGE, ['change' => 'sessions_ended_by_manager'] + $parameters, 'k7');
+        self::assertSame('Admin security settings changed on your PaxofiCloud staff account', $forced->subject);
+        self::assertStringContainsString('A security administrator signed your admin account out on every device.', $forced->textBody);
+        self::assertStringContainsString('Done from: Chrome 146 on Windows (desktop)', $forced->textBody);
+        self::assertStringContainsString('Time: 24 Oct 2026, 16:00 WAT', $forced->textBody);
+        self::assertStringContainsString('href="https://admin.paxofi.com/account"', $forced->htmlBody);
+        self::assertStringNotContainsString('cloud.paxofi.com', $forced->htmlBody, 'staff mail never links to the customer site');
+
+        $own = $templates->render(new EmailAddress('bob@example.ng'), EmailTemplates::STAFF_SECURITY_CHANGE, ['change' => 'other_sessions_revoked', 'device' => '<b>x</b>'] + $parameters, 'k8');
+        self::assertStringContainsString('All other devices were signed out of your admin account.', $own->textBody);
+        self::assertStringContainsString('Device: Unknown', $own->textBody, 'unexpected text is never printed');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $templates->render(new EmailAddress('bob@example.ng'), EmailTemplates::STAFF_SECURITY_CHANGE, ['change' => 'mfa_disabled'] + $parameters, 'k9');
+    }
+
     /** §6.20: the code, the device signing in, where the code may be typed; no link, code not in the subject. */
     public function testStaffSignInCodeNamesTheDeviceAndTheOnlyPlaceToTypeIt(): void
     {

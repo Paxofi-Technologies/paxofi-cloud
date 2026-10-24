@@ -28,6 +28,7 @@ use PaxofiCloud\Application\Identity\SignIn\SignInAlerts;
 use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeyRegistration;
 use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeySignIn;
+use PaxofiCloud\Application\Staff\Session\StaffSessionControl;
 use PaxofiCloud\Application\Staff\Session\StaffSessions;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
 use PaxofiCloud\Http\Admin\AdminGate;
@@ -35,6 +36,7 @@ use PaxofiCloud\Application\Contracts\StaffCredentialStore;
 use PaxofiCloud\Application\Staff\Setup\StaffSignInSetup;
 use PaxofiCloud\Application\Staff\SignIn\StaffCodeSignIn;
 use PaxofiCloud\Application\Staff\SignIn\StaffSecondFactor;
+use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
 use PaxofiCloud\Infrastructure\Staff\MysqlStaffCredentialStore;
 use PaxofiCloud\Http\Controllers\AccountSessionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
@@ -373,6 +375,18 @@ final class IdentityProvider implements Provider
             Resolve::get($c, StaffSignInSetup::class),
             Resolve::get($c, StaffPasskeyRegistration::class),
         ));
+        // Staff session list and sign-out (§6.25): a fresh authenticator code for every change.
+        $container->singleton(AdminSessionsController::class, static fn (Container $c): AdminSessionsController => new AdminSessionsController(new StaffSessionControl(
+            Resolve::get($c, StaffSessions::class),
+            Resolve::get($c, StaffAuthorizer::class),
+            Resolve::get($c, StaffDirectory::class),
+            self::staffSecondFactor($c),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+            Resolve::get($c, EmailOutbox::class),
+            new SystemClock(),
+            Resolve::get($c, AuditTrail::class),
+            Resolve::get($c, Logger::class),
+        )));
         $container->singleton(AdminStaffController::class, static fn (Container $c): AdminStaffController => new AdminStaffController(
             Resolve::get($c, StaffDirectory::class),
             Resolve::get($c, StaffInvitations::class),
