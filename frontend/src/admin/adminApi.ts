@@ -273,6 +273,13 @@ export interface CostSyncRun {
   finishedAt: string;
 }
 
+/** An extension the last accepted sync could not use, and why (DR-14). */
+export interface SkippedExtension {
+  name: string | null;
+  reason: string;
+  detail: string | null;
+}
+
 export interface DomainCosts {
   provider: string;
   environment: string;
@@ -284,6 +291,7 @@ export interface DomainCosts {
   quarantined: CostSnapshot | null;
   runs: CostSyncRun[];
   items: DomainCostItem[];
+  skipped: SkippedExtension[];
 }
 
 export type DomainCostsResult = { kind: 'ok'; costs: DomainCosts } | { kind: 'failed' };
@@ -328,6 +336,12 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise
     if (!r || typeof r.trigger !== 'string' || typeof r.outcome !== 'string' || typeof r.started_at !== 'string' || typeof r.finished_at !== 'string') continue;
     runs.push({ trigger: r.trigger, outcome: r.outcome, reason: nullableString(r.reason), attempts: minor(r.attempts) ?? 1, startedAt: r.started_at, finishedAt: r.finished_at });
   }
+  const skipped: SkippedExtension[] = [];
+  for (const raw of Array.isArray(body.skipped) ? body.skipped : []) {
+    const k = obj(raw);
+    if (!k || typeof k.reason !== 'string') continue;
+    skipped.push({ name: nullableString(k.name), reason: k.reason, detail: nullableString(k.detail) });
+  }
   return {
     kind: 'ok',
     costs: {
@@ -341,6 +355,7 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise
       quarantined: snapshot(body.quarantined),
       runs,
       items,
+      skipped,
     },
   };
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PaxofiCloud\Tests\Unit\Integration\Registrar\DomainNameApi;
 
 use PaxofiCloud\Domain\Pricing\CostCurrency;
+use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Integration\Provider\Http\ExactJson;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiTldParser;
@@ -98,5 +99,38 @@ final class DomainNameApiTldParserTest extends TestCase
     {
         self::assertSame($reason, DomainNameApiTldParser::item(ExactJson::decode($json)));
         self::assertContains($reason, DomainNameApiTldParser::REASONS);
+    }
+
+    /** DR-14: a skipped item keeps its name, reason and a short detail. */
+    public function testSkippedItemsKeepNameReasonAndDetail(): void
+    {
+        $try = DomainNameApiTldParser::parse(ExactJson::decode(self::rawItem(['name' => '.COM.TR', 'prices' => [[
+            'register' => ['price' => '__REG__', 'currency' => 'try', 'period' => 1],
+            'renew' => ['price' => '__REN__', 'currency' => 'TRY', 'period' => 1],
+        ]]])));
+        self::assertInstanceOf(SkippedTld::class, $try);
+        self::assertSame(['com.tr', 'unsupported_currency', 'TRY'], [$try->name, $try->reason, $try->detail]);
+
+        $twoYears = DomainNameApiTldParser::parse(ExactJson::decode(self::rawItem(['name' => 'ai', 'prices' => [[
+            'register' => [['price' => '__REG__', 'currency' => 'USD', 'period' => 3], ['price' => '__REN__', 'currency' => 'USD', 'period' => 2]],
+            'renew' => ['price' => '__REN__', 'currency' => 'USD', 'period' => 1],
+        ]]])));
+        self::assertInstanceOf(SkippedTld::class, $twoYears);
+        self::assertSame(['ai', 'no_register_price', 'periods:2'], [$twoYears->name, $twoYears->reason, $twoYears->detail]);
+
+        self::assertSame('no_register_price', DomainNameApiTldParser::item(ExactJson::decode(self::rawItem(['prices' => [['renew' => ['price' => '__REN__', 'currency' => 'USD']]]]))));
+    }
+
+    public function testHostileNamesAndDetailsAreDroppedNotStored(): void
+    {
+        $skip = DomainNameApiTldParser::parse(ExactJson::decode(self::rawItem(['name' => '<script>x', 'prices' => [[
+            'register' => ['price' => '__REG__', 'currency' => '<b>', 'period' => 1],
+        ]]])));
+
+        self::assertInstanceOf(SkippedTld::class, $skip);
+        self::assertSame('bad_name', $skip->reason);
+        self::assertNull($skip->name);
+        self::assertNull((new SkippedTld('com', 'unsupported_currency', 'a"b<c'))->detail);
+        self::assertSame('xn--p1ai', (new SkippedTld('.XN--P1AI', 'bad_price'))->name);
     }
 }

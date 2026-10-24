@@ -7,6 +7,7 @@ namespace PaxofiCloud\Integration\Registrar\DomainNameApi;
 use PaxofiCloud\Application\Contracts\DomainPriceFeed;
 use PaxofiCloud\Application\Registrar\RegistrarUnavailable;
 use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
+use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Integration\Provider\Http\ExactJson;
 use PaxofiCloud\Integration\Provider\Http\MalformedProviderResponse;
@@ -55,6 +56,7 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
     {
         $items = [];
         $refused = [];
+        $skipped = [];
         $seen = [];
         for ($page = 0; $page < self::MAX_PAGES; $page++) {
             $document = $this->send(DomainNameApiOperation::TldList, ['MaxResultCount' => self::PAGE_SIZE, 'SkipCount' => $page * self::PAGE_SIZE]);
@@ -63,13 +65,15 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
                 throw new RegistrarUnavailable('malformed');
             }
             foreach ($list as $raw) {
-                $result = DomainNameApiTldParser::item($raw);
-                if (is_string($result)) {
-                    $refused[$result] = ($refused[$result] ?? 0) + 1;
+                $result = DomainNameApiTldParser::parse($raw);
+                if ($result instanceof SkippedTld) {
+                    $refused[$result->reason] = ($refused[$result->reason] ?? 0) + 1;
+                    $skipped[] = $result;
                     continue;
                 }
                 if (isset($seen[$result->tld->value])) {
                     $refused['duplicate'] = ($refused['duplicate'] ?? 0) + 1;
+                    $skipped[] = new SkippedTld($result->tld->value, 'duplicate');
                     continue;
                 }
                 $seen[$result->tld->value] = true;
@@ -80,7 +84,7 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
             if (count($list) < self::PAGE_SIZE || (is_string($total) && ctype_digit($total) && $fetched >= (int) $total)) {
                 ksort($refused, SORT_STRING);
 
-                return new TldCostList($items, $refused, $this->environment->value);
+                return new TldCostList($items, $refused, $this->environment->value, $skipped);
             }
         }
 

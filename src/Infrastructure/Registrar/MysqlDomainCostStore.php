@@ -13,6 +13,7 @@ use PaxofiCloud\Application\Registrar\CostSnapshotSummary;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Domain\Pricing\CostCurrency;
 use PaxofiCloud\Domain\Registrar\CostAmount;
+use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Domain\Registrar\TldName;
@@ -138,9 +139,38 @@ final readonly class MysqlDomainCostStore implements DomainCostStore, DomainCost
                     $parameters,
                 );
             }
+            foreach (array_chunk($list->skipped, self::BATCH, true) as $batch) {
+                $rows = [];
+                $parameters = [];
+                foreach ($batch as $seq => $skip) {
+                    $rows[] = sprintf('(:s%1$d, :q%1$d, :n%1$d, :r%1$d, :d%1$d)', $seq);
+                    $parameters += ['s' . $seq => $id, 'q' . $seq => $seq, 'n' . $seq => $skip->name, 'r' . $seq => $skip->reason, 'd' . $seq => $skip->detail];
+                }
+                $this->connection->execute(
+                    'INSERT INTO domain_cost_skipped (snapshot_id, seq, name, reason, detail) VALUES ' . implode(', ', $rows),
+                    $parameters,
+                );
+            }
         });
 
         return $id;
+    }
+
+    public function skipped(string $snapshotId): array
+    {
+        $skipped = [];
+        foreach ($this->repository->fetchAll(
+            'SELECT name, reason, detail FROM domain_cost_skipped WHERE snapshot_id = :id ORDER BY seq',
+            ['id' => $snapshotId],
+        ) as $row) {
+            $skipped[] = new SkippedTld(
+                ($row['name'] ?? null) === null ? null : Row::string($row, 'name'),
+                Row::string($row, 'reason'),
+                ($row['detail'] ?? null) === null ? null : Row::string($row, 'detail'),
+            );
+        }
+
+        return $skipped;
     }
 
     public function recordRun(SyncRun $run): void

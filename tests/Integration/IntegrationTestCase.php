@@ -73,6 +73,7 @@ abstract class IntegrationTestCase extends TestCase
         $pdo->exec('DROP TABLE IF EXISTS email_outbox');
         $pdo->exec('DROP TABLE IF EXISTS provider_credential_intake');
         $pdo->exec('DROP TABLE IF EXISTS provider_credentials');
+        $pdo->exec('DROP TABLE IF EXISTS domain_cost_skipped');
         $pdo->exec('DROP TABLE IF EXISTS provider_sync_runs');
         $pdo->exec('DROP TABLE IF EXISTS domain_cost_items');
         $pdo->exec('DROP TABLE IF EXISTS domain_cost_snapshots');
