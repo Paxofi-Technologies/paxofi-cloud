@@ -35,6 +35,8 @@ use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapEnvironment;
 use PaxofiCloud\Application\Audit\AuditTrail;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\StaffDirectory;
@@ -64,6 +66,7 @@ use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
 use PaxofiCloud\Infrastructure\Secrets\KeyRing;
+use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStore;
 use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
 use PaxofiCloud\Infrastructure\Time\SystemClock;
@@ -122,20 +125,40 @@ final readonly class CliProvider implements Provider
             $appEnv = Resolve::get($c, Configuration::class)->get('app.env');
             $appEnv = is_string($appEnv) ? $appEnv : '';
             $costStore = new MysqlDomainCostStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class));
-            // Domain cost sync (THREAT-MODEL-DOMAIN-REGISTRAR.md): built only when it runs, in the
+            // Domain cost sync (THREAT-MODEL-DOMAIN-REGISTRAR.md, NC-9): built only when it runs, in the
             // provider worker, because it needs the KEK to open the registrar credential.
-            $domainCostSync = static function () use ($c, $appEnv, $costStore): DomainCostSync {
-                $environment = DomainNameApiEnvironment::fromSetting((string) getenv('DOMAINNAMEAPI_ENVIRONMENT'), $appEnv);
+            $syncFor = static function (string $provider) use ($c, $appEnv, $costStore): DomainCostSync {
                 $audit = Resolve::get($c, AuditTrail::class);
                 $logger = Resolve::get($c, Logger::class);
                 $guard = new RegistrarWriteGuard(RegistrarWriteGuard::writesEnabled((string) getenv('REGISTRAR_WRITES'), $appEnv), $audit);
-                $feed = new DomainNameApiClient(
-                    new ProviderHttpClient([DomainNameApiClient::endpoint($environment)], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: 1_048_576),
-                    new MysqlProviderCredentialStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), new SecretCipher(KeyRing::fromProcessEnvironment())),
-                    ProviderConnection::DomainNameApi->credentialId(ProviderConnection::environmentFor($appEnv)),
-                    $environment,
-                    $guard,
-                );
+                $credentials = new MysqlProviderCredentialStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), new SecretCipher(KeyRing::fromProcessEnvironment()));
+                $environment = ProviderConnection::environmentFor($appEnv);
+                $feed = match ($provider) {
+                    DomainNameApiClient::PROVIDER => (static function () use ($appEnv, $credentials, $environment, $guard): DomainNameApiClient {
+                        $gateway = DomainNameApiEnvironment::fromSetting((string) getenv('DOMAINNAMEAPI_ENVIRONMENT'), $appEnv);
+
+                        return new DomainNameApiClient(
+                            new ProviderHttpClient([DomainNameApiClient::endpoint($gateway)], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: 1_048_576),
+                            $credentials,
+                            ProviderConnection::DomainNameApi->credentialId($environment),
+                            $gateway,
+                            $guard,
+                        );
+                    })(),
+                    NamecheapClient::PROVIDER => (static function () use ($appEnv, $credentials, $environment, $guard): NamecheapClient {
+                        $gateway = NamecheapEnvironment::fromSetting((string) getenv('NAMECHEAP_ENVIRONMENT'), $appEnv);
+
+                        return new NamecheapClient(
+                            // NC-5: the price sheet is large, so this endpoint alone gets a 16 MiB cap and a longer timeout.
+                            new ProviderHttpClient([NamecheapClient::endpoint($gateway)], connectTimeoutMs: 5_000, totalTimeoutMs: 60_000, maxResponseBytes: NamecheapClient::MAX_RESPONSE_BYTES),
+                            $credentials,
+                            ProviderConnection::Namecheap->credentialId($environment),
+                            $gateway,
+                            $guard,
+                        );
+                    })(),
+                    default => throw new \InvalidArgumentException('Unknown price provider.'),
+                };
 
                 return new DomainCostSync(
                     $feed,
@@ -152,13 +175,22 @@ final readonly class CliProvider implements Provider
                     new MysqlProviderSyncRequests(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 );
             };
-            $registry->register(new PricesSyncCommand($domainCostSync, $console));
-            $registry->register(new PricesStatusCommand(
-                $costStore,
-                $console,
-                DomainNameApiClient::PROVIDER,
-                getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
-            ));
+            // DomainNameAPI always runs (registrar #1); Namecheap only once its connection has been entered,
+            // so an unused registrar never raises "credential refused" alerts.
+            $activeSyncs = static function () use ($c, $appEnv, $syncFor): array {
+                $syncs = [$syncFor(DomainNameApiClient::PROVIDER)];
+                $configured = (new MysqlProviderCredentialStatus(Resolve::get($c, Repository::class)))->configured();
+                if (isset($configured[ProviderConnection::Namecheap->credentialId(ProviderConnection::environmentFor($appEnv))])) {
+                    $syncs[] = $syncFor(NamecheapClient::PROVIDER);
+                }
+
+                return $syncs;
+            };
+            $registry->register(new PricesSyncCommand($syncFor, $console));
+            $registry->register(new PricesStatusCommand($costStore, $console, [
+                DomainNameApiClient::PROVIDER => getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
+                NamecheapClient::PROVIDER => getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+            ]));
             // Provider worker (PC-6): the only process with the intake secret key and the KEK.
             $registry->register(new ProvidersWorkCommand(static function () use ($c): CredentialIntakeWorker {
                 $public = getenv('CREDENTIAL_INTAKE_PUBLIC_KEY');
@@ -181,7 +213,7 @@ final readonly class CliProvider implements Provider
                     new SystemClock(),
                     Resolve::get($c, Logger::class),
                 );
-            }, $console, null, $domainCostSync));
+            }, $console, null, $activeSyncs));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

@@ -84,6 +84,7 @@ use PaxofiCloud\Application\Registrar\DomainCostAdmin;
 use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
 use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
 use PaxofiCloud\Infrastructure\Secrets\SealedBox;
@@ -413,20 +414,35 @@ final class IdentityProvider implements Provider
         $container->singleton(AdminProviderConnectionsController::class, static fn (Container $c): AdminProviderConnectionsController => new AdminProviderConnectionsController(
             Resolve::get($c, ProviderConnections::class),
         ));
-        // Domain costs (DR-12, DR-13): the web tier reads snapshots and queues "Sync now"; it never calls the registrar.
+        // Domain costs (DR-12, DR-13, NC-9): per registrar, the web tier reads snapshots and queues "Sync now"; it never calls a registrar.
         $container->singleton(AdminDomainCostsController::class, static function (Container $c): AdminDomainCostsController {
             $connection = Resolve::get($c, Connection::class);
             $repository = Resolve::get($c, Repository::class);
+            $store = new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class));
+            $requests = new MysqlProviderSyncRequests($connection, $repository);
+            $authorizer = Resolve::get($c, StaffAuthorizer::class);
+            $audit = Resolve::get($c, AuditTrail::class);
 
-            return new AdminDomainCostsController(new DomainCostAdmin(
-                DomainNameApiClient::PROVIDER,
-                getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
-                Resolve::get($c, StaffAuthorizer::class),
-                new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
-                new MysqlProviderSyncRequests($connection, $repository),
-                new SystemClock(),
-                Resolve::get($c, AuditTrail::class),
-            ));
+            return new AdminDomainCostsController([
+                DomainNameApiClient::PROVIDER => new DomainCostAdmin(
+                    DomainNameApiClient::PROVIDER,
+                    getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
+                    $authorizer,
+                    $store,
+                    $requests,
+                    new SystemClock(),
+                    $audit,
+                ),
+                NamecheapClient::PROVIDER => new DomainCostAdmin(
+                    NamecheapClient::PROVIDER,
+                    getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                    $authorizer,
+                    $store,
+                    $requests,
+                    new SystemClock(),
+                    $audit,
+                ),
+            ]);
         });
 
         // Audit log page (§6.24): read-only search; every look is itself audited.

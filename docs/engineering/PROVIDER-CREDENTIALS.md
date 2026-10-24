@@ -26,8 +26,9 @@ PROVIDER_CREDENTIAL_ACTIVE_KEY="k2026a"
 
 ## Entering a credential in the admin console (preferred)
 
-Security Admins set or replace the DomainNameAPI, Hetzner and Vultr credentials on the
-**Provider connections** page of the admin console. See
+Security Admins set or replace the DomainNameAPI, Namecheap, Hetzner and Vultr credentials on the
+**Provider connections** page of the admin console. The page groups them as **Domain providers**
+(DomainNameAPI, Namecheap) and **Server providers** (Hetzner, Vultr). See
 `docs/security/THREAT-MODEL-PROVIDER-CONNECTIONS.md` for the design.
 
 1. Open the page, choose the provider, and type the values.
@@ -56,6 +57,20 @@ real cost prices. Staging may only **read** (extensions, prices, availability, b
 registrar call that spends money or changes a domain is refused unless `REGISTRAR_WRITES=enabled`,
 which is off outside production (THREAT-MODEL-DOMAIN-REGISTRAR.md, DR-4). Keep the reseller
 balance small until launch. If a key is replaced in the panel, enter the new one here again.
+
+Namecheap takes four values (THREAT-MODEL-DOMAIN-PRICING.md, NC-3): the **API user**, the
+**user name** (usually the same), the **API key** (Profile > Tools > Business & Dev Tools > API
+Access) and the **server IPv4 address** that calls Namecheap. Namecheap answers only from
+addresses whitelisted in that same API Access page, so:
+
+1. Find the staging server's public IPv4 address (Vultr dashboard > the staging instance).
+2. Add it to Namecheap's API whitelist.
+3. Enter the same address in the connection's "Server IPv4 address" field.
+
+Whenever the staging server is replaced (infra apply), its address changes: update both the
+whitelist and the connection, or the Namecheap price sync stops with a "credential refused"
+alert while the last good prices stay in use. Only a public IPv4 address is accepted. The values
+travel to Namecheap only in the POST body, never in a URL.
 
 Credential IDs are fixed per environment, for example `domainnameapi-staging` and
 `hetzner-prod`. A credential stored this way gets a review date one year ahead.

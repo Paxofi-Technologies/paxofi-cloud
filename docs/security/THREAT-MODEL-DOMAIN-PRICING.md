@@ -143,3 +143,4 @@ Boundaries:
 | Date | Change |
 |---|---|
 | 24 Oct 2026 | First version, before code. CEO decisions: USD base; cheapest healthy registrar with pinning; Namecheap live read-only on staging; Namecheap sync first. |
+| 24 Oct 2026 | Built with the Namecheap price sync: the Domain costs page and "Sync now" take the registrar from a fixed server-side list (unknown names get 404, never a query to another table); `prices:sync --provider=` checks the same list; provider connections carry a fixed category (Domain providers / Server providers, CEO decision). Product names are lower-cased so a sheet that writes "NET" in one action and "net" in another still matches (found by test). Spaceship (CEO, 24 Oct): its API has no price list, so it is not part of this sync; the plan and its threat-model section come before its code. |

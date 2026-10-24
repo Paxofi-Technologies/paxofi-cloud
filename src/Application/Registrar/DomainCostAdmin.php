@@ -29,7 +29,7 @@ final readonly class DomainCostAdmin
     public const int REQUEST_INTERVAL_SECONDS = 600;
     public const int RECENT_RUNS = 10;
 
-    /** @param 'live'|'ote' $environment */
+    /** @param 'live'|'ote'|'sandbox' $environment */
     public function __construct(
         private string $provider,
         private string $environment,

@@ -1144,47 +1144,63 @@ function ProviderConnections({ session, fetchImpl }: { session: StaffSession; fe
       {message && <Alert tone={message.tone}>{message.text}</Alert>}
       {list === 'loading' && <p className="pc-muted">Loading provider connections…</p>}
       {list !== 'loading' && list.kind === 'failed' && <Alert tone="danger">Provider connections could not be loaded.</Alert>}
-      {list !== 'loading' && list.kind === 'ok' && (
-        <ul className="pc-admin__list">
-          {list.providers.map((provider) => (
-            <li key={provider.provider} className="pc-stack">
-              <div className="pc-admin__row">
-                <div>
-                  <strong>{provider.label}</strong>
-                  <p className="pc-muted">{connectionStatus(provider)}</p>
-                </div>
-                {editing !== provider.provider && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setMessage(null);
-                      setEditing(provider.provider);
-                    }}
-                  >
-                    {provider.configuredAt ? 'Replace credential' : 'Set credential'}
-                  </Button>
-                )}
-              </div>
-              {editing === provider.provider && (
-                <CredentialForm
-                  session={session}
-                  provider={provider}
-                  fetchImpl={fetchImpl}
-                  onCancel={() => setEditing(null)}
-                  onSaved={() => {
-                    setEditing(null);
-                    setMessage({ tone: 'success', text: `${provider.label}: saved. It is encrypted and stored within a few seconds, and every security administrator is emailed.` });
-                    setVersion((n) => n + 1);
-                  }}
-                />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      {list !== 'loading' &&
+        list.kind === 'ok' &&
+        PROVIDER_GROUPS.map(([category, title]) => {
+          const providers = list.providers.filter((p) => (PROVIDER_GROUPS.some(([c]) => c === p.category) ? p.category : 'other') === category);
+          if (providers.length === 0) return null;
+          return (
+            <section key={category} className="pc-stack" aria-label={title}>
+              <h3 className="pc-admin__group">{title}</h3>
+              <ul className="pc-admin__list">
+                {providers.map((provider) => (
+                  <li key={provider.provider} className="pc-stack">
+                    <div className="pc-admin__row">
+                      <div>
+                        <strong>{provider.label}</strong>
+                        <p className="pc-muted">{connectionStatus(provider)}</p>
+                      </div>
+                      {editing !== provider.provider && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setMessage(null);
+                            setEditing(provider.provider);
+                          }}
+                        >
+                          {provider.configuredAt ? 'Replace credential' : 'Set credential'}
+                        </Button>
+                      )}
+                    </div>
+                    {editing === provider.provider && (
+                      <CredentialForm
+                        session={session}
+                        provider={provider}
+                        fetchImpl={fetchImpl}
+                        onCancel={() => setEditing(null)}
+                        onSaved={() => {
+                          setEditing(null);
+                          setMessage({ tone: 'success', text: `${provider.label}: saved. It is encrypted and stored within a few seconds, and every security administrator is emailed.` });
+                          setVersion((n) => n + 1);
+                        }}
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
     </Card>
   );
 }
+
+/** Connections are shown in these groups, in this order (CEO decision 24 Oct 2026). */
+const PROVIDER_GROUPS: ReadonlyArray<readonly [string, string]> = [
+  ['domains', 'Domain providers'],
+  ['servers', 'Server providers'],
+  ['other', 'Other providers'],
+];
 
 function connectionStatus(provider: ProviderConnectionStatus): string {
   if (provider.pendingSince) return `Saved ${formatWhen(provider.pendingSince)}, being encrypted and stored…`;
@@ -1293,7 +1309,7 @@ function CredentialForm({
 }
 
 const SYNC_REASONS: Record<string, string> = {
-  unauthorised: 'the registrar refused the API key. Replace it under Provider connections',
+  unauthorised: 'the registrar refused the API key (for Namecheap, also check that the server IP address is whitelisted). Fix it under Provider connections',
   credential_missing: 'no API key is stored. Set it under Provider connections',
   credential_invalid: 'the stored API key could not be used. Set it again under Provider connections',
   rate_limited: 'the registrar asked us to slow down',
@@ -1307,6 +1323,9 @@ const SYNC_REASONS: Record<string, string> = {
 };
 
 const TRIGGERS: Record<string, string> = { schedule: 'Daily', manual: 'Sync now', cli: 'Operator' };
+
+/** Registrar names as staff know them. */
+const REGISTRAR_NAMES: Record<string, string> = { domainnameapi: 'DomainNameAPI', namecheap: 'Namecheap' };
 
 /** Extensions per page in the cost list. */
 export const COST_PAGE_SIZE = 15;
@@ -1324,16 +1343,17 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   const [costPage, setCostPage] = useState(1);
   const [message, setMessage] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const [provider, setProvider] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
-    void fetchDomainCosts(fetchImpl).then((next) => {
+    void fetchDomainCosts(fetchImpl, provider).then((next) => {
       if (active) setResult(next);
     });
     return () => {
       active = false;
     };
-  }, [fetchImpl, version]);
+  }, [fetchImpl, version, provider]);
 
   // While a request waits for the worker (or its run is in progress), look again every few seconds.
   const pending = result !== 'loading' && result.kind === 'ok' && result.costs.pendingSince !== null;
@@ -1346,7 +1366,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   async function syncNow() {
     setRequesting(true);
     setMessage(null);
-    const sent = await requestDomainCostSync(session.csrfToken, fetchImpl);
+    const sent = await requestDomainCostSync(session.csrfToken, fetchImpl, provider);
     setRequesting(false);
     if (sent.kind === 'ok') {
       setMessage({ tone: 'success', text: 'Sync requested. New prices usually arrive within a minute; this page updates by itself.' });
@@ -1383,10 +1403,33 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   const lastRun = costs.runs[0];
   const syncBlocked = costs.pendingSince !== null || costs.nextRequestAt !== null;
 
+  const registrar = REGISTRAR_NAMES[costs.provider] ?? costs.provider;
+
   return (
     <Card title="Domain costs">
+      {costs.providers.length > 1 && (
+        <div className="pc-admin__tabs" role="tablist" aria-label="Registrar">
+          {costs.providers.map((p) => (
+            <Button
+              key={p}
+              variant={p === costs.provider ? 'primary' : 'secondary'}
+              role="tab"
+              aria-selected={p === costs.provider}
+              onClick={() => {
+                if (p === costs.provider) return;
+                setMessage(null);
+                setQuery('');
+                setCostPage(1);
+                setProvider(p);
+              }}
+            >
+              {REGISTRAR_NAMES[p] ?? p}
+            </Button>
+          ))}
+        </div>
+      )}
       <p className="pc-muted">
-        What each extension costs us at DomainNameAPI ({costs.environment === 'ote' ? 'test environment' : 'live prices'}), before our markup. Internal: never shown to
+        What each extension costs us at {registrar} ({costs.environment === 'live' ? 'live prices' : 'test environment'}), before our markup. Internal: never shown to
         customers. Updated daily at {costs.dailyAt}.
       </p>
       {message && <Alert tone={message.tone}>{message.text}</Alert>}

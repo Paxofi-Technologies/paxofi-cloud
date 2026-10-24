@@ -132,7 +132,7 @@ final class ProviderHttpClient implements ProviderTransport
     {
         $headers = [
             $endpoint->authorization($credential->reveal()),
-            'Accept: application/json',
+            'Accept: ' . $endpoint->accept,
             'User-Agent: ' . self::USER_AGENT,
         ];
         $options = [
@@ -162,6 +162,10 @@ final class ProviderHttpClient implements ProviderTransport
         if ($request->json !== null) {
             $headers[] = 'Content-Type: application/json';
             $options[CURLOPT_POSTFIELDS] = json_encode($request->json, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        }
+        if ($request->form !== null) {
+            $headers[] = 'Content-Type: application/x-www-form-urlencoded';
+            $options[CURLOPT_POSTFIELDS] = http_build_query($request->form, '', '&', PHP_QUERY_RFC3986);
         }
         foreach ($request->headers as $name => $value) {
             $headers[] = $name . ': ' . $value;

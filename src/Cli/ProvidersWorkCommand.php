@@ -12,11 +12,13 @@ use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
 /**
  * `bin/paxoficloud providers:work [--once] [--max-seconds=N]` — the provider
  * worker (THREAT-MODEL-PROVIDER-CONNECTIONS.md PC-6). Today it stores
- * credentials entered in the admin console, runs a domain cost sync when the
- * admin console asks for one ("Sync now", DR-12), and about once a minute
- * checks whether the daily sync is due (02:30 WAT; DR-8). Runs for a
- * bounded time and exits so the container restarts it fresh. A failing
- * price sync never stops credential intake.
+ * credentials entered in the admin console, runs a registrar's domain cost
+ * sync when the admin console asks for one ("Sync now", DR-12), and about
+ * once a minute checks whether each registrar's daily sync is due (02:30 WAT;
+ * DR-8). The list of registrars is rebuilt at each of those checks, so a
+ * registrar whose connection was just entered joins within a minute (NC-9).
+ * Runs for a bounded time and exits so the container restarts it fresh. A
+ * failing price sync never stops credential intake or another registrar's.
  */
 final readonly class ProvidersWorkCommand implements Command
 {
@@ -24,7 +26,7 @@ final readonly class ProvidersWorkCommand implements Command
 
     /**
      * @param \Closure(): CredentialIntakeWorker $intake built lazily so keys are read only when it runs
-     * @param (\Closure(): DomainCostSync)|null $prices the daily price sync, also built lazily
+     * @param (\Closure(): list<DomainCostSync>)|null $prices one price sync per active registrar, also built lazily
      * @param (\Closure(int): void)|null $sleep
      */
     public function __construct(
@@ -61,16 +63,22 @@ final readonly class ProvidersWorkCommand implements Command
         $sleep = $this->sleep ?? static function (int $seconds): void {
             sleep($seconds);
         };
-        $prices = $this->pricesSync();
+        $prices = [];
         $deadline = time() + $maxSeconds;
         $nextScheduleCheck = 0;
         do {
             $handled = $intake->runOnce();
-            if ($prices !== null && !$once) {
-                $this->runPrices(static fn (): ?SyncRun => $prices->runIfRequested());
-                if (time() >= $nextScheduleCheck) {
+            if ($this->prices !== null && !$once) {
+                $due = time() >= $nextScheduleCheck;
+                if ($due) {
                     $nextScheduleCheck = time() + self::SCHEDULE_CHECK_SECONDS;
-                    $this->runPrices(static fn (): ?SyncRun => $prices->runIfDue());
+                    $prices = $this->pricesSyncs();
+                }
+                foreach ($prices as $sync) {
+                    $this->runPrices(static fn (): ?SyncRun => $sync->runIfRequested());
+                    if ($due) {
+                        $this->runPrices(static fn (): ?SyncRun => $sync->runIfDue());
+                    }
                 }
             }
             if ($once) {
@@ -86,17 +94,22 @@ final readonly class ProvidersWorkCommand implements Command
         return 0;
     }
 
-    private function pricesSync(): ?DomainCostSync
+    /** @return list<DomainCostSync> */
+    private function pricesSyncs(): array
     {
         if ($this->prices === null) {
-            return null;
+            return [];
         }
         try {
             return ($this->prices)();
         } catch (\InvalidArgumentException $e) {
             $this->console->error('Price sync is not configured: ' . $e->getMessage());
 
-            return null;
+            return [];
+        } catch (\Throwable $e) {
+            $this->console->error('Price sync could not be prepared: ' . $e::class);
+
+            return [];
         }
     }
 
