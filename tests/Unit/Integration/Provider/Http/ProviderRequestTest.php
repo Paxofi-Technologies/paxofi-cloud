@@ -66,4 +66,19 @@ final class ProviderRequestTest extends TestCase
     {
         self::assertSame('1700000000', (new ProviderResponse(429, ['RateLimit-Reset' => '1700000000'], ''))->header('ratelimit-reset'));
     }
+
+    /** DR-3 / DR-T6: the DomainNameAPI Reseller ID header is allowed, but only with a plain value. */
+    public function testResellerHeaderIsAllowedWithAPlainValueOnly(): void
+    {
+        self::assertSame(['__reseller' => '7f3c2a10-1b2c-4d5e'], (new ProviderRequest('GET', '/products/tlds', [], null, ['__reseller' => '7f3c2a10-1b2c-4d5e']))->headers);
+
+        foreach (["a\r\nX-Evil: 1", 'a b', ''] as $value) {
+            try {
+                new ProviderRequest('GET', '/products/tlds', [], null, ['__reseller' => $value]);
+                self::fail('accepted an unsafe header value');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
 }

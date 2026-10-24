@@ -12,8 +12,11 @@ namespace PaxofiCloud\Integration\Provider\Http;
 final class ProviderRequest
 {
     private const array METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
-    /** Extra request headers an adapter may set; anything else is refused. */
-    private const array HEADERS = ['Idempotency-Key'];
+    /**
+     * Extra request headers an adapter may set; anything else is refused.
+     * `__reseller` carries the DomainNameAPI Reseller ID (DR-3).
+     */
+    private const array HEADERS = ['Idempotency-Key', '__reseller'];
 
     /**
      * @param array<string, string|int> $query
