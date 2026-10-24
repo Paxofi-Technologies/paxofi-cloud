@@ -17,8 +17,8 @@ enum ProviderConnection: string
     case Vultr = 'vultr';
 
     public const int SECRET_MAX_BYTES = 2048;
-    /** How the admin console groups connections, in display order. */
-    public const array CATEGORIES = ['domains' => 'Domain providers', 'servers' => 'Server providers'];
+    /** How the admin console groups connections under "API providers", in display order. */
+    public const array CATEGORIES = ['domains' => 'Domain registrars', 'servers' => 'Server providers'];
 
     public function label(): string
     {
@@ -44,18 +44,18 @@ enum ProviderConnection: string
     {
         return match ($this) {
             self::DomainNameApi => [
-                new ConnectionField('reseller_id', 'Reseller ID', false, 64),
-                new ConnectionField('api_key', 'API key', true, 256),
+                new ConnectionField('reseller_id', 'Reseller ID', false, 64, null, 'DomainNameAPI reseller panel: Reseller Settings → Integration Information.'),
+                new ConnectionField('api_key', 'API key', true, 256, null, 'Same page as the Reseller ID. Use the Live API key.'),
             ],
             // NC-3: Namecheap takes four values; the client IP is the server address whitelisted in the Namecheap account.
             self::Namecheap => [
-                new ConnectionField('api_user', 'API user', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/'),
-                new ConnectionField('username', 'User name', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/'),
-                new ConnectionField('api_key', 'API key', true, 128),
-                new ConnectionField('client_ip', 'Server IPv4 address (whitelisted in Namecheap)', false, 15, '/^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$/'),
+                new ConnectionField('api_user', 'API user', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/', 'Your Namecheap account username (the name you sign in with, shown top right in Namecheap). Not your email address.'),
+                new ConnectionField('username', 'User name', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/', 'For your own account, the same username as API user.'),
+                new ConnectionField('api_key', 'API key', true, 128, null, 'Namecheap: Profile → Tools → Namecheap API Access → Manage. API access must be switched on.'),
+                new ConnectionField('client_ip', 'Server IPv4 address (whitelisted in Namecheap)', false, 15, '/^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$/', 'The server\'s public IPv4 address (Vultr: Products → the server). Add the same address under Whitelisted IPs on the Namecheap API Access page.'),
             ],
-            self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256)],
-            self::Vultr => [new ConnectionField('api_key', 'API key', true, 256)],
+            self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256, null, 'Hetzner Cloud Console: your project → Security → API tokens → Generate (Read & Write).')],
+            self::Vultr => [new ConnectionField('api_key', 'API key', true, 256, null, 'Vultr: Account → API. Use a sub-user key with only the access PaxofiCloud needs.')],
         };
     }
 

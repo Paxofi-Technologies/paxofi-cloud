@@ -8,6 +8,8 @@ export interface NavItem {
   icon: ReactNode;
   /** Shown instead of navigating when the area is not built yet. */
   comingIn?: string;
+  /** Pages listed under this heading; the heading itself is not a page. */
+  children?: readonly NavItem[];
 }
 
 export interface AppShellProps {
@@ -44,6 +46,11 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen]);
 
+  function choose(id: string) {
+    setMenuOpen(false);
+    onNavigate(id);
+  }
+
   return (
     <div className={`pc-shell${menuOpen ? ' pc-shell--menu-open' : ''}`}>
       <a className="pc-skip-link" href="#main">
@@ -67,31 +74,25 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
         </div>
         <nav aria-label="Main">
           <ul className="pc-nav">
-            {nav.map((item) => {
-              const active = item.id === current;
-              const disabled = item.comingIn !== undefined;
-              return (
+            {nav.map((item) =>
+              item.children ? (
                 <li key={item.id}>
-                  <button
-                    type="button"
-                    className={`pc-nav__item${active ? ' pc-nav__item--active' : ''}`}
-                    aria-current={active ? 'page' : undefined}
-                    aria-disabled={disabled || undefined}
-                    onClick={() => {
-                      if (disabled) return;
-                      setMenuOpen(false);
-                      onNavigate(item.id);
-                    }}
-                  >
+                  <span className="pc-nav__group" id={`pc-nav-group-${item.id}`}>
                     <span className="pc-nav__icon" aria-hidden="true">
                       {item.icon}
                     </span>
                     <span>{item.label}</span>
-                    {disabled && <span className="pc-nav__soon">{item.comingIn}</span>}
-                  </button>
+                  </span>
+                  <ul className="pc-nav pc-nav--sub" aria-labelledby={`pc-nav-group-${item.id}`}>
+                    {item.children.map((child) => (
+                      <NavEntry key={child.id} item={child} current={current} onChoose={choose} />
+                    ))}
+                  </ul>
                 </li>
-              );
-            })}
+              ) : (
+                <NavEntry key={item.id} item={item} current={current} onChoose={choose} />
+              ),
+            )}
           </ul>
         </nav>
       </aside>
@@ -127,5 +128,29 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
         </main>
       </div>
     </div>
+  );
+}
+
+function NavEntry({ item, current, onChoose }: { item: NavItem; current: string; onChoose: (id: string) => void }) {
+  const active = item.id === current;
+  const disabled = item.comingIn !== undefined;
+  return (
+    <li>
+      <button
+        type="button"
+        className={`pc-nav__item${active ? ' pc-nav__item--active' : ''}`}
+        aria-current={active ? 'page' : undefined}
+        aria-disabled={disabled || undefined}
+        onClick={() => {
+          if (!disabled) onChoose(item.id);
+        }}
+      >
+        <span className="pc-nav__icon" aria-hidden="true">
+          {item.icon}
+        </span>
+        <span>{item.label}</span>
+        {disabled && <span className="pc-nav__soon">{item.comingIn}</span>}
+      </button>
+    </li>
   );
 }
