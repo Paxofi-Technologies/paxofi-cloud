@@ -242,3 +242,115 @@ export async function fetchProviderConnections(fetchImpl: typeof fetch = fetch):
 
 export const submitProviderCredential = (csrfToken: string, provider: string, fields: Record<string, string>, code: string, fetchImpl: typeof fetch = fetch) =>
   postJson(`${ADMIN_API}/provider-connections`, { provider, fields, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13): internal, integer minor units. */
+export interface DomainCostItem {
+  tld: string;
+  currency: string;
+  register: number;
+  renew: number;
+  transfer: number | null;
+  restore: number | null;
+  minYears: number;
+  maxYears: number;
+  status: string;
+}
+
+export interface CostSnapshot {
+  status: string;
+  reason: string | null;
+  items: number;
+  refused: number;
+  fetchedAt: string;
+}
+
+export interface CostSyncRun {
+  trigger: string;
+  outcome: string;
+  reason: string | null;
+  attempts: number;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface DomainCosts {
+  provider: string;
+  environment: string;
+  canSync: boolean;
+  dailyAt: string;
+  pendingSince: string | null;
+  nextRequestAt: string | null;
+  latest: CostSnapshot | null;
+  quarantined: CostSnapshot | null;
+  runs: CostSyncRun[];
+  items: DomainCostItem[];
+}
+
+export type DomainCostsResult = { kind: 'ok'; costs: DomainCosts } | { kind: 'failed' };
+
+function minor(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function snapshot(value: unknown): CostSnapshot | null {
+  const s = obj(value);
+  if (!s || typeof s.status !== 'string' || typeof s.fetched_at !== 'string' || minor(s.items) === null || minor(s.refused) === null) return null;
+  return { status: s.status, reason: nullableString(s.reason), items: s.items as number, refused: s.refused as number, fetchedAt: s.fetched_at };
+}
+
+export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise<DomainCostsResult> {
+  const result = await getJson(`${ADMIN_API}/domain-costs`, fetchImpl);
+  const body = obj(result?.data);
+  if (result === null || result.status !== 200 || !body || typeof body.provider !== 'string' || !Array.isArray(body.items) || !Array.isArray(body.runs)) {
+    return { kind: 'failed' };
+  }
+  const items: DomainCostItem[] = [];
+  for (const raw of body.items) {
+    const i = obj(raw);
+    const register = minor(i?.register);
+    const renew = minor(i?.renew);
+    if (!i || typeof i.tld !== 'string' || typeof i.currency !== 'string' || register === null || renew === null) continue;
+    items.push({
+      tld: i.tld,
+      currency: i.currency,
+      register,
+      renew,
+      transfer: minor(i.transfer),
+      restore: minor(i.restore),
+      minYears: minor(i.min_years) ?? 1,
+      maxYears: minor(i.max_years) ?? 1,
+      status: typeof i.status === 'string' ? i.status : '',
+    });
+  }
+  const runs: CostSyncRun[] = [];
+  for (const raw of body.runs) {
+    const r = obj(raw);
+    if (!r || typeof r.trigger !== 'string' || typeof r.outcome !== 'string' || typeof r.started_at !== 'string' || typeof r.finished_at !== 'string') continue;
+    runs.push({ trigger: r.trigger, outcome: r.outcome, reason: nullableString(r.reason), attempts: minor(r.attempts) ?? 1, startedAt: r.started_at, finishedAt: r.finished_at });
+  }
+  return {
+    kind: 'ok',
+    costs: {
+      provider: body.provider,
+      environment: typeof body.environment === 'string' ? body.environment : '',
+      canSync: body.can_sync === true,
+      dailyAt: typeof body.daily_at === 'string' ? body.daily_at : '',
+      pendingSince: nullableString(body.pending_since),
+      nextRequestAt: nullableString(body.next_request_at),
+      latest: snapshot(body.latest),
+      quarantined: snapshot(body.quarantined),
+      runs,
+      items,
+    },
+  };
+}
+
+export const requestDomainCostSync = (csrfToken: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/domain-costs/sync`, {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** Formats integer minor units without floating point, e.g. 123456 USD → "USD 1,234.56". */
+export function formatMinor(amount: number, currency: string): string {
+  const whole = Math.trunc(amount / 100).toLocaleString('en-NG');
+  const cents = String(amount % 100).padStart(2, '0');
+  return `${currency} ${whole}.${cents}`;
+}

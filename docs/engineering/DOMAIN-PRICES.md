@@ -23,6 +23,25 @@ Staging uses the Live API key (CEO decision, 24 Oct 2026) but can only read:
 every registrar call that spends money or changes a domain is refused outside
 production (DR-4).
 
+## Admin console: Domain costs (DR-12, DR-13)
+
+The **Domain costs** card in the staff console shows the current cost of every
+extension (one year; register, renew, transfer, restore, allowed years), when
+it was fetched, a summary of any held-back (quarantined) list, and the last 10
+runs. It is internal: only staff with `catalogue.view` (Catalogue, Finance,
+Super Admin) see it, and only on the admin host.
+
+**Sync now** (Catalogue and Super Admin, `catalogue.manage`) asks the provider
+worker for a fresh list. The page never talks to the registrar itself: it adds a
+request, the worker picks it up within a few seconds and runs the same sync as
+the daily one (`trigger=manual`), and the card refreshes itself until the
+request is picked up. Requests are limited to one per provider every 10
+minutes, whoever asks; the page says when the next one is allowed. Every
+request and refusal is in the audit log.
+
+If a request stays "on its way" for more than a minute, the provider worker
+is not running: run the Staging Deploy `status` action.
+
 ## Alerts
 
 Every active staff manager is emailed ("Price sync needs attention") when:
@@ -31,7 +50,7 @@ Every active staff manager is emailed ("Price sync needs attention") when:
 |---|---|
 | Credential refused | The registrar answered 401/403 or the stored credential is unusable. Not retried. One email per streak. Fix: re-enter the credential on Provider connections. |
 | Repeated failures | The third failed run in a row (rate limits, provider errors, network). Each run already retried up to 3 times (2 s, 8 s, 30 s). |
-| Quarantined | Every quarantined list. Check the registrar's panel; a release flow for held lists comes with the admin cost list. |
+| Quarantined | Every quarantined list. Check the registrar's panel; the Domain costs card shows the held list's summary. A release flow for held lists comes with markup and repricing. |
 
 ## Commands (inside the provider worker)
 

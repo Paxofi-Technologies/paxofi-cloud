@@ -21,14 +21,16 @@ use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
 use PaxofiCloud\Infrastructure\Persistence\Row;
 use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
+use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
 use PaxofiCloud\Tests\Support\ScriptedPriceFeed;
 use PDOException;
 
-/** Migration 0013, MysqlDomainCostStore and MysqlNamedLock on MySQL 8.4 (CD-13; DR-8, DR-10). */
+/** Migrations 0013 and 0014, MysqlDomainCostStore, MysqlProviderSyncRequests and MysqlNamedLock on MySQL 8.4 (CD-13; DR-8, DR-10, DR-12, DR-13). */
 final class DomainCostStoreIntegrationTest extends IntegrationTestCase
 {
     private MysqlDomainCostStore $store;
     private Repository $repository;
+    private MysqlProviderSyncRequests $requests;
 
     protected function setUp(): void
     {
@@ -40,6 +42,7 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         (new Migrator($connection, $this->repository, new MysqlAdvisoryLock($this->repository)))
             ->migrate((new MigrationLoader())->load(self::basePath() . '/migrations'));
         $this->store = new MysqlDomainCostStore($connection, $this->repository, Resolve::get($container, TransactionManager::class));
+        $this->requests = new MysqlProviderSyncRequests($connection, $this->repository);
     }
 
     public function testStoresAndReadsBackASnapshotExactly(): void
@@ -101,6 +104,7 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         yield 'failed run with snapshot' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'failed', 'transport', :s, 1, NOW(6), NOW(6))"];
         yield 'accepted run without snapshot' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'accepted', NULL, NULL, 1, NOW(6), NOW(6))"];
         yield 'failed run without reason' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'failed', NULL, NULL, 1, NOW(6), NOW(6))"];
+        yield 'sync request for an unknown staff member' => ["INSERT INTO provider_sync_requests VALUES (REPEAT('d', 32), 'domainnameapi', 'domain_costs', REPEAT('e', 32), NOW(6), NULL)"];
         yield 'too many attempts' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'failed', 'transport', NULL, 5, NOW(6), NOW(6))"];
     }
 
@@ -127,5 +131,40 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         $again = self::pdo()->query("SELECT GET_LOCK('paxoficloud:sync:domainnameapi', 0)");
         self::assertNotFalse($again);
         self::assertSame(1, (int) $again->fetchColumn());
+    }
+
+    public function testLatestSnapshotSummaryAndSortedItems(): void
+    {
+        self::assertNull($this->store->latestSnapshot('domainnameapi', 'live', true));
+        $accepted = $this->store->saveSnapshot('domainnameapi', ScriptedPriceFeed::list(['net' => 1200, 'com' => 1081]), null, new \DateTimeImmutable('2026-10-23T01:30:00Z'));
+        $this->store->saveSnapshot('domainnameapi', ScriptedPriceFeed::list(['com' => 1]), 'empty', new \DateTimeImmutable('2026-10-24T01:30:00Z'));
+
+        $store = $this->store;
+        $latest = $store->latestSnapshot('domainnameapi', 'live', true);
+        $newest = $store->latestSnapshot('domainnameapi', 'live', false);
+
+        self::assertSame([$accepted, 'accepted', null, 2, '2026-10-23T01:30:00+00:00'], [$latest?->id, $latest?->status, $latest?->quarantineReason, $latest?->itemCount, $latest?->fetchedAt->format(\DATE_ATOM)]);
+        self::assertSame(['quarantined', 'empty'], [$newest?->status, $newest?->quarantineReason]);
+        self::assertSame(['com', 'net'], array_keys($this->store->items($accepted)));
+        self::assertNull($this->store->latestSnapshot('domainnameapi', 'ote', false));
+    }
+
+    public function testSyncRequestsAreClaimedOnceAndKeptForTheLimit(): void
+    {
+        $staff = str_repeat('a', 32);
+        self::pdo()->prepare("INSERT INTO staff_members (id, email, email_lookup, full_name, status, created_at, webauthn_user_handle) VALUES (?, 'ada@example.test', ?, 'Ada', 'active', NOW(6), ?)")
+            ->execute([$staff, hash('sha256', 'ada@example.test'), random_bytes(32)]);
+        self::assertNull($this->requests->lastRequestedAt('domainnameapi'));
+
+        $this->requests->add('domainnameapi', $staff, new \DateTimeImmutable('2026-10-24T09:00:00Z'));
+        $this->requests->add('domainnameapi', $staff, new \DateTimeImmutable('2026-10-24T09:05:00Z'));
+
+        self::assertSame('2026-10-24T09:05:00+00:00', $this->requests->lastRequestedAt('domainnameapi')?->format(\DATE_ATOM));
+        self::assertSame('2026-10-24T09:00:00+00:00', $this->requests->pendingSince('domainnameapi')?->format(\DATE_ATOM));
+        self::assertSame(0, $this->requests->claimAll('other', new \DateTimeImmutable('2026-10-24T09:06:00Z')));
+        self::assertSame(2, $this->requests->claimAll('domainnameapi', new \DateTimeImmutable('2026-10-24T09:06:00Z')));
+        self::assertSame(0, $this->requests->claimAll('domainnameapi', new \DateTimeImmutable('2026-10-24T09:07:00Z')), 'claimed once');
+        self::assertNull($this->requests->pendingSince('domainnameapi'));
+        self::assertSame('2026-10-24T09:05:00+00:00', $this->requests->lastRequestedAt('domainnameapi')?->format(\DATE_ATOM), 'history kept for the limit');
     }
 }

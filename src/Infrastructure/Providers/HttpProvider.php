@@ -33,6 +33,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\Middleware\AdminApiGuardMiddleware;
@@ -117,6 +118,7 @@ final class HttpProvider implements Provider
             static fn (): AdminCodeSignInController => Resolve::get($c, AdminCodeSignInController::class),
             static fn (): AdminAccountController => Resolve::get($c, AdminAccountController::class),
             static fn (): AdminProviderConnectionsController => Resolve::get($c, AdminProviderConnectionsController::class),
+            static fn (): AdminDomainCostsController => Resolve::get($c, AdminDomainCostsController::class),
         );
     }
 

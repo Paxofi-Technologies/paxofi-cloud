@@ -10,6 +10,7 @@ use PaxofiCloud\Domain\Staff\Permission;
 use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
@@ -28,14 +29,17 @@ final class AdminRoutes
      * @param \Closure(): AdminCodeSignInController $codes
      * @param \Closure(): AdminAccountController $account
      * @param \Closure(): AdminProviderConnectionsController $providers
+     * @param \Closure(): AdminDomainCostsController $domainCosts
      * @return list<AdminRoute>
      */
-    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers): array
+    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts): array
     {
         $credentials = AdminAccess::permission(Permission::ProviderCredentialsManage);
         $public = AdminAccess::public();
         $signedIn = AdminAccess::signedIn();
         $manage = AdminAccess::permission(Permission::StaffManage);
+        $catalogueView = AdminAccess::permission(Permission::CatalogueView);
+        $catalogueManage = AdminAccess::permission(Permission::CatalogueManage);
 
         return [
             // Each step proves itself: a password, the sign-in ticket cookie, a passkey assertion, or an invitation token (§6.20).
@@ -64,6 +68,10 @@ final class AdminRoutes
             // Provider connections: status out, secrets in, never back out (PC-2, PC-3).
             new AdminRoute('GET', '/admin-api/v1/provider-connections', $credentials, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $providers()->list($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/provider-connections', $credentials, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $providers()->submit($r, $c)),
+
+            // Domain costs: internal prices for Catalogue and Finance; "Sync now" queues work for the provider worker (DR-12, DR-13).
+            new AdminRoute('GET', '/admin-api/v1/domain-costs', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainCosts()->overview($r, $c)),
+            new AdminRoute('POST', '/admin-api/v1/domain-costs/sync', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainCosts()->sync($r, $c)),
         ];
     }
 

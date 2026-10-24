@@ -7,7 +7,9 @@ namespace PaxofiCloud\Infrastructure\Registrar;
 use Paxofi\Core\Contracts\Connection;
 use Paxofi\Core\Contracts\Repository;
 use Paxofi\Core\Contracts\TransactionManager;
+use PaxofiCloud\Application\Contracts\DomainCostReport;
 use PaxofiCloud\Application\Contracts\DomainCostStore;
+use PaxofiCloud\Application\Registrar\CostSnapshotSummary;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Domain\Pricing\CostCurrency;
 use PaxofiCloud\Domain\Registrar\CostAmount;
@@ -16,8 +18,8 @@ use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Domain\Registrar\TldName;
 use PaxofiCloud\Infrastructure\Persistence\Row;
 
-/** MySQL domain cost snapshots and sync runs (migration 0013; append-only for the runtime user). */
-final readonly class MysqlDomainCostStore implements DomainCostStore
+/** MySQL domain cost snapshots and sync runs (migration 0013; append-only for the runtime user), and their read side (DR-13). */
+final readonly class MysqlDomainCostStore implements DomainCostStore, DomainCostReport
 {
     private const string TIME_FORMAT = 'Y-m-d H:i:s.u';
     private const int BATCH = 100;
@@ -41,6 +43,29 @@ final readonly class MysqlDomainCostStore implements DomainCostStore
         }
 
         return $this->items(Row::string($snapshot, 'id'));
+    }
+
+    public function latestSnapshot(string $provider, string $environment, bool $acceptedOnly): ?CostSnapshotSummary
+    {
+        $row = $this->repository->fetchAll(
+            "SELECT id, environment, status, quarantine_reason, item_count, refused_count, fetched_at FROM domain_cost_snapshots
+             WHERE provider = :provider AND environment = :environment AND (:accepted_only = 0 OR status = 'accepted')
+             ORDER BY fetched_at DESC, id DESC LIMIT 1",
+            ['provider' => $provider, 'environment' => $environment, 'accepted_only' => $acceptedOnly ? 1 : 0],
+        )[0] ?? null;
+        if ($row === null) {
+            return null;
+        }
+
+        return new CostSnapshotSummary(
+            Row::string($row, 'id'),
+            Row::string($row, 'environment'),
+            Row::string($row, 'status'),
+            ($row['quarantine_reason'] ?? null) === null ? null : Row::string($row, 'quarantine_reason'),
+            Row::int($row, 'item_count'),
+            Row::int($row, 'refused_count'),
+            self::parse(Row::string($row, 'fetched_at')),
+        );
     }
 
     /** @return array<string, TldCost> */

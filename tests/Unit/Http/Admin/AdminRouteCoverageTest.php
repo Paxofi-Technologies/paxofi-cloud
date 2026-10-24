@@ -18,6 +18,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\StaffSessionCookie;
@@ -177,6 +178,7 @@ final class AdminRouteCoverageTest extends TestCase
             static fn (): AdminCodeSignInController => throw new ReachedController(),
             static fn (): AdminAccountController => throw new ReachedController(),
             static fn (): AdminProviderConnectionsController => throw new ReachedController(),
+            static fn (): AdminDomainCostsController => throw new ReachedController(),
         );
     }
 }

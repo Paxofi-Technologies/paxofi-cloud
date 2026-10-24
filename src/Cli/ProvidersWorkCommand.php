@@ -6,13 +6,15 @@ namespace PaxofiCloud\Cli;
 
 use Paxofi\Core\Contracts\Command;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
+use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
 
 /**
  * `bin/paxoficloud providers:work [--once] [--max-seconds=N]` — the provider
  * worker (THREAT-MODEL-PROVIDER-CONNECTIONS.md PC-6). Today it stores
- * credentials entered in the admin console, and about once a minute checks
- * whether the daily domain cost sync is due (02:30 WAT; DR-8). Runs for a
+ * credentials entered in the admin console, runs a domain cost sync when the
+ * admin console asks for one ("Sync now", DR-12), and about once a minute
+ * checks whether the daily sync is due (02:30 WAT; DR-8). Runs for a
  * bounded time and exits so the container restarts it fresh. A failing
  * price sync never stops credential intake.
  */
@@ -64,9 +66,12 @@ final readonly class ProvidersWorkCommand implements Command
         $nextScheduleCheck = 0;
         do {
             $handled = $intake->runOnce();
-            if ($prices !== null && !$once && time() >= $nextScheduleCheck) {
-                $nextScheduleCheck = time() + self::SCHEDULE_CHECK_SECONDS;
-                $this->runDuePrices($prices);
+            if ($prices !== null && !$once) {
+                $this->runPrices(static fn (): ?SyncRun => $prices->runIfRequested());
+                if (time() >= $nextScheduleCheck) {
+                    $nextScheduleCheck = time() + self::SCHEDULE_CHECK_SECONDS;
+                    $this->runPrices(static fn (): ?SyncRun => $prices->runIfDue());
+                }
             }
             if ($once) {
                 $this->console->line(sprintf('Handled %d credential submission(s).', $handled));
@@ -95,12 +100,13 @@ final readonly class ProvidersWorkCommand implements Command
         }
     }
 
-    private function runDuePrices(DomainCostSync $prices): void
+    /** @param \Closure(): ?SyncRun $sync */
+    private function runPrices(\Closure $sync): void
     {
         try {
-            $run = $prices->runIfDue();
+            $run = $sync();
             if ($run !== null) {
-                $this->console->line(sprintf('Price sync %s: %s%s.', $run->provider, $run->outcome, $run->reason === null ? '' : ' (' . $run->reason . ')'));
+                $this->console->line(sprintf('Price sync %s (%s): %s%s.', $run->provider, $run->trigger, $run->outcome, $run->reason === null ? '' : ' (' . $run->reason . ')'));
             }
         } catch (\Throwable $e) {
             $this->console->error('Price sync error: ' . $e::class);

@@ -17,6 +17,7 @@ use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
 use PaxofiCloud\Tests\Support\ConsoleStreams;
 use PaxofiCloud\Tests\Support\InMemoryAuditLog;
 use PaxofiCloud\Tests\Support\InMemoryDomainCostStore;
+use PaxofiCloud\Tests\Support\InMemoryProviderSyncRequests;
 use PaxofiCloud\Tests\Support\InMemoryStaffDirectory;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\RecordingLock;
@@ -54,6 +55,7 @@ final class PricesCommandsTest extends TestCase
             $logger,
             static function (int $seconds): void {
             },
+            new InMemoryProviderSyncRequests(),
         );
     }
 
