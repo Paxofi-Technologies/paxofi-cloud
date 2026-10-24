@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Application\Staff\Session;
 
+use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\StaffDirectory;
 use PaxofiCloud\Application\Contracts\StaffSessionStore;
@@ -22,12 +23,21 @@ final readonly class StaffSessions
     {
     }
 
-    public function issue(string $staffId): IssuedStaffSession
+    public function issue(string $staffId, ?ClientContext $client = null): IssuedStaffSession
     {
         $sessionId = self::token();
         $csrf = self::token();
         $now = $this->clock->now();
-        $session = new StaffSession(hash('sha256', $sessionId), $staffId, $csrf, $now, $now);
+        $session = new StaffSession(
+            hash('sha256', $sessionId),
+            $staffId,
+            $csrf,
+            $now,
+            $now,
+            $client === null ? '' : $client->ip,
+            $client === null ? '' : mb_substr($client->userAgent, 0, 255),
+            $client === null ? '' : mb_substr($client->location(), 0, 200),
+        );
         $this->store->save($session, self::IDLE_SECONDS);
 
         return new IssuedStaffSession($sessionId, $csrf, $session);
@@ -43,9 +53,7 @@ final readonly class StaffSessions
             return null;
         }
         $now = $this->clock->now();
-        if ($session->lastSeenAt->getTimestamp() + self::IDLE_SECONDS <= $now->getTimestamp()
-            || $session->createdAt->getTimestamp() + self::ABSOLUTE_SECONDS <= $now->getTimestamp()
-            || $this->directory->status($session->staffId) !== 'active') {
+        if ($this->expired($session) || $this->directory->status($session->staffId) !== 'active') {
             $this->store->delete($session->idHash);
 
             return null;
@@ -64,9 +72,66 @@ final readonly class StaffSessions
         }
     }
 
+    /**
+     * §6.25: the member's live sessions, most recently used first. Expired
+     * ones are deleted on the way.
+     *
+     * @return list<StaffSession>
+     */
+    public function listFor(string $staffId): array
+    {
+        $live = [];
+        foreach ($this->store->forStaff($staffId) as $session) {
+            if ($this->expired($session)) {
+                $this->store->delete($session->idHash);
+                continue;
+            }
+            $live[] = $session;
+        }
+        usort($live, static fn (StaffSession $a, StaffSession $b): int => $b->lastSeenAt <=> $a->lastSeenAt);
+
+        return $live;
+    }
+
+    /** Ends one of the member's own sessions by its public ID; false when there is none. */
+    public function revoke(string $staffId, string $publicId): bool
+    {
+        foreach ($this->listFor($staffId) as $session) {
+            if (hash_equals($session->publicId(), $publicId)) {
+                $this->store->delete($session->idHash);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Ends every session of the member except `$keep` (or all of them when null); returns how many ended. */
+    public function revokeAllExcept(string $staffId, ?StaffSession $keep): int
+    {
+        $ended = 0;
+        foreach ($this->listFor($staffId) as $session) {
+            if ($keep === null || $session->idHash !== $keep->idHash) {
+                $this->store->delete($session->idHash);
+                $ended++;
+            }
+        }
+
+        return $ended;
+    }
+
     public function csrfMatches(StaffSession $session, #[\SensitiveParameter] ?string $token): bool
     {
         return $token !== null && $token !== '' && hash_equals($session->csrfToken, $token);
+    }
+
+    private function expired(StaffSession $session): bool
+    {
+        $now = $this->clock->now()->getTimestamp();
+
+        return $session->lastSeenAt->getTimestamp() + self::IDLE_SECONDS <= $now
+            || $session->createdAt->getTimestamp() + self::ABSOLUTE_SECONDS <= $now;
     }
 
     private static function token(): string

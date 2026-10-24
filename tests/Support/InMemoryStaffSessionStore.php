@@ -29,4 +29,9 @@ final class InMemoryStaffSessionStore implements StaffSessionStore
     {
         unset($this->sessions[$sessionIdHash], $this->ttls[$sessionIdHash]);
     }
+
+    public function forStaff(string $staffId): array
+    {
+        return array_values(array_filter($this->sessions, static fn (StaffSession $s): bool => $s->staffId === $staffId));
+    }
 }

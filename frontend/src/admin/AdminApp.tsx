@@ -11,6 +11,7 @@ import {
   addPasskeyOptions,
   approveGrant,
   ceremony,
+  endStaffMemberSessions,
   fetchAuditLog,
   fetchProviderConnections,
   fetchDomainCosts,
@@ -46,6 +47,7 @@ import {
   type StaffSession,
   type StaffSessionState,
 } from './adminApi';
+import { ConfirmWithCode, StaffDevices } from './StaffDevices';
 import { createPasskey, getPasskey, type CredentialsApi } from './webauthn';
 
 export interface AdminAppProps {
@@ -675,7 +677,12 @@ function Dashboard({
     >
       <div className="pc-stack">
         {page === 'overview' && <Overview session={session} pages={pages} onOpen={go} />}
-        {page === 'account' && <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />}
+        {page === 'account' && (
+          <>
+            <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />
+            <StaffDevices csrfToken={session.csrfToken} fetchImpl={fetchImpl} />
+          </>
+        )}
         {page === 'staff' && <StaffManagement session={session} fetchImpl={fetchImpl} />}
         {page === 'providers' && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
@@ -909,6 +916,9 @@ function StaffManagement({ session, fetchImpl }: { session: StaffSession; fetchI
   const [version, setVersion] = useState(0);
   const [approving, setApproving] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // T-58: the member whose sessions are about to be ended everywhere.
+  const [ending, setEnding] = useState<{ id: string; name: string } | null>(null);
+  const [ended, setEnded] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -940,6 +950,24 @@ function StaffManagement({ session, fetchImpl }: { session: StaffSession; fetchI
   return (
     <>
       <Card title="Staff">
+        {ended && <Alert tone="success">{ended}</Alert>}
+        {ending && (
+          <ConfirmWithCode
+            key={ending.id}
+            title={`Sign ${ending.name} out everywhere`}
+            lead={`This ends every session ${ending.name} has in the admin console, on all devices. Their roles and access stay the same; they can sign in again. Confirm with a fresh code from your authenticator app. We will email them.`}
+            action="Sign out everywhere"
+            submit={(code) => endStaffMemberSessions(session.csrfToken, ending.id, code, fetchImpl)}
+            onCancel={() => setEnding(null)}
+            onDone={(result) => {
+              if (result.kind !== 'ok') return false;
+              const count = typeof (result.data as { ended?: unknown } | null)?.ended === 'number' ? (result.data as { ended: number }).ended : 0;
+              setEnded(`${ending.name} is signed out everywhere (${count === 1 ? '1 session' : `${count} sessions`} ended).`);
+              setEnding(null);
+              return true;
+            }}
+          />
+        )}
         {list === 'loading' && <p className="pc-muted">Loading staff…</p>}
         {list !== 'loading' && list.kind === 'failed' && <Alert tone="danger">The staff list could not be loaded.</Alert>}
         {list !== 'loading' && list.kind === 'ok' && (
@@ -951,6 +979,9 @@ function StaffManagement({ session, fetchImpl }: { session: StaffSession; fetchI
                   <th scope="col">Email</th>
                   <th scope="col">Status</th>
                   <th scope="col">Roles</th>
+                  <th scope="col">
+                    <span className="pc-visually-hidden">Action</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -962,6 +993,20 @@ function StaffManagement({ session, fetchImpl }: { session: StaffSession; fetchI
                       <Badge tone={member.status === 'active' ? 'success' : member.status === 'invited' ? 'warning' : 'neutral'}>{member.status}</Badge>
                     </td>
                     <td>{member.roles.map(roleLabel).join(', ') || '—'}</td>
+                    <td>
+                      {member.id !== session.id && member.status === 'active' && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setEnded(null);
+                            setEnding({ id: member.id, name: member.fullName });
+                          }}
+                        >
+                          Sign out everywhere
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

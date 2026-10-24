@@ -78,7 +78,7 @@ final readonly class AdminCodeSignInController
         }
         // A fresh session ID at every sign-in (T-18); any older staff session in this browser ends.
         $this->sessions->end(StaffSessionCookie::read($request));
-        $issued = $this->sessions->issue($staffId);
+        $issued = $this->sessions->issue($staffId, RequestClient::of($request));
 
         return AdminJson::ok(['status' => 'signed_in', 'csrf_token' => $issued->csrfToken], headers: [
             'set-cookie' => [StaffSessionCookie::issue($issued->sessionId), StaffStepCookie::clear()],

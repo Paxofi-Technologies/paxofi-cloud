@@ -221,6 +221,7 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale; risk = L × I.
 | T-55 | S | A copied or forged device cookie makes a new device look known | 2 | 1 | The device cookie only chooses between the "new device" and the normal sign-in email: it never skips the password, MFA or any check; it is a 256-bit random value stored as SHA-256 per identity, `__Host-`, HttpOnly, Secure, SameSite=Lax | IAM-017 | `SignInAlertsTest` |
 | T-56 | I | Staff without a security role read customers' full IP addresses and user agents from the audit log | 2 | 2 | §6.24: `audit.view` required, deny by default; full IP and raw user agent only with `staff.manage`; others see /24 or /64 and parsed device; purged after 180 days (T-51) | AUD-001 | `AuditLogViewerTest` |
 | T-57 | R | A staff member browses the audit log (personal data) and no record shows who looked | 2 | 2 | §6.24: every page load records `audit.viewed` with subject, filters and row count (deduplicated within 60 s) | AUD-001 | `AuditLogViewerTest` |
+| T-58 | E | A stolen staff session ends other staff members' sessions or hides its own trail by signing the owner out everywhere | 2 | 2 | §6.25: forced sign-out needs `staff.manage` plus a fresh authenticator code of the acting manager; own sign-outs need a fresh code too; 5 code attempts per 15 min; every action audited and emailed to the affected member; status and roles unchanged | ACC-005 | `StaffSessionControlTest` |
 
 ### 6.9 Edge and transport (API-004…006, SEC-007)
 
@@ -243,6 +244,15 @@ The audit log (§6.14) records every security event, but until now staff could o
 - **Viewing is audited (T-57).** Every page load records `audit.viewed` with the staff subject, the filters and the number of rows returned, so access to personal data is itself traceable. Repeated page loads within 60 seconds with the same filters are recorded once, so the chain does not fill with refreshes.
 - **Read-only.** The route has no write path and the runtime database user only holds `SELECT` (plus `INSERT` for new events) on `audit_events` (§6.22). Chain integrity remains `audit:verify`; the page shows the head sequence number and hash as the manual anchor.
 - **Rendering.** Every value is rendered as text (React), never as HTML; details are fixed codes from our own code.
+
+### 6.25 Staff session list, sign-out and forced sign-out (CEO request 24 Oct 2026)
+
+The customer portal already lets the owner see and end their sessions (§6.21). Staff could not: a staff member could not see where else they were signed in, and a security administrator could not end a colleague's sessions (lost laptop, departure, suspected compromise) except by suspending the member.
+
+- **Index.** Each staff session record also keeps the client IP, user agent (255 characters) and approximate location at sign-in. A per-member Redis set `pc:staff:sess:idx:{staff}` lists the record keys; it is written in the same Lua call as the record, expires with the 8-hour absolute lifetime and is pruned on read. A listed record must name the same member, so an index entry can never show someone else's session. The list shows a public ID derived from the record key (never the key or the cookie), device, location, IP, signed-in and last-active times, and which entry is the current session.
+- **Own sessions.** `GET /admin-api/v1/account/sessions` (signed in). `POST .../account/sessions/revoke` (one, by public ID) and `.../revoke-others` (all but the current) need the session's CSRF token **and a fresh authenticator code**; a recovery code is not accepted here, it is kept for sign-in recovery. An unknown or someone else's public ID answers 404. The owner receives "Admin security settings changed" with the device, location, IP and time of the request.
+- **Forced sign-out (T-58).** `POST /admin-api/v1/staff/sessions/end` needs `staff.manage`, CSRF and a fresh authenticator code of the *acting* manager, and names the member. It ends every session of that member and emails them ("A security administrator signed you out on every device"). A manager cannot target themselves (they use revoke-others, which keeps the current session). Ending sessions does not change the member's status or roles; suspension remains a separate action.
+- **Limits and audit.** Code attempts share one counter per acting member: 5 per 15 minutes, then 429. Every success and refusal is audited (`staff.session.revoked`, `staff.sessions.revoked_others`, `staff.sessions.ended`, `staff.session_change.refused`) with the acting member as `subject` and, for a forced sign-out, the member as `target`, plus the count ended. Emails are best effort and never block the action.
 
 ## 7. Sprint 1 security test plan
 
@@ -479,3 +489,4 @@ Decision (CEO, 24 Oct 2026): a **founder bootstrap**, through the existing `staf
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |
 | 2026-10-24 | §6.23 founder bootstrap of the Catalogue role while the founding Security Admin is the only active staff member (CEO decision); written before the code | Claude (security engineering) |
 | 2026-10-24 | §6.24 staff audit log viewer (CEO request), T-56 personal data in the viewer, T-57 unaudited browsing; written before the code | Claude (security engineering) |
+| 2026-10-24 | §6.25 staff session list, sign-out and forced sign-out (CEO request), T-58; written before the code | Claude (security engineering) |

@@ -21,6 +21,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\StaffSessionCookie;
 use PaxofiCloud\Tests\Support\AuditFixtures;
@@ -64,11 +65,15 @@ final class AdminRouteCoverageTest extends TestCase
         'POST /admin-api/v1/account/sign-in-setup' => 'signed-in',
         'POST /admin-api/v1/account/passkeys/options' => 'signed-in',
         'POST /admin-api/v1/account/passkeys' => 'signed-in',
+        'GET /admin-api/v1/account/sessions' => 'signed-in',
+        'POST /admin-api/v1/account/sessions/revoke' => 'signed-in',
+        'POST /admin-api/v1/account/sessions/revoke-others' => 'signed-in',
         'GET /admin-api/v1/staff' => 'staff.manage',
         'POST /admin-api/v1/staff/invitations' => 'staff.manage',
         'POST /admin-api/v1/staff/roles/grant' => 'staff.manage',
         'POST /admin-api/v1/staff/roles/approve' => 'staff.manage',
         'POST /admin-api/v1/staff/roles/revoke' => 'staff.manage',
+        'POST /admin-api/v1/staff/sessions/end' => 'staff.manage',
         'GET /admin-api/v1/provider-connections' => 'provider_credentials.manage',
         'POST /admin-api/v1/provider-connections' => 'provider_credentials.manage',
         'GET /admin-api/v1/domain-costs' => 'catalogue.view',
@@ -215,6 +220,7 @@ final class AdminRouteCoverageTest extends TestCase
             static fn (): AdminProviderConnectionsController => throw new ReachedController(),
             static fn (): AdminDomainCostsController => throw new ReachedController(),
             static fn (): AdminAuditLogController => throw new ReachedController(),
+            static fn (): AdminSessionsController => throw new ReachedController(),
         );
     }
 }

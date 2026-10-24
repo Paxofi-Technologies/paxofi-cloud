@@ -37,6 +37,7 @@ final readonly class EmailTemplates
     public const string STAFF_SIGN_IN_CODE = 'staff-sign-in-code';
     public const string PROVIDER_CREDENTIAL_CHANGED = 'provider-credential-changed';
     public const string PRICE_SYNC_PROBLEM = 'price-sync-problem';
+    public const string STAFF_SECURITY_CHANGE = 'staff-security-change';
 
     /** Roles the founder bootstrap can add (§6.23), with how they read. */
     private const array ROLE_LABELS = ['catalogue' => 'Catalogue (products, prices and provider costs)'];
@@ -57,6 +58,13 @@ final readonly class EmailTemplates
         'other_sessions_revoked' => 'All other devices were signed out of your account',
     ];
 
+    /** §6.25: staff session changes; the member's own action, or a security administrator's. */
+    public const array STAFF_CHANGES = [
+        'session_revoked' => 'A device was signed out of your admin account',
+        'other_sessions_revoked' => 'All other devices were signed out of your admin account',
+        'sessions_ended_by_manager' => 'A security administrator signed your admin account out on every device',
+    ];
+
     private const string DISPLAY_TIMEZONE = 'Africa/Lagos';
 
     private string $appUrl;
@@ -73,7 +81,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_ROLES_ADDED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED, self::PRICE_SYNC_PROBLEM];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_ROLES_ADDED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED, self::PRICE_SYNC_PROBLEM, self::STAFF_SECURITY_CHANGE];
     }
 
     /** @param array<string, string> $parameters */
@@ -90,6 +98,7 @@ final readonly class EmailTemplates
             self::STAFF_SIGN_IN_CODE => $this->staffSignInCode($to, $name, $parameters, $idempotencyKey),
             self::PROVIDER_CREDENTIAL_CHANGED => $this->providerCredentialChanged($to, $name, $parameters, $idempotencyKey),
             self::PRICE_SYNC_PROBLEM => $this->priceSyncProblem($to, $name, $parameters, $idempotencyKey),
+            self::STAFF_SECURITY_CHANGE => $this->staffSecurityChange($to, $name, $parameters, $idempotencyKey),
             self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
@@ -326,6 +335,49 @@ final readonly class EmailTemplates
             $details,
             $code,
         ), self::STAFF_SIGN_IN_CODE, $key);
+    }
+
+    /**
+     * §6.25: a staff member's sessions were ended, by themselves or by a
+     * security administrator. Details describe the device that made the change.
+     *
+     * @param array<string, string> $parameters
+     */
+    private function staffSecurityChange(EmailAddress $to, string $name, array $parameters, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff alerts cannot be sent.');
+        }
+        $change = $parameters['change'] ?? '';
+        $lead = (self::STAFF_CHANGES[$change] ?? throw new \InvalidArgumentException('Template parameter "change" is missing or unknown.')) . '.';
+        $product = $this->productName;
+        $subject = "Admin security settings changed on your {$product} staff account";
+        $byManager = $change === 'sessions_ended_by_manager';
+        $footer = $byManager
+            ? 'Sign in again when you need to. If you did not expect this, contact your security administrator.'
+            : 'If you made this change, you do not need to do anything. If you did not, someone may have your password and authenticator: tell the security team now.';
+        $details = [
+            ($byManager ? 'Done from' : 'Device') => self::device($parameters['device'] ?? ''),
+            'Location' => self::location($parameters['location'] ?? ''),
+            'IP address' => self::ip($parameters['ip'] ?? ''),
+            'Time' => self::time($parameters['time'] ?? ''),
+        ];
+        $link = $this->adminUrl . '/account';
+        $lines = '';
+        foreach ($details as $label => $value) {
+            $lines .= "{$label}: {$value}\n";
+        }
+        $text = "Hi {$name},\n\n{$lead}\n\n{$lines}\n{$footer}\n\nReview your sign-in: {$link}\n\n{$product}\n";
+
+        return new EmailMessage($to, $subject, $text, $this->html(
+            $subject,
+            sprintf('Hi %s,', self::e($name)),
+            self::e($lead),
+            'Review your sign-in',
+            $link,
+            $footer,
+            $details,
+        ), self::STAFF_SECURITY_CHANGE, $key);
     }
 
     /** A full name reduced to letters, spaces, apostrophes and hyphens (it came from an invitation form). */

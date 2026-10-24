@@ -474,3 +474,46 @@ export async function fetchAuditLog(filters: AuditLogFilters, fetchImpl: typeof 
     events: body.events.map(auditEvent).filter((e): e is AuditLogEvent => e !== null),
   };
 }
+
+/** One of the staff member's own signed-in sessions (identity threat model §6.25). */
+export interface StaffDeviceSession {
+  id: string;
+  current: boolean;
+  device: string;
+  location: string | null;
+  ip: string | null;
+  signedInAt: string;
+  lastActiveAt: string;
+}
+
+export async function fetchStaffSessions(fetchImpl: typeof fetch = fetch): Promise<StaffDeviceSession[] | null> {
+  const result = await getJson(`${ADMIN_API}/account/sessions`, fetchImpl);
+  const body = obj(result?.data);
+  if (result === null || result.status !== 200 || !body || !Array.isArray(body.sessions)) return null;
+  const sessions: StaffDeviceSession[] = [];
+  for (const raw of body.sessions) {
+    const s = obj(raw);
+    if (!s || typeof s.id !== 'string' || typeof s.device !== 'string' || typeof s.signed_in_at !== 'string' || typeof s.last_active_at !== 'string') continue;
+    sessions.push({
+      id: s.id,
+      current: s.current === true,
+      device: s.device,
+      location: nullableString(s.location),
+      ip: nullableString(s.ip),
+      signedInAt: s.signed_in_at,
+      lastActiveAt: s.last_active_at,
+    });
+  }
+  return sessions;
+}
+
+/** Each sign-out needs a fresh authenticator code (§6.25). */
+export const revokeStaffSession = (csrfToken: string, session: string, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/account/sessions/revoke`, { session, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+export const revokeOtherStaffSessions = (csrfToken: string, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/account/sessions/revoke-others`, { code }, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** T-58: a staff manager signs another member out on every device. */
+export const endStaffMemberSessions = (csrfToken: string, staffId: string, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/staff/sessions/end`, { staff_id: staffId, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });

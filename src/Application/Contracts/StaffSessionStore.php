@@ -14,4 +14,13 @@ interface StaffSessionStore
     public function find(string $sessionIdHash): ?StaffSession;
 
     public function delete(string $sessionIdHash): void;
+
+    /**
+     * §6.25: the member's stored sessions (expired ones may still be
+     * included; the caller checks the times). Index entries without a record
+     * are dropped.
+     *
+     * @return list<StaffSession>
+     */
+    public function forStaff(string $staffId): array;
 }

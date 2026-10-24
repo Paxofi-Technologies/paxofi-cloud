@@ -919,3 +919,88 @@ describe('Audit log (identity threat model §6.24)', () => {
     expect(adminPageForPath('/audit-log', ['catalogue.view'])).toBe('overview');
   });
 });
+
+describe('Staff sessions (identity threat model §6.25)', () => {
+  const security = { ...manager, staff: { ...manager.staff, permissions: ['staff.manage', 'audit.view'] } };
+  const device = (id: string, current: boolean, deviceName: string) => ({
+    id,
+    current,
+    device: deviceName,
+    location: 'Ikeja, Lagos, Nigeria',
+    ip: '203.0.113.45',
+    signed_in_at: '2026-10-24T09:00:00+00:00',
+    last_active_at: '2026-10-24T09:10:00+00:00',
+  });
+
+  it('lists own devices and signs one out with a fresh authenticator code', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: security },
+      'GET /admin-api/v1/account/sessions': [
+        { status: 200, body: { sessions: [device('a'.repeat(32), true, 'Chrome 146 on Windows (desktop)'), device('b'.repeat(32), false, 'Safari 17 on iOS (mobile)')] } },
+        { status: 200, body: { sessions: [device('a'.repeat(32), true, 'Chrome 146 on Windows (desktop)')] } },
+      ],
+      'POST /admin-api/v1/account/sessions/revoke': [
+        { status: 401, body: { code: 'step_up_required' } },
+        { status: 204 },
+      ],
+    });
+    render(<AdminApp path="/account" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    const table = await screen.findByRole('table', { name: 'Devices signed in to your staff account' });
+    expect(within(table).getByText('This device')).toBeInTheDocument();
+    await user.click(within(table).getByRole('button', { name: 'Sign out' }));
+
+    const form = screen.getByRole('form', { name: 'Sign out Safari 17 on iOS (mobile)' });
+    await user.click(within(form).getByRole('button', { name: 'Sign out device' }));
+    expect(within(form).getByText('Enter the 6-digit code from your app.')).toBeInTheDocument();
+    expect(calls(fetchImpl, 'POST /admin-api/v1/account/sessions/revoke')).toHaveLength(0);
+
+    await user.type(within(form).getByLabelText('Authenticator code'), '111111');
+    await user.click(within(form).getByRole('button', { name: 'Sign out device' }));
+    expect(await screen.findByText(/That authenticator code is not right/)).toBeInTheDocument();
+
+    await user.type(within(form).getByLabelText('Authenticator code'), '222222');
+    await user.click(within(form).getByRole('button', { name: 'Sign out device' }));
+    expect(await screen.findByText('That device is signed out.')).toBeInTheDocument();
+    expect(await screen.findByText('You are not signed in anywhere else.')).toBeInTheDocument();
+
+    const [, init] = calls(fetchImpl, 'POST /admin-api/v1/account/sessions/revoke');
+    expect(JSON.parse(String(init?.body))).toEqual({ session: 'b'.repeat(32), code: '222222' });
+    expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
+  });
+
+  it('lets a staff manager sign another active member out everywhere, never themselves', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: security },
+      'GET /admin-api/v1/staff': {
+        status: 200,
+        body: {
+          staff: [
+            { id: manager.staff.id, full_name: 'Ada Lovelace', email: 'ada@example.ng', status: 'active', roles: ['security_admin'] },
+            { id: 'c'.repeat(32), full_name: 'Bob Smith', email: 'bob@example.ng', status: 'active', roles: ['catalogue'] },
+            { id: 'd'.repeat(32), full_name: 'Cy Invited', email: 'cy@example.ng', status: 'invited', roles: [] },
+          ],
+          pending_grants: [],
+        },
+      },
+      'POST /admin-api/v1/staff/sessions/end': { status: 200, body: { ended: 2 } },
+    });
+    render(<AdminApp path="/staff" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await screen.findByText('Bob Smith');
+    const buttons = screen.getAllByRole('button', { name: 'Sign out everywhere' });
+    expect(buttons).toHaveLength(1);
+    await user.click(buttons[0] as HTMLElement);
+
+    const form = screen.getByRole('form', { name: 'Sign Bob Smith out everywhere' });
+    expect(within(form).getByText(/Their roles and access stay the same/)).toBeInTheDocument();
+    await user.type(within(form).getByLabelText('Authenticator code'), '123456');
+    await user.click(within(form).getByRole('button', { name: 'Sign out everywhere' }));
+
+    expect(await screen.findByText('Bob Smith is signed out everywhere (2 sessions ended).')).toBeInTheDocument();
+    const [init] = calls(fetchImpl, 'POST /admin-api/v1/staff/sessions/end');
+    expect(JSON.parse(String(init?.body))).toEqual({ staff_id: 'c'.repeat(32), code: '123456' });
+  });
+});
