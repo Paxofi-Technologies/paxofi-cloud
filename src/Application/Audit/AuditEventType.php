@@ -53,6 +53,7 @@ final class AuditEventType
     public const string PROVIDER_CREDENTIAL_REFUSED = 'provider_credential.refused';
     public const string PROVIDER_CREDENTIAL_STORED = 'provider_credential.stored';
     public const string PROVIDER_CREDENTIAL_REJECTED = 'provider_credential.rejected';
+    public const string REGISTRAR_WRITE_REFUSED = 'registrar.write_refused';
 
     private function __construct()
     {
