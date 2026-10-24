@@ -98,7 +98,7 @@ Boundaries:
 |---|---|
 | DX-1 | **Two currencies, never mixed.** Costs stay in the currency the registrar bills (USD for both registrars today). The **base currency for domains and servers is USD** (CEO decision). Comparisons between registrars convert each cost to USD with the current accepted FX set (CD-16), using bcmath and rounding up. No float ever touches money (PRC-001). |
 | DX-2 | **Registrar offers.** An *offer* is one registrar's latest **accepted** cost snapshot entry for an extension. An offer is *healthy* when its registrar's latest accepted snapshot is under 72 hours old and its connection is not in a refused state. Quarantined or stale snapshots produce no healthy offers. |
-| DX-3 | **Registrar choice.** For new registrations, the chosen registrar is the healthy offer with the lowest one-year `register` cost in USD; ties go to the registrar listed first (DomainNameAPI, then Namecheap). Staff with `catalogue.manage` may **pin** a registrar per extension (audited). If a pinned registrar is not healthy, the choice falls back to the cheapest healthy offer and the extension is flagged "pin not available". A choice change affects **new registrations only**: every registered domain records its holding registrar, and renewal, restore and transfer-out always go to the holder. |
+| DX-3 | **Registrar choice.** For new registrations, the chosen registrar is the healthy offer with the lowest one-year `register` cost in USD; ties go to the registrar ranked first (CEO ranking, 24 Oct 2026: DomainNameAPI, Namecheap, Dynadot, Spaceship; registrars whose costs are entered by hand rank last). Staff with `catalogue.manage` may **pin** a registrar per extension (audited). If a pinned registrar is not healthy, the choice falls back to the cheapest healthy offer and the extension is flagged "pin not available". A choice change affects **new registrations only**: every registered domain records its holding registrar, and renewal, restore and transfer-out always go to the holder. |
 | DX-4 | **Failover and the floor.** The failover order is the chosen registrar, then the other healthy offers by cost. A registrar may be used for an order (first choice or failover) only if its cost keeps the locked selling price above the margin floor (CD-14); otherwise it is skipped for that extension and the extension is flagged. The floor therefore holds whichever registrar ends up doing the work. |
 | DX-5 | **One selling price per extension, action, term and currency.** The USD price is derived from the chosen registrar's cost (markup, rounding, floor: CD-14) and repriced under CD-15. The NGN price is derived from the USD price with the current FX set (CD-16) and rounded **up** to the NGN step. Staff may override any single price (audited, future-dated, PRC-005). An override below the floor is refused when saved. If a later cost or rate change pushes a live price (derived or overridden) below the floor, **that action stops being sold online** for the extension until staff fix it or the next derivation clears it, and staff are alerted. It fails closed. |
 | DX-6 | **Price lock.** An order line stores the price, its currency, the FX set id, the registrar chosen and the cost basis (registrar cost in its own currency) at the moment the customer sees the checkout total. Payment never re-converts: the customer pays exactly the locked amount in their account currency. A quote is valid for 30 minutes; after that checkout re-quotes and shows the new total before payment. |
@@ -138,9 +138,99 @@ Boundaries:
 | R-4 | Registrar grace and redemption lengths differ from our defaults until staff set them per extension. | DX-7 guard catches the cost difference; staff review the lifecycle tab for featured extensions before launch. |
 | R-5 | Choosing the cheapest registrar optimises cost, not reliability or support quality. | Staff can pin (DX-3); a reliability score can be added later. |
 
-## 8. Review log
+## 8. Dynadot and Spaceship (added 24 Oct 2026, before their code)
+
+CEO decisions, 24 Oct 2026:
+
+- **Dynadot** is added as a registrar. The CEO has a reseller account.
+- **Spaceship plan agreed.** Spaceship ranks last. A read-only probe comes first, to find out whether its API returns prices for ordinary names.
+- **Admin menu.** "API providers" is the menu heading, with **Domain registrars** and **Server providers** pages under it (paxofi-cloud PR #112).
+- **Ranking**, used only to break ties in DX-3:
+  1. DomainNameAPI
+  2. Namecheap
+  3. Dynadot
+  4. Spaceship. It is last because any Spaceship cost that cannot be fetched is entered by hand.
+
+### 8.1 What we know about the Dynadot API
+
+**Sources.**
+- Dynadot's RESTful API document (https://www.dynadot.com/domain/api-document, marked *Beta*).
+- Its legacy API3 command list (https://www.dynadot.com/domain/api-commands).
+- Two open-source clients that call the price endpoint: `Tahmied/Dynadot-wisecp-v5` and `7c/dynadot`.
+- The RESTful price endpoint is **not** in Dynadot's own document, so the first real run confirms it (residual R-6).
+
+| Fact | Value |
+|---|---|
+| RESTful base | `https://api.dynadot.com/restful/v2/`. The sandbox is `https://api-sandbox.dynadot.com`, with its own sandbox key and secret. |
+| Authentication | `Authorization: Bearer <API key>` on every call. The **API secret** signs requests: `X-Signature` = Base64(HMAC-SHA256(secret, apiKey + "\n" + fullPathAndQuery + "\n" + X-Request-ID + "\n" + body)), with `X-Request-ID` a UUID. The document makes the signature mandatory for "transactional requests, including those that retrieve sensitive information". |
+| Keys | Created in the Dynadot account under **Tools → API**. Since v2.0.0 (9 Oct 2025), "Reseller account no longer required to enter at least 1 IP to use API (RESTful API only)". |
+| Price list | `GET /restful/v2/domains/get_tld_price?currency=usd&show_multi_year=true&page_index=N&count_per_page=M`. `data.tld_price_list[]` holds `tld`, `all_years_register_price[]`, `all_years_renew_price[]`, `transfer_price`, `min_duration`, `max_duration` and `on_sale`; `data.currency` is the currency. |
+| Price meaning | The `all_years_*` arrays are **cumulative totals**: index 0 is the 1-year total, index 1 the 2-year total, and so on. `on_sale` is not a reliable promotion flag. The RESTful response has **no restore price and no grace or redemption days**. |
+| Rate limit | 1 request at a time and 60 per minute on a regular account; HTTP 429 when exceeded. |
+| Legacy API3 | `api3.xml?key=<API key>&command=tld_price`. It carries restore and grace data, but the **API key goes in the query string**, and Dynadot has scheduled API3 for retirement. |
+
+### 8.2 Dynadot design decisions
+
+| ID | Decision |
+|---|---|
+| DY-1 | **RESTful only.** API3 is never used: it puts the key in the URL, where proxies and logs can capture it. |
+| DY-2 | **Credential.** The API key and API secret are stored as JSON `{api_key, api_secret}` through API providers → Domain registrars (PC-1 to PC-8) and opened only in the provider worker. Both are printable, have no spaces and are at most 256 characters. They are sensitive parameters and are never logged or put in errors. |
+| DY-3 | **Every call is signed.** We always send `X-Request-ID` (a random UUID) and `X-Signature` as in §8.1. This works whether or not Dynadot enforces the signature on price reads, and it protects the request if the bearer token alone were ever replayed elsewhere. The signature uses PHP's `hash_hmac('sha256', …, true)` and `base64_encode`. These are native primitives; we do not write our own crypto (CLAUDE.md §2). |
+| DY-4 | **Own adapter, existing client.** All calls go through `ProviderHttpClient`: fixed host `api.dynadot.com`, our own DNS resolution with public-IP pinning, verified TLS 1.2+, no redirects, no proxies, `Accept: application/json`. The JSON is parsed with `ExactJson`, so numbers stay text. Each page is capped at 2 MiB, with at most 200 pages and 5,000 extensions. Pages are fetched one at a time, at least 1.1 seconds apart. A 429 waits and retries up to 3 times per page; after that the run fails with `rate_limited`. |
+| DY-5 | **Cost rules.** The 1-year register cost is `all_years_register_price[0]`. The 1-year renew cost is `all_years_renew_price[0]`. Transfer is `transfer_price`. Restore is **empty** (not sold online through Dynadot until staff set it: DX-9, DR-15). Costs are rounded up to the cent (DR-5), and `data.currency` must be `USD` or the whole run fails. When the 1-year register cost is below the 1-year renew cost, the extension's status is `promo`, so DX-5 and DX-7 judge the renewal on the renew cost and never on the promotional first year. Multi-year totals are recorded in the field inventory (DR-16) but not yet sold. |
+| DY-6 | **Strict parsing.** A row with a bad name, a missing or non-positive 1-year register or renew price, `min_duration` > 1, or an unexpected type is skipped with a fixed reason (DR-14). Duplicate extensions are skipped. A response without `data.tld_price_list` fails the run with `provider_error`. |
+| DY-7 | **Errors.** HTTP 401 or 403, or a body `code` of 401 or 403, maps to `unauthorised` (one alert per streak, DR-9). 429 maps to `rate_limited`. Anything else is `provider_error`. Messages from Dynadot are never stored or shown; only the code is kept. |
+| DY-8 | **Environment.** Staging uses the **live** key, read only, like the other registrars (CEO decision for Namecheap applied here). Writes are refused by the DR-4 write guard before the credential is opened. The sandbox host is allowed only outside production. |
+| DY-9 | **Reuse.** Dynadot results use the same snapshot store, quarantine, skipped-item and field records, 02:30 WAT schedule, "Sync now" queue and registrar tabs as the other registrars (NC-9). The sync runs only once a Dynadot connection exists. |
+
+### 8.3 What we know about the Spaceship API
+
+These facts come from https://docs.spaceship.dev, read on 24 Oct 2026.
+
+| Fact | Value |
+|---|---|
+| Base | `https://spaceship.dev/api/v1` |
+| Authentication | Headers `X-API-Key` and `X-API-Secret`. Each key has scopes (`domains:read`, `domains:write`, `domains:transfer`, `domains:billing`, `contacts:*`, `dnsrecords:*`, `asyncoperations:read` and others). |
+| Prices | There is **no price-list endpoint**. `POST /v1/domains/available` takes up to 20 names and returns availability, with `premiumPricing` (operation, price, currency) for premium names. |
+| Rate limit | 30 requests per 30 seconds per user (availability). |
+| Writes | Registration, renewal and transfer are asynchronous: HTTP 202 plus a `spaceship-async-operationid` header. |
+
+### 8.4 Spaceship design decisions
+
+| ID | Decision |
+|---|---|
+| SP-1 | **Least privilege.** The key entered for PaxofiCloud has only the `domains:read` scope until registration through Spaceship goes live. Write and billing scopes are added then, in a new key. The CEO's existing full-access key must not be entered. |
+| SP-2 | **Credential.** Stored as JSON `{api_key, api_secret}` through API providers → Domain registrars and opened only in the provider worker. Both values are sent only in headers, never in a URL or a log. |
+| SP-3 | **Probe first.** A one-off CLI command, `prices:probe-spaceship`, run on staging by the operator, sends **one** availability request for 20 ordinary test names (`paxofi-price-probe-<random>.<tld>`) across 20 common extensions. It records only whether each answer included a price for a non-premium name, plus the field names present (DR-16 style, values never stored). It registers nothing: the write guard does not even allow a write call to be built, and the key has `domains:read` only. |
+| SP-4 | **If the probe shows prices for ordinary names:** a daily Spaceship sync probes one name per extension on sale, in batches of 20 at no more than 1 request per 1.2 seconds. Each price becomes a 1-year register cost with source `probe`. Renew, transfer and restore stay empty unless the response carries them. The sync otherwise follows DY-4 to DY-9. |
+| SP-5 | **If it does not:** Spaceship is used only as a fallback registrar for a short list of extensions chosen by staff. For each of them, staff with `catalogue.manage` enter the register and renew cost. The entry is audited and **expires after 30 days**. Three days before expiry, every Catalogue member is emailed. An expired or missing entry means Spaceship has no healthy offer for that extension (DX-2), so it is never chosen. The DX-7 loss guard still checks every spend. |
+| SP-6 | **No scraping.** Spaceship's public price web page is not read by any job: that would be fragile, may breach their terms, and is an uncontrolled external call (CLAUDE.md §2.4). |
+
+### 8.5 Threats (Dynadot and Spaceship)
+
+| ID | STRIDE | Threat | L | I | Mitigation | Test evidence |
+|---|---|---|---|---|---|---|
+| DY-T1 | I | The Dynadot key or secret leaks through a URL, a log or an error | 2 | 3 | DY-1 RESTful only, key in the header; DY-2 sensitive parameters; DY-7 code-only errors | `DynadotClientTest` (key and secret absent from URL, logs, exceptions) |
+| DY-T2 | S | A wrong signature makes the call fail, or the signature leaks the secret | 2 | 2 | DY-3: the HMAC sends a digest, never the secret; the test vector is computed independently | `DynadotSignatureTest` |
+| DY-T3 | T | A promotional first-year price or cumulative-array misuse becomes our renewal cost | 3 | 3 | DY-5 uses index 0 only, `promo` status, renew judged on renew cost; DX-5 floor and DX-7 guard | `DynadotPriceParserTest` |
+| DY-T4 | D | Dynadot's 1-request-at-a-time limit makes the sync hammer the API or never finish | 2 | 1 | DY-4 serial paging, spacing, bounded retries, page cap | `DynadotClientTest` |
+| DY-T5 | E | A staging bug spends money at Dynadot with the live key | 2 | 3 | DR-4 guard covers every Dynadot write | `RegistrarWriteCoverageTest` extended |
+| SP-T1 | E | A full-access Spaceship key in our store allows registrations, transfers or DNS changes if the store is compromised | 2 | 3 | SP-1 `domains:read` only; the runbook checks the scope | Runbook step: confirm the key shows only `domains:read` before entering it |
+| SP-T2 | T | A stale hand-entered Spaceship cost makes us sell below cost | 3 | 3 | SP-5 30-day expiry and reminder; DX-2 healthy only when unexpired; DX-7 guard | `ManualCostTest` |
+| SP-T3 | R | Nobody can show who entered a Spaceship cost | 2 | 2 | SP-5 audited with before and after | `ManualCostTest` |
+
+### 8.6 Residual risks (Dynadot and Spaceship)
+
+| ID | Risk | Owner / action |
+|---|---|---|
+| R-6 | The Dynadot price endpoint and response come from two open-source clients, not Dynadot's own document, which is *Beta*. If the live response differs, items are skipped or the run fails; no wrong price is published. | Claude: compare the first live sync with the Dynadot price list in the CEO's account. CEO: ask Dynadot support to confirm `domains/get_tld_price` if it fails. |
+| R-7 | Dynadot's RESTful price response has no restore price or grace days. | Staff set them per extension (DX-9). Restore through Dynadot is not sold online until then. |
+| R-8 | Spaceship may never expose ordinary prices through its API. | SP-5 fallback list. CEO: ask Spaceship support for a reseller price list or feed. |
+
+## 9. Review log
 
 | Date | Change |
 |---|---|
 | 24 Oct 2026 | First version, before code. CEO decisions: USD base; cheapest healthy registrar with pinning; Namecheap live read-only on staging; Namecheap sync first. |
 | 24 Oct 2026 | Built with the Namecheap price sync: the Domain costs page and "Sync now" take the registrar from a fixed server-side list (unknown names get 404, never a query to another table); `prices:sync --provider=` checks the same list; provider connections carry a fixed category (Domain providers / Server providers, CEO decision). Product names are lower-cased so a sheet that writes "NET" in one action and "net" in another still matches (found by test). Spaceship (CEO, 24 Oct): its API has no price list, so it is not part of this sync; the plan and its threat-model section come before its code. |
+| 24 Oct 2026 | Section 8 added before code: Dynadot facts and DY-1 to DY-9, Spaceship facts and SP-1 to SP-6, threats DY-T1 to DY-T5 and SP-T1 to SP-T3, residual risks R-6 to R-8. CEO decisions: add Dynadot; Spaceship plan agreed (probe first, manual fallback last); ranking DomainNameAPI, Namecheap, Dynadot, Spaceship. |
