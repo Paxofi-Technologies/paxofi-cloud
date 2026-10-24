@@ -193,3 +193,52 @@ export const approveGrant = (csrfToken: string, grantId: string, fetchImpl: type
   postJson(`${ADMIN_API}/staff/roles/approve`, { grant_id: grantId }, fetchImpl, { 'X-CSRF-Token': csrfToken });
 
 export const signOutStaff = (csrfToken: string, fetchImpl: typeof fetch = fetch) => postJson(`${ADMIN_API}/auth/sign-out`, {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md): status only, never a secret (PC-2). */
+export interface ProviderConnectionField {
+  name: string;
+  label: string;
+  secret: boolean;
+}
+
+export interface ProviderConnectionStatus {
+  provider: string;
+  label: string;
+  fields: ProviderConnectionField[];
+  configuredAt: string | null;
+  reviewDueOn: string | null;
+  pendingSince: string | null;
+}
+
+export type ProviderConnectionList = { kind: 'ok'; providers: ProviderConnectionStatus[] } | { kind: 'failed' };
+
+function nullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+export async function fetchProviderConnections(fetchImpl: typeof fetch = fetch): Promise<ProviderConnectionList> {
+  const result = await getJson(`${ADMIN_API}/provider-connections`, fetchImpl);
+  const list = obj(result?.data)?.providers;
+  if (result === null || result.status !== 200 || !Array.isArray(list)) return { kind: 'failed' };
+  const providers: ProviderConnectionStatus[] = [];
+  for (const item of list) {
+    const p = obj(item);
+    if (!p || typeof p.provider !== 'string' || typeof p.label !== 'string' || !Array.isArray(p.fields)) continue;
+    const fields = p.fields
+      .map(obj)
+      .filter((f): f is Record<string, unknown> => f !== null && typeof f.name === 'string' && typeof f.label === 'string' && typeof f.secret === 'boolean')
+      .map((f) => ({ name: f.name as string, label: f.label as string, secret: f.secret as boolean }));
+    providers.push({
+      provider: p.provider,
+      label: p.label,
+      fields,
+      configuredAt: nullableString(p.configured_at),
+      reviewDueOn: nullableString(p.review_due_on),
+      pendingSince: nullableString(p.pending_since),
+    });
+  }
+  return { kind: 'ok', providers };
+}
+
+export const submitProviderCredential = (csrfToken: string, provider: string, fields: Record<string, string>, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/provider-connections`, { provider, fields, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });

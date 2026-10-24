@@ -36,6 +36,19 @@ Security Admins set or replace the DomainNameAPI, Hetzner and Vultr credentials 
 4. Within seconds the `provider-worker` container opens the box, checks it, encrypts the secret under the KEK into `provider_credentials`, and deletes the sealed row.
 5. Every staff manager receives a "A provider credential was changed" email naming the provider and time. If nobody expected the change, re-enter the correct credential at once.
 
+The page is visible only to staff with `provider_credentials.manage` (Security Admin).
+Each provider shows one of these statuses:
+
+| Status | Meaning |
+|---|---|
+| Not connected yet | No credential is stored for this environment. |
+| Saved …, being encrypted and stored | A sealed submission is waiting for the provider worker. The page checks again every few seconds. |
+| Connected. Last set … | A credential is stored. The page shows when it was last set and its review date. |
+
+If a provider stays on "being encrypted and stored" for more than a minute, the
+provider worker is not running. Run the Staging Deploy `status` action and check that
+the `provider-worker` container is up, then submit again with a new code. Rejections are recorded in the audit log.
+
 Credential IDs are fixed per environment, for example `domainnameapi-staging` and
 `hetzner-prod`. A credential stored this way gets a review date one year ahead.
 
