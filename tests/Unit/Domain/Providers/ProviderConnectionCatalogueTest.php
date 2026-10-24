@@ -14,9 +14,9 @@ final class ProviderConnectionCatalogueTest extends TestCase
 {
     public function testTwoFieldProvidersStoreAJsonObject(): void
     {
-        $secret = ProviderConnection::DomainNameApi->secretFrom(['username' => 'reseller01', 'password' => 'p@ss "word" ü']);
+        $secret = ProviderConnection::DomainNameApi->secretFrom(['reseller_id' => '0b6f1c2e-1111-4222-8333-444455556666', 'api_key' => 'p@ss "word" ü']);
 
-        self::assertSame(['username' => 'reseller01', 'password' => 'p@ss "word" ü'], json_decode($secret, true));
+        self::assertSame(['reseller_id' => '0b6f1c2e-1111-4222-8333-444455556666', 'api_key' => 'p@ss "word" ü'], json_decode($secret, true));
     }
 
     public function testOneFieldProvidersStoreTheBareValue(): void
@@ -28,17 +28,17 @@ final class ProviderConnectionCatalogueTest extends TestCase
     /** @return iterable<string, array{array<array-key, mixed>, string}> */
     public static function invalid(): iterable
     {
-        yield 'missing password' => [['username' => 'reseller01'], 'password'];
-        yield 'empty username' => [['username' => '', 'password' => 'x'], 'username'];
-        yield 'extra field' => [['username' => 'a', 'password' => 'b', 'environment' => 'prod'], 'unknown_field'];
-        yield 'credential id smuggled' => [['username' => 'a', 'password' => 'b', 'credential_id' => 'x'], 'unknown_field'];
+        yield 'missing API key' => [['reseller_id' => '0b6f1c2e-1111-4222-8333-444455556666'], 'api_key'];
+        yield 'empty reseller ID' => [['reseller_id' => '', 'api_key' => 'x'], 'reseller_id'];
+        yield 'extra field' => [['reseller_id' => 'a', 'api_key' => 'b', 'environment' => 'prod'], 'unknown_field'];
+        yield 'credential id smuggled' => [['reseller_id' => 'a', 'api_key' => 'b', 'credential_id' => 'x'], 'unknown_field'];
         yield 'numeric key' => [['a', 'b'], 'unknown_field'];
-        yield 'newline in password' => [['username' => 'a', 'password' => "b\nc"], 'password'];
-        yield 'NUL in username' => [['username' => "a\0", 'password' => 'b'], 'username'];
-        yield 'padded username' => [['username' => ' a', 'password' => 'b'], 'username'];
-        yield 'not a string' => [['username' => 'a', 'password' => ['b']], 'password'];
-        yield 'too long' => [['username' => str_repeat('a', 129), 'password' => 'b'], 'username'];
-        yield 'invalid UTF-8' => [['username' => "a\xC3", 'password' => 'b'], 'username'];
+        yield 'newline in API key' => [['reseller_id' => 'a', 'api_key' => "b\nc"], 'api_key'];
+        yield 'NUL in reseller ID' => [['reseller_id' => "a\0", 'api_key' => 'b'], 'reseller_id'];
+        yield 'padded reseller ID' => [['reseller_id' => ' a', 'api_key' => 'b'], 'reseller_id'];
+        yield 'not a string' => [['reseller_id' => 'a', 'api_key' => ['b']], 'api_key'];
+        yield 'too long' => [['reseller_id' => str_repeat('a', 65), 'api_key' => 'b'], 'reseller_id'];
+        yield 'invalid UTF-8' => [['reseller_id' => "a\xC3", 'api_key' => 'b'], 'reseller_id'];
     }
 
     /** @param array<array-key, mixed> $values */

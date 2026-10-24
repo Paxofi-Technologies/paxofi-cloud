@@ -458,8 +458,8 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
         label: 'DomainNameAPI (domain registrar)',
         credential_id: 'domainnameapi-staging',
         fields: [
-          { name: 'username', label: 'Reseller username', secret: false },
-          { name: 'password', label: 'Reseller password', secret: true },
+          { name: 'reseller_id', label: 'Reseller ID', secret: false },
+          { name: 'api_key', label: 'API key', secret: true },
         ],
         configured_at: null,
         review_due_on: null,
@@ -495,20 +495,20 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(screen.getByRole('button', { name: 'Replace credential' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Set credential' }));
-    const password = screen.getByLabelText('Reseller password');
+    const password = screen.getByLabelText('API key');
     expect(password).toHaveAttribute('type', 'password');
     expect(password).toHaveAttribute('autocomplete', 'new-password');
-    await user.type(screen.getByLabelText('Reseller username'), 'reseller01');
-    await user.type(password, 'S3cret-pass');
+    await user.type(screen.getByLabelText('Reseller ID'), 'reseller-id-1');
+    await user.type(password, 'S3cret-key');
     await user.type(screen.getByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Save credential' }));
 
     await screen.findByText(/DomainNameAPI \(domain registrar\): saved\./);
     const [init] = calls(fetchImpl, 'POST /admin-api/v1/provider-connections');
     expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
-    expect(JSON.parse(String(init?.body))).toEqual({ provider: 'domainnameapi', fields: { username: 'reseller01', password: 'S3cret-pass' }, code: '123456' });
-    expect(screen.queryByLabelText('Reseller password')).toBeNull();
-    expect(document.body.innerHTML).not.toContain('S3cret-pass');
+    expect(JSON.parse(String(init?.body))).toEqual({ provider: 'domainnameapi', fields: { reseller_id: 'reseller-id-1', api_key: 'S3cret-key' }, code: '123456' });
+    expect(screen.queryByLabelText('API key')).toBeNull();
+    expect(document.body.innerHTML).not.toContain('S3cret-key');
   });
 
   it('explains a wrong code and clears what was typed', async () => {
@@ -538,7 +538,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     await user.click(await screen.findByRole('button', { name: 'Set credential' }));
     await user.click(screen.getByRole('button', { name: 'Save credential' }));
 
-    expect(screen.getByText('Enter the reseller username.')).toBeInTheDocument();
+    expect(screen.getByText('Enter the reseller id.')).toBeInTheDocument();
     expect(screen.getByText('Enter the 6-digit code from your authenticator app.')).toBeInTheDocument();
     expect(calls(fetchImpl, 'POST /admin-api/v1/provider-connections')).toHaveLength(0);
   });
