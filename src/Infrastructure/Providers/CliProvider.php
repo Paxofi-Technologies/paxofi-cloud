@@ -35,6 +35,9 @@ use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotEnvironment;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotSignature;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapEnvironment;
 use PaxofiCloud\Application\Audit\AuditTrail;
@@ -157,6 +160,21 @@ final readonly class CliProvider implements Provider
                             $guard,
                         );
                     })(),
+                    DynadotClient::PROVIDER => (static function () use ($appEnv, $credentials, $environment, $guard): DynadotClient {
+                        $gateway = DynadotEnvironment::fromSetting((string) getenv('DYNADOT_ENVIRONMENT'), $appEnv);
+
+                        return new DynadotClient(
+                            new ProviderHttpClient([DynadotClient::endpoint($gateway)], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: DynadotClient::MAX_RESPONSE_BYTES),
+                            $credentials,
+                            ProviderConnection::Dynadot->credentialId($environment),
+                            $gateway,
+                            $guard,
+                            static function (int $milliseconds): void {
+                                usleep($milliseconds * 1000);
+                            },
+                            DynadotSignature::requestId(...),
+                        );
+                    })(),
                     default => throw new \InvalidArgumentException('Unknown price provider.'),
                 };
 
@@ -175,13 +193,15 @@ final readonly class CliProvider implements Provider
                     new MysqlProviderSyncRequests(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 );
             };
-            // DomainNameAPI always runs (registrar #1); Namecheap only once its connection has been entered,
-            // so an unused registrar never raises "credential refused" alerts.
+            // DomainNameAPI always runs (registrar #1); the others only once their connection has been
+            // entered, so an unused registrar never raises "credential refused" alerts.
             $activeSyncs = static function () use ($c, $appEnv, $syncFor): array {
                 $syncs = [$syncFor(DomainNameApiClient::PROVIDER)];
                 $configured = (new MysqlProviderCredentialStatus(Resolve::get($c, Repository::class)))->configured();
-                if (isset($configured[ProviderConnection::Namecheap->credentialId(ProviderConnection::environmentFor($appEnv))])) {
-                    $syncs[] = $syncFor(NamecheapClient::PROVIDER);
+                foreach ([ProviderConnection::Namecheap, ProviderConnection::Dynadot] as $connection) {
+                    if (isset($configured[$connection->credentialId(ProviderConnection::environmentFor($appEnv))])) {
+                        $syncs[] = $syncFor($connection->value);
+                    }
                 }
 
                 return $syncs;
@@ -190,6 +210,7 @@ final readonly class CliProvider implements Provider
             $registry->register(new PricesStatusCommand($costStore, $console, [
                 DomainNameApiClient::PROVIDER => getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
                 NamecheapClient::PROVIDER => getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                DynadotClient::PROVIDER => getenv('DYNADOT_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
             ]));
             // Provider worker (PC-6): the only process with the intake secret key and the KEK.
             $registry->register(new ProvidersWorkCommand(static function () use ($c): CredentialIntakeWorker {

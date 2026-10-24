@@ -17,10 +17,17 @@ final class ProviderRequest
 {
     private const array METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
     /**
-     * Extra request headers an adapter may set; anything else is refused.
-     * `__reseller` carries the DomainNameAPI Reseller ID (DR-3).
+     * Extra request headers an adapter may set, each with the exact format
+     * its value must have; anything else is refused. `__reseller` carries the
+     * DomainNameAPI Reseller ID (DR-3); `X-Request-ID` and `X-Signature` sign
+     * Dynadot calls (THREAT-MODEL-DOMAIN-PRICING.md DY-3).
      */
-    private const array HEADERS = ['Idempotency-Key', '__reseller'];
+    private const array HEADERS = [
+        'Idempotency-Key' => '/^[A-Za-z0-9._:-]{1,128}$/',
+        '__reseller' => '/^[A-Za-z0-9._:-]{1,128}$/',
+        'X-Request-ID' => '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
+        'X-Signature' => '/^[A-Za-z0-9+\/]{43}=$/',
+    ];
 
     /**
      * @param array<string, string|int> $query
@@ -37,7 +44,7 @@ final class ProviderRequest
         #[\SensitiveParameter] public readonly ?array $form = null,
     ) {
         foreach ($headers as $name => $value) {
-            if (!in_array($name, self::HEADERS, true) || preg_match('/^[A-Za-z0-9._:-]{1,128}$/', $value) !== 1) {
+            if (!isset(self::HEADERS[$name]) || preg_match(self::HEADERS[$name], $value) !== 1) {
                 throw new \InvalidArgumentException('Provider request header is not allowed or has an invalid value.');
             }
         }
