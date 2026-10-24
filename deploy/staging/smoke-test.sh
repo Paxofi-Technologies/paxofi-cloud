@@ -145,11 +145,12 @@ grep -q '^MFA_RECOVERY_KEY=.' <<<"$web_env" || fail "web tier lacks the MFA keys
 
 echo "== provider worker"
 # PC-1/PC-6: it boots with the intake secret key and the KEK, and drains an empty intake.
-"${compose[@]}" exec -T provider-worker php bin/paxoficloud providers:work --once | grep -q 'Handled 0 credential submission(s).' || fail "provider worker does not start"
+# A fresh container: the long-running one may still be backing off from starting before the grants.
+"${compose[@]}" run --rm -T provider-worker php bin/paxoficloud providers:work --once | grep -q 'Handled 0 credential submission(s).' || fail "provider worker does not start"
 grep -q '^CREDENTIAL_INTAKE_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the credential intake public key"
 grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' <<<"$web_env" && fail "credential intake secret key or KEK present in the php container"
 "${compose[@]}" run --rm -T mail-worker env | grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' && fail "credential keys present in the mail worker"
-provider_env="$("${compose[@]}" exec -T provider-worker env)"
+provider_env="$("${compose[@]}" run --rm -T provider-worker env)"
 grep -qE '^(TURNSTILE_|MFA_|EMAIL_OUTBOX_SECRET_KEY|SMTP_|POSTMARK_)' <<<"$provider_env" && fail "web or mail secrets present in the provider worker"
 test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/admin-api/v1/provider-connections")" = 401 || fail "provider connections reachable without a staff session"
 
