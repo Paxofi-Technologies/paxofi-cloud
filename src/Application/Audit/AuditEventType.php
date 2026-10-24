@@ -48,6 +48,11 @@ final class AuditEventType
     public const string STAFF_EMAIL_CODE_SENT = 'staff.sign_in.email_code_sent';
     public const string STAFF_SIGN_IN_SET_UP = 'staff.sign_in.set_up';
     public const string STAFF_SIGN_IN_SETUP_REFUSED = 'staff.sign_in.setup_refused';
+    // Provider connections (threat model PC-7): IDs and fixed codes only, never a value.
+    public const string PROVIDER_CREDENTIAL_SUBMITTED = 'provider_credential.submitted';
+    public const string PROVIDER_CREDENTIAL_REFUSED = 'provider_credential.refused';
+    public const string PROVIDER_CREDENTIAL_STORED = 'provider_credential.stored';
+    public const string PROVIDER_CREDENTIAL_REJECTED = 'provider_credential.rejected';
 
     private function __construct()
     {

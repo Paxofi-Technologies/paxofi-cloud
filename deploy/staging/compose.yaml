@@ -11,6 +11,10 @@
 #   key (email threat model E-3/E-6), plus the Turnstile keys (identity
 #   threat model §6.12). The mail worker runs only when a provider token has
 #   been delivered (profile "mail").
+# - The provider worker is the only service with the provider-credential KEK
+#   and the credential-intake secret key; the web tier gets the intake PUBLIC
+#   key only, so it can seal a credential but never read one (provider
+#   connections threat model PC-1, PC-6).
 
 name: paxoficloud
 
@@ -30,6 +34,7 @@ services:
       # Turnstile keys (§6.12) and MFA keys (§6.13): the web tier only.
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/web.env"
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/identity-keys.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/credential-intake-public.env"
     environment: &app-environment
       APP_ENV: staging
       APP_URL: https://cloud-staging.paxofi.com
@@ -64,6 +69,24 @@ services:
     tmpfs: [/tmp]
     # data: MySQL; egress: HTTPS to the allow-listed email APIs (E-7) and
     # SMTP submission (465/587) to the configured relay (E-13).
+    networks: [data, egress]
+    depends_on:
+      mysql: {condition: service_healthy}
+
+  provider-worker:
+    <<: *hardening
+    image: paxoficloud-php:${APP_VERSION:?APP_VERSION is required}
+    command: ["php", "bin/paxoficloud", "providers:work"]
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
+      # Public outbox key only: the worker queues the managers' alert (PC-7).
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-public.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/credential-intake-public.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/credential-intake-secret.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/provider-credential-keys.env"
+    environment: *app-environment
+    tmpfs: [/tmp]
+    # data: MySQL; egress: HTTPS to allow-listed provider APIs (provider sync, next).
     networks: [data, egress]
     depends_on:
       mysql: {condition: service_healthy}

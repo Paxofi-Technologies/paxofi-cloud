@@ -21,6 +21,15 @@ use PaxofiCloud\Cli\Console;
 use PaxofiCloud\Cli\DbGrantsCommand;
 use PaxofiCloud\Cli\FxStatusCommand;
 use PaxofiCloud\Cli\FxUpdateCommand;
+use PaxofiCloud\Cli\ProvidersWorkCommand;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Contracts\EmailOutbox;
+use PaxofiCloud\Application\Contracts\StaffDirectory;
+use PaxofiCloud\Domain\Providers\ProviderConnection;
+use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
+use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
+use PaxofiCloud\Infrastructure\Secrets\SealedBox;
+use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Contracts\FxRateStore;
 use PaxofiCloud\Application\Pricing\FxRateUpdater;
 use PaxofiCloud\Cli\CredentialsListCommand;
@@ -97,6 +106,29 @@ final readonly class CliProvider implements Provider
             $registry->register(new AuditPurgeContextCommand($auditChain, $console, $clock));
             $registry->register(new FxUpdateCommand(static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class), $console));
             $registry->register(new FxStatusCommand(Resolve::get($c, FxRateStore::class), $console));
+            // Provider worker (PC-6): the only process with the intake secret key and the KEK.
+            $registry->register(new ProvidersWorkCommand(static function () use ($c): CredentialIntakeWorker {
+                $public = getenv('CREDENTIAL_INTAKE_PUBLIC_KEY');
+                $secret = getenv('CREDENTIAL_INTAKE_SECRET_KEY');
+                if (!is_string($public) || !is_string($secret) || $public === '' || $secret === '') {
+                    throw new \InvalidArgumentException('CREDENTIAL_INTAKE_PUBLIC_KEY and CREDENTIAL_INTAKE_SECRET_KEY must be set.');
+                }
+                $env = Resolve::get($c, Configuration::class)->get('app.env');
+                $connection = Resolve::get($c, Connection::class);
+                $repository = Resolve::get($c, Repository::class);
+
+                return new CredentialIntakeWorker(
+                    ProviderConnection::environmentFor(is_string($env) ? $env : ''),
+                    new MysqlCredentialIntake($connection, $repository, Resolve::get($c, TransactionManager::class)),
+                    SealedBox::forOpening($public, $secret),
+                    new MysqlProviderCredentialStore($connection, $repository, new SecretCipher(KeyRing::fromProcessEnvironment())),
+                    Resolve::get($c, StaffDirectory::class),
+                    Resolve::get($c, EmailOutbox::class),
+                    Resolve::get($c, AuditTrail::class),
+                    new SystemClock(),
+                    Resolve::get($c, Logger::class),
+                );
+            }, $console));
             $registry->register(new StaffBootstrapCommand(static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class), $console));
 
             return $registry;

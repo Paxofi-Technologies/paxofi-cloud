@@ -11,6 +11,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
+use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 
 /**
@@ -26,10 +27,12 @@ final class AdminRoutes
      * @param \Closure(): AdminStaffController $staff
      * @param \Closure(): AdminCodeSignInController $codes
      * @param \Closure(): AdminAccountController $account
+     * @param \Closure(): AdminProviderConnectionsController $providers
      * @return list<AdminRoute>
      */
-    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account): array
+    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers): array
     {
+        $credentials = AdminAccess::permission(Permission::ProviderCredentialsManage);
         $public = AdminAccess::public();
         $signedIn = AdminAccess::signedIn();
         $manage = AdminAccess::permission(Permission::StaffManage);
@@ -57,6 +60,10 @@ final class AdminRoutes
             new AdminRoute('POST', '/admin-api/v1/staff/roles/grant', $manage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $staff()->grant($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/staff/roles/approve', $manage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $staff()->approve($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/staff/roles/revoke', $manage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $staff()->revoke($r, $c)),
+
+            // Provider connections: status out, secrets in, never back out (PC-2, PC-3).
+            new AdminRoute('GET', '/admin-api/v1/provider-connections', $credentials, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $providers()->list($r, $c)),
+            new AdminRoute('POST', '/admin-api/v1/provider-connections', $credentials, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $providers()->submit($r, $c)),
         ];
     }
 

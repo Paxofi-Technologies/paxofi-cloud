@@ -71,6 +71,12 @@ use PaxofiCloud\Integration\Security\DisabledBreachedPasswordCheck;
 use PaxofiCloud\Integration\Security\DisabledHumanVerification;
 use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
 use PaxofiCloud\Integration\Security\TurnstileVerification;
+use PaxofiCloud\Application\Providers\ProviderConnections;
+use PaxofiCloud\Domain\Providers\ProviderConnection;
+use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
+use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
+use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
+use PaxofiCloud\Infrastructure\Secrets\SealedBox;
 use Paxofi\Core\Application;
 use Paxofi\Core\Contracts\Configuration;
 use Paxofi\Core\Contracts\Connection;
@@ -363,6 +369,27 @@ final class IdentityProvider implements Provider
             Resolve::get($c, StaffDirectory::class),
             Resolve::get($c, StaffInvitations::class),
             Resolve::get($c, StaffRoles::class),
+        ));
+        // Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md): the web tier gets the
+        // intake PUBLIC key only, so it can seal a credential but never open one (PC-1).
+        $container->singleton(ProviderConnections::class, static function (Container $c): ProviderConnections {
+            $publicKey = getenv('CREDENTIAL_INTAKE_PUBLIC_KEY');
+            $env = Resolve::get($c, Configuration::class)->get('app.env');
+
+            return new ProviderConnections(
+                ProviderConnection::environmentFor(is_string($env) ? $env : ''),
+                Resolve::get($c, StaffAuthorizer::class),
+                self::staffSecondFactor($c),
+                is_string($publicKey) && $publicKey !== '' ? SealedBox::forSealing($publicKey) : null,
+                new MysqlCredentialIntake(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class)),
+                new MysqlProviderCredentialStatus(Resolve::get($c, Repository::class)),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            );
+        });
+        $container->singleton(AdminProviderConnectionsController::class, static fn (Container $c): AdminProviderConnectionsController => new AdminProviderConnectionsController(
+            Resolve::get($c, ProviderConnections::class),
         ));
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));

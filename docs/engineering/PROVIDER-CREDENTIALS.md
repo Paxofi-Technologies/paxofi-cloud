@@ -24,6 +24,26 @@ PROVIDER_CREDENTIAL_ACTIVE_KEY="k2026a"
 - Every ciphertext is bound to its row (credential ID, provider, environment and
   access level). A ciphertext copied into another row fails to decrypt.
 
+## Entering a credential in the admin console (preferred)
+
+Security Admins set or replace the DomainNameAPI, Hetzner and Vultr credentials on the
+**Provider connections** page of the admin console. See
+`docs/security/THREAT-MODEL-PROVIDER-CONNECTIONS.md` for the design.
+
+1. Open the page, choose the provider, and type the values.
+2. Enter a fresh authenticator code. Every submission needs one, and there are at most 5 tries per 15 minutes.
+3. The web tier seals the values to the provider worker's intake public key and stores only that sealed box. It cannot read them back, and neither can anyone else: the page shows status only.
+4. Within seconds the `provider-worker` container opens the box, checks it, encrypts the secret under the KEK into `provider_credentials`, and deletes the sealed row.
+5. Every staff manager receives a "A provider credential was changed" email naming the provider and time. If nobody expected the change, re-enter the correct credential at once.
+
+Credential IDs are fixed per environment, for example `domainnameapi-staging` and
+`hetzner-prod`. A credential stored this way gets a review date one year ahead.
+
+On staging, the deploy agent generates the intake key pair and the KEK on the host
+the first time it releases. The web tier gets only `credential-intake-public.env`;
+the provider worker alone gets `credential-intake-secret.env` and
+`provider-credential-keys.env`.
+
 ## Operator commands
 
 Run these on a worker host, which has the key variables. The web tier does not.
