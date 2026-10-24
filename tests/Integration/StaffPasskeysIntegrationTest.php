@@ -23,6 +23,13 @@ use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
 use PaxofiCloud\Application\Staff\Passkeys\StaffInvitations;
 use PaxofiCloud\Application\Staff\Passkeys\StaffPasskeySignIn;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
+use PaxofiCloud\Application\Staff\FounderBootstrap;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Contracts\EmailOutbox;
+use PaxofiCloud\Application\Contracts\StaffDirectory;
+use PaxofiCloud\Domain\Staff\StaffRole;
+use PaxofiCloud\Infrastructure\Time\SystemClock;
+use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Cli\StaffBootstrapCommand;
 use PaxofiCloud\Domain\Staff\Permission;
@@ -52,6 +59,7 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
     private OutboxSealer $opener;
     private PDO $pdo;
     private StaffInvitations $invitations;
+    private FounderBootstrap $founder;
     private StaffSignInSetup $setup;
     private StaffCodeSignIn $codes;
     private StaffPasskeyRegistration $registration;
@@ -73,6 +81,13 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         (new Migrator(Resolve::get($app->container(), Connection::class), $repository, new MysqlAdvisoryLock($repository)))
             ->migrate((new MigrationLoader())->load(self::basePath() . '/migrations'));
         $this->invitations = Resolve::get($app->container(), StaffInvitations::class);
+        $this->founder = new FounderBootstrap(
+            Resolve::get($app->container(), StaffDirectory::class),
+            Resolve::get($app->container(), TransactionManager::class),
+            new SystemClock(),
+            Resolve::get($app->container(), AuditTrail::class),
+            Resolve::get($app->container(), EmailOutbox::class),
+        );
         $this->setup = Resolve::get($app->container(), StaffSignInSetup::class);
         $this->codes = Resolve::get($app->container(), StaffCodeSignIn::class);
         $this->registration = Resolve::get($app->container(), StaffPasskeyRegistration::class);
@@ -101,7 +116,7 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
     public function testBootstrapEnrolSignInEndToEnd(): void
     {
         $streams = new ConsoleStreams();
-        $command = new StaffBootstrapCommand(fn (): StaffInvitations => $this->invitations, $streams->console());
+        $command = new StaffBootstrapCommand(fn (): StaffInvitations => $this->invitations, $streams->console(), fn (): FounderBootstrap => $this->founder);
         self::assertSame(0, $command->execute(['ada@example.test', 'Ada Lovelace']));
         $token = $this->invitationToken();
         self::assertStringNotContainsString($token, $streams->output(), 'the link is never printed');
@@ -121,8 +136,14 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         self::assertSame('10', $this->scalar('SELECT COUNT(*) FROM staff_recovery_codes WHERE staff_id = ?', [$staffId]));
         self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM staff_recovery_codes WHERE code_hash = ?', [strtoupper(str_replace('-', '', $recovery[0]))]));
 
-        // Bootstrap is now refused: an active staff manager exists.
+        // Bootstrap is now refused for anyone else: an active staff manager exists (§6.23).
         self::assertSame(2, $command->execute(['bob@example.test', 'Bob']));
+        // The sole founder, with their own email, gets the Catalogue role once.
+        self::assertSame(0, $command->execute(['ADA@example.test', 'Ada Lovelace']));
+        self::assertStringContainsString('founder roles granted: catalogue', $streams->output());
+        self::assertSame(0, $command->execute(['ada@example.test', 'Ada Lovelace']));
+        self::assertStringContainsString('founder already holds the founder roles', $streams->output());
+        $this->authorizer->authorize($staffId, Permission::CatalogueManage, $this->client);
 
         // Password, authenticator code, emailed code; the ticket lives in Redis between steps.
         self::assertSame($staffId, $this->signInWithCodes($staffId));
@@ -143,6 +164,10 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
             AuditEventType::STAFF_INVITATION_REFUSED,
             AuditEventType::STAFF_SIGN_IN_SET_UP,
             AuditEventType::STAFF_ACTIVATED,
+            AuditEventType::STAFF_INVITATION_REFUSED,
+            AuditEventType::STAFF_ROLE_CHANGE_REFUSED,
+            AuditEventType::STAFF_INVITATION_REFUSED,
+            AuditEventType::STAFF_ROLE_GRANTED,
             AuditEventType::STAFF_INVITATION_REFUSED,
             AuditEventType::STAFF_PASSWORD_ACCEPTED,
             AuditEventType::STAFF_CODE_ACCEPTED,

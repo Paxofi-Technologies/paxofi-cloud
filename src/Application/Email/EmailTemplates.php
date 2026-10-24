@@ -33,9 +33,13 @@ final readonly class EmailTemplates
     public const string SECURITY_CHANGE = 'security-change';
     public const string STAFF_INVITATION = 'staff-invitation';
     public const string STAFF_ACTIVATED = 'staff-activated';
+    public const string STAFF_ROLES_ADDED = 'staff-roles-added';
     public const string STAFF_SIGN_IN_CODE = 'staff-sign-in-code';
     public const string PROVIDER_CREDENTIAL_CHANGED = 'provider-credential-changed';
     public const string PRICE_SYNC_PROBLEM = 'price-sync-problem';
+
+    /** Roles the founder bootstrap can add (§6.23), with how they read. */
+    private const array ROLE_LABELS = ['catalogue' => 'Catalogue (products, prices and provider costs)'];
 
     /** Problems the price-sync alert can report (DR-8, DR-9), with how they read. */
     public const array PRICE_SYNC_PROBLEMS = [
@@ -69,7 +73,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED, self::PRICE_SYNC_PROBLEM];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_ROLES_ADDED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED, self::PRICE_SYNC_PROBLEM];
     }
 
     /** @param array<string, string> $parameters */
@@ -82,6 +86,7 @@ final readonly class EmailTemplates
             self::ACCOUNT_EXISTS => $this->accountExists($to, $name, $idempotencyKey),
             self::STAFF_INVITATION => $this->staffInvitation($to, $name, self::token($parameters), $idempotencyKey),
             self::STAFF_ACTIVATED => $this->staffActivated($to, $name, self::personName($parameters['staff_name'] ?? ''), $idempotencyKey),
+            self::STAFF_ROLES_ADDED => $this->staffRolesAdded($to, $name, $parameters['roles'] ?? '', $idempotencyKey),
             self::STAFF_SIGN_IN_CODE => $this->staffSignInCode($to, $name, $parameters, $idempotencyKey),
             self::PROVIDER_CREDENTIAL_CHANGED => $this->providerCredentialChanged($to, $name, $parameters, $idempotencyKey),
             self::PRICE_SYNC_PROBLEM => $this->priceSyncProblem($to, $name, $parameters, $idempotencyKey),
@@ -214,6 +219,40 @@ final readonly class EmailTemplates
             $link,
             'Customers keep seeing the last good prices until this is resolved.',
         ), self::PRICE_SYNC_PROBLEM, $key);
+    }
+
+    /** Founder bootstrap notice (§6.23): which roles were added, by the operator command, and where to review them. */
+    private function staffRolesAdded(EmailAddress $to, string $name, string $roles, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff alerts cannot be sent.');
+        }
+        $labels = [];
+        foreach (explode(',', $roles) as $role) {
+            $labels[] = self::ROLE_LABELS[$role] ?? throw new \InvalidArgumentException('Unknown staff role.');
+        }
+        $list = implode(', ', $labels);
+        $link = $this->adminUrl . '/staff';
+        $text = <<<TXT
+            Hi {$name},
+
+            The founder set-up command added these roles to your {$this->productName} staff account: {$list}.
+
+            If you did not run it, review staff access now:
+
+            {$link}
+
+            {$this->productName}
+            TXT;
+
+        return new EmailMessage($to, 'Roles were added to your staff account', $text, $this->html(
+            'Roles were added to your staff account',
+            sprintf('Hi %s,', self::e($name)),
+            sprintf('The founder set-up command added these roles to your %s staff account: %s.', self::e($this->productName), self::e($list)),
+            'Review staff',
+            $link,
+            'If you did not run it, review staff access now.',
+        ), self::STAFF_ROLES_ADDED, $key);
     }
 
     /** §6.18: tells the other staff managers that someone finished enrolment, so a stolen invitation is noticed. */
