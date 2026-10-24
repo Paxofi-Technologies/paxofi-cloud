@@ -51,8 +51,11 @@ the `provider-worker` container is up, then submit again with a new code. Reject
 
 DomainNameAPI takes two values from the reseller panel (My Account > Reseller Settings >
 Integration Information): the **Reseller ID** and an **API key**. There is no password. Staging
-uses the **Test Environment** key; production uses the **Live Environment** key. Never enter the
-live key on staging. If a key is replaced in the panel, enter the new one here again.
+and production both use the **Live Environment** key (CEO decision, 24 Oct 2026), so staging sees
+real cost prices. Staging may only **read** (extensions, prices, availability, balance): every
+registrar call that spends money or changes a domain is refused unless `REGISTRAR_WRITES=enabled`,
+which is off outside production (THREAT-MODEL-DOMAIN-REGISTRAR.md, DR-4). Keep the reseller
+balance small until launch. If a key is replaced in the panel, enter the new one here again.
 
 Credential IDs are fixed per environment, for example `domainnameapi-staging` and
 `hetzner-prod`. A credential stored this way gets a review date one year ahead.
