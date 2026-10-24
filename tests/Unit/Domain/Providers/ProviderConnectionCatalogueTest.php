@@ -61,4 +61,36 @@ final class ProviderConnectionCatalogueTest extends TestCase
         self::assertSame('dev', ProviderConnection::environmentFor('local'));
         self::assertSame('dev', ProviderConnection::environmentFor('testing'));
     }
+
+    public function testNamecheapTakesFourFieldsInOrderAndAnIpv4ClientAddress(): void
+    {
+        $values = ['api_user' => 'paxofi', 'username' => 'paxofi', 'api_key' => 'k3y-value', 'client_ip' => '8.8.4.4'];
+        self::assertSame($values, json_decode(ProviderConnection::Namecheap->secretFrom($values), true));
+
+        foreach (['8.8.4', '8.8.4.4 ', '::1', '256.1.1.1', '08.8.4.4', 'a.b.c.d'] as $ip) {
+            try {
+                ProviderConnection::Namecheap->secretFrom(['client_ip' => $ip] + $values);
+                self::fail($ip . ' accepted');
+            } catch (InvalidConnectionFields $e) {
+                self::assertSame('client_ip', $e->getMessage());
+            }
+        }
+        try {
+            ProviderConnection::Namecheap->secretFrom(['api_user' => 'pax ofi'] + $values);
+            self::fail('space accepted');
+        } catch (InvalidConnectionFields $e) {
+            self::assertSame('api_user', $e->getMessage());
+        }
+    }
+
+    public function testEveryConnectionHasAKnownCategory(): void
+    {
+        foreach (ProviderConnection::cases() as $provider) {
+            self::assertArrayHasKey($provider->category(), ProviderConnection::CATEGORIES, $provider->value);
+        }
+        self::assertSame('domains', ProviderConnection::Namecheap->category());
+        self::assertSame('domains', ProviderConnection::DomainNameApi->category());
+        self::assertSame('servers', ProviderConnection::Hetzner->category());
+        self::assertSame('servers', ProviderConnection::Vultr->category());
+    }
 }

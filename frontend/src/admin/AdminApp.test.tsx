@@ -456,6 +456,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
       {
         provider: 'domainnameapi',
         label: 'DomainNameAPI (domain registrar)',
+        category: 'domains',
         credential_id: 'domainnameapi-staging',
         fields: [
           { name: 'reseller_id', label: 'Reseller ID', secret: false },
@@ -468,6 +469,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
       {
         provider: 'hetzner',
         label: 'Hetzner Cloud (servers)',
+        category: 'servers',
         credential_id: 'hetzner-staging',
         fields: [{ name: 'api_token', label: 'API token (read & write)', secret: true }],
         configured_at: '2026-10-20T08:00:00+00:00',
@@ -543,6 +545,18 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(calls(fetchImpl, 'POST /admin-api/v1/provider-connections')).toHaveLength(0);
   });
 
+  it('groups connections into domain and server providers', async () => {
+    const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
+    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    const domains = await screen.findByRole('region', { name: 'Domain providers' });
+    const servers = screen.getByRole('region', { name: 'Server providers' });
+    expect(within(domains).getByText('DomainNameAPI (domain registrar)')).toBeInTheDocument();
+    expect(within(domains).queryByText('Hetzner Cloud (servers)')).toBeNull();
+    expect(within(servers).getByText('Hetzner Cloud (servers)')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Other providers' })).toBeNull();
+  });
+
   it('is hidden from staff without provider_credentials.manage', async () => {
     const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/auth/session': { status: 200, body: manager } });
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
@@ -607,6 +621,41 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
     expect(await screen.findByText(/Sync now is available again 24 Oct 2026, 10:10 WAT\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeDisabled();
+  });
+
+  it('switches registrar with tabs and asks that registrar to sync', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': { status: 200, body: costs({ providers: ['domainnameapi', 'namecheap'] }) },
+      'GET /admin-api/v1/domain-costs?provider=namecheap': {
+        status: 200,
+        body: costs({ provider: 'namecheap', providers: ['domainnameapi', 'namecheap'], items: [{ tld: 'site', currency: 'USD', register: 199, renew: 3298, transfer: null, restore: null, min_years: 1, max_years: 10, status: 'promo' }] }),
+      },
+      'POST /admin-api/v1/domain-costs/sync': { status: 202, body: { status: 'queued' } },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText(/costs us at DomainNameAPI/)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'DomainNameAPI' })).toHaveAttribute('aria-selected', 'true');
+
+    await user.click(screen.getByRole('tab', { name: 'Namecheap' }));
+    expect(await screen.findByText(/costs us at Namecheap/)).toBeInTheDocument();
+    expect(screen.getByText('.site')).toBeInTheDocument();
+    expect(screen.queryByText('.com')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Sync now' }));
+    await screen.findByText(/Sync requested\./);
+    const [init] = calls(fetchImpl, 'POST /admin-api/v1/domain-costs/sync');
+    expect(JSON.parse(String(init?.body))).toEqual({ provider: 'namecheap' });
+  });
+
+  it('shows no registrar tabs while there is only one registrar', async () => {
+    const fetchImpl = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: catalogue }, 'GET /admin-api/v1/domain-costs': { status: 200, body: costs() } });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText(/costs us at DomainNameAPI/)).toBeInTheDocument();
+    expect(screen.queryByRole('tab')).toBeNull();
   });
 
   it('groups the extensions the last sync skipped by reason, as text', async () => {

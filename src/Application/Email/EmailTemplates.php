@@ -44,7 +44,7 @@ final readonly class EmailTemplates
 
     /** Problems the price-sync alert can report (DR-8, DR-9), with how they read. */
     public const array PRICE_SYNC_PROBLEMS = [
-        'credential_refused' => 'The provider refused our API credential, so prices cannot be updated until it is replaced.',
+        'credential_refused' => 'The provider refused our API credential, so prices cannot be updated until it is fixed. Check the credential under Provider connections; for Namecheap, also check that the server IP address entered there is whitelisted in the Namecheap account.',
         'repeated_failures' => 'The price sync has failed three times in a row. The last good prices are still in use.',
         'quarantined' => 'The new price list looked wrong (many extensions missing or large cost changes), so it was held for review. Nothing was changed.',
     ];

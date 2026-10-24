@@ -155,6 +155,23 @@ final class ProviderHttpClientTest extends TestCase
         self::assertSame('POST', $options[CURLOPT_CUSTOMREQUEST]);
     }
 
+    public function testFormBodyIsUrlEncodedAndTheAcceptTypeFollowsTheEndpoint(): void
+    {
+        $options = $this->client(['8.8.8.8'])->curlOptions(
+            new ProviderEndpoint('https://api.example.com', 'X-Client', '', 'application/xml'),
+            ProviderRequest::postForm('/xml.response', ['ApiUser' => 'a b', 'Command' => 'namecheap.users.getPricing']),
+            $this->credential(),
+            ['8.8.8.8'],
+        );
+
+        self::assertSame('https://api.example.com/xml.response', $options[CURLOPT_URL], 'credentials never go in the URL');
+        self::assertSame('ApiUser=a%20b&Command=namecheap.users.getPricing', $options[CURLOPT_POSTFIELDS]);
+        self::assertIsArray($options[CURLOPT_HTTPHEADER]);
+        self::assertContains('Content-Type: application/x-www-form-urlencoded', $options[CURLOPT_HTTPHEADER]);
+        self::assertContains('Accept: application/xml', $options[CURLOPT_HTTPHEADER]);
+        self::assertNotContains('Accept: application/json', $options[CURLOPT_HTTPHEADER]);
+    }
+
     public function testConnectionFailuresBecomeTransportFailuresWithoutLeakingTheToken(): void
     {
         // 8.8.8.8:443 either refuses/times out (no egress) or answers with a

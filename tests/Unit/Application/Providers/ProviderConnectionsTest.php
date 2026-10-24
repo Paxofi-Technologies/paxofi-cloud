@@ -84,7 +84,8 @@ final class ProviderConnectionsTest extends TestCase
         $overview = $this->connections->overview($this->staffId, AuditFixtures::client());
         $byProvider = array_column($overview, null, 'provider');
 
-        self::assertSame(['domainnameapi', 'hetzner', 'vultr'], array_keys($byProvider));
+        self::assertSame(['domainnameapi', 'namecheap', 'hetzner', 'vultr'], array_keys($byProvider));
+        self::assertSame(['domains', 'domains', 'servers', 'servers'], array_column($overview, 'category'));
         self::assertNotNull($byProvider['domainnameapi']['pending_since']);
         self::assertNull($byProvider['domainnameapi']['configured_at']);
         self::assertSame('2027-10-20', $byProvider['hetzner']['review_due_on']);

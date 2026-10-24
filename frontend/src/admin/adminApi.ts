@@ -204,6 +204,8 @@ export interface ProviderConnectionField {
 export interface ProviderConnectionStatus {
   provider: string;
   label: string;
+  /** "domains" or "servers"; the page groups connections by it. */
+  category: string;
   fields: ProviderConnectionField[];
   configuredAt: string | null;
   reviewDueOn: string | null;
@@ -231,6 +233,7 @@ export async function fetchProviderConnections(fetchImpl: typeof fetch = fetch):
     providers.push({
       provider: p.provider,
       label: p.label,
+      category: typeof p.category === 'string' ? p.category : 'other',
       fields,
       configuredAt: nullableString(p.configured_at),
       reviewDueOn: nullableString(p.review_due_on),
@@ -291,6 +294,8 @@ export interface FeedFieldSummary {
 
 export interface DomainCosts {
   provider: string;
+  /** Every registrar the page can show, first is the default (NC-9). */
+  providers: string[];
   environment: string;
   canSync: boolean;
   dailyAt: string;
@@ -316,8 +321,8 @@ function snapshot(value: unknown): CostSnapshot | null {
   return { status: s.status, reason: nullableString(s.reason), items: s.items as number, refused: s.refused as number, fetchedAt: s.fetched_at };
 }
 
-export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise<DomainCostsResult> {
-  const result = await getJson(`${ADMIN_API}/domain-costs`, fetchImpl);
+export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch, provider?: string): Promise<DomainCostsResult> {
+  const result = await getJson(`${ADMIN_API}/domain-costs${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`, fetchImpl);
   const body = obj(result?.data);
   if (result === null || result.status !== 200 || !body || typeof body.provider !== 'string' || !Array.isArray(body.items) || !Array.isArray(body.runs)) {
     return { kind: 'failed' };
@@ -363,6 +368,7 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise
     kind: 'ok',
     costs: {
       provider: body.provider,
+      providers: strings(body.providers).length > 0 ? strings(body.providers) : [body.provider],
       environment: typeof body.environment === 'string' ? body.environment : '',
       canSync: body.can_sync === true,
       dailyAt: typeof body.daily_at === 'string' ? body.daily_at : '',
@@ -378,8 +384,8 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise
   };
 }
 
-export const requestDomainCostSync = (csrfToken: string, fetchImpl: typeof fetch = fetch) =>
-  postJson(`${ADMIN_API}/domain-costs/sync`, {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
+export const requestDomainCostSync = (csrfToken: string, fetchImpl: typeof fetch = fetch, provider?: string) =>
+  postJson(`${ADMIN_API}/domain-costs/sync`, provider ? { provider } : {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
 
 /** Formats integer minor units without floating point, e.g. 123456 USD → "USD 1,234.56". */
 export function formatMinor(amount: number, currency: string): string {

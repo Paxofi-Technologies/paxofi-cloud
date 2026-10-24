@@ -63,6 +63,7 @@ final readonly class ProviderConnections
             $result[] = [
                 'provider' => $provider->value,
                 'label' => $provider->label(),
+                'category' => $provider->category(),
                 'credential_id' => $id,
                 'fields' => array_map(static fn (ConnectionField $f): array => ['name' => $f->name, 'label' => $f->label, 'secret' => $f->secret], $provider->fields()),
                 'configured_at' => isset($configured[$id]) ? $configured[$id]['updated_at']->format(\DATE_ATOM) : null,

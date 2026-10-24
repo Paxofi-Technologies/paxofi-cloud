@@ -129,7 +129,7 @@ test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin-api/v1/auth/session"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin.html")" = 404 || fail "admin console served on the customer host"
 curl -s "$base/" | grep -q '<title>PaxofiCloud</title>' || fail "customer host does not serve the portal"
 "${compose[@]}" exec -T php php -r 'exit(ini_get("expose_php") || ini_get("opcache.validate_timestamps") ? 1 : 0);' || fail "production php.ini not applied"
-"${compose[@]}" exec -T php php -r 'exit(extension_loaded("bcmath") && extension_loaded("sodium") ? 0 : 1);' || fail "required PHP extensions missing"
+"${compose[@]}" exec -T php php -r 'exit(extension_loaded("bcmath") && extension_loaded("sodium") && extension_loaded("xmlreader") ? 0 : 1);' || fail "required PHP extensions missing"
 
 echo "== mail worker"
 # The worker boots with its keys and provider config and drains an empty queue.
