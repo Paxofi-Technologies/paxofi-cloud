@@ -12,6 +12,7 @@ use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\DomainCostReport;
 use PaxofiCloud\Application\Contracts\ProviderSyncRequests;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
+use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Staff\Permission;
 
 /**
@@ -45,7 +46,8 @@ final readonly class DomainCostAdmin
      *     pending_since: ?string, next_request_at: ?string,
      *     latest: ?array<string, int|string|null>, quarantined: ?array<string, int|string|null>,
      *     runs: list<array<string, int|string|null>>,
-     *     items: list<array{tld: string, currency: string, register: int, renew: int, transfer: ?int, restore: ?int, min_years: int, max_years: int, status: string}>
+     *     items: list<array{tld: string, currency: string, register: int, renew: int, transfer: ?int, restore: ?int, min_years: int, max_years: int, status: string}>,
+     *     skipped: list<array{name: ?string, reason: string, detail: ?string}>
      * }
      * @throws \PaxofiCloud\Application\Staff\StaffPermissionDenied
      */
@@ -74,6 +76,12 @@ final readonly class DomainCostAdmin
             }
         }
 
+        // DR-14: what the newest accepted list could not use, and why.
+        $skipped = $latest === null ? [] : array_map(
+            static fn (SkippedTld $s): array => ['name' => $s->name, 'reason' => $s->reason, 'detail' => $s->detail],
+            $this->report->skipped($latest->id),
+        );
+
         $pending = $this->requests->pendingSince($this->provider);
         $next = $this->nextRequestAt();
 
@@ -95,6 +103,7 @@ final readonly class DomainCostAdmin
                 'finished_at' => $run->finishedAt->format(\DATE_ATOM),
             ], $this->report->recentRuns($this->provider, self::RECENT_RUNS)),
             'items' => $items,
+            'skipped' => $skipped,
         ];
     }
 

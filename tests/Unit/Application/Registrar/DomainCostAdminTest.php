@@ -10,6 +10,8 @@ use PaxofiCloud\Application\Registrar\SyncRequestRefused;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
 use PaxofiCloud\Application\Staff\StaffPermissionDenied;
+use PaxofiCloud\Domain\Registrar\SkippedTld;
+use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Domain\Staff\StaffRole;
 use PaxofiCloud\Tests\Support\AuditFixtures;
 use PaxofiCloud\Tests\Support\InMemoryAuditLog;
@@ -65,6 +67,7 @@ final class DomainCostAdminTest extends TestCase
         self::assertSame([['trigger' => 'schedule', 'outcome' => 'accepted', 'reason' => null, 'attempts' => 1, 'started_at' => '2026-10-24T01:30:00+00:00', 'finished_at' => '2026-10-24T01:30:05+00:00']], $view['runs']);
         self::assertNull($view['pending_since']);
         self::assertNull($view['next_request_at']);
+        self::assertSame([], $view['skipped']);
         self::assertSame([], $this->audit->types(), 'reading is not audited');
     }
 
@@ -137,5 +140,14 @@ final class DomainCostAdminTest extends TestCase
         $this->admin->requestSync(self::CATALOGUE, AuditFixtures::client());
         self::assertCount(2, $this->requests->requests);
         self::assertSame('2026-10-24T09:20:00+00:00', $this->admin->overview(self::CATALOGUE, AuditFixtures::client())['next_request_at']);
+    }
+
+    /** DR-14: what the newest accepted list skipped, by name and reason. */
+    public function testListsSkippedItemsOfTheAcceptedSnapshot(): void
+    {
+        $list = new TldCostList(array_values(ScriptedPriceFeed::list(['com' => 1081])->items), ['unsupported_currency' => 1], 'live', [new SkippedTld('com.tr', 'unsupported_currency', 'TRY')]);
+        $this->store->saveSnapshot('domainnameapi', $list, null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
+
+        self::assertSame([['name' => 'com.tr', 'reason' => 'unsupported_currency', 'detail' => 'TRY']], $this->admin->overview(self::CATALOGUE, AuditFixtures::client())['skipped']);
     }
 }

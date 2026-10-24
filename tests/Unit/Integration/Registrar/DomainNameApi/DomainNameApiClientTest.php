@@ -97,6 +97,11 @@ final class DomainNameApiClientTest extends TestCase
         self::assertSame(['tld0', 'tld1'], array_keys($list->items));
         self::assertSame(['bad_name' => 1, 'duplicate' => 1, 'unsupported_currency' => 1], $list->refused);
         self::assertSame(3, $list->refusedTotal());
+        // DR-14: each skipped item is kept with its name and detail, in feed order.
+        self::assertSame(
+            [['tld0', 'duplicate', null], [null, 'bad_name', null], ['try', 'unsupported_currency', 'TRY']],
+            array_map(static fn ($s): array => [$s->name, $s->reason, $s->detail], $list->skipped),
+        );
     }
 
     public function testStopsAfterThePageLimitWithoutAResult(): void

@@ -566,6 +566,7 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     latest: { status: 'accepted', reason: null, items: 2, refused: 1, fetched_at: '2026-10-24T01:30:00+00:00' },
     quarantined: null,
     runs: [{ trigger: 'schedule', outcome: 'accepted', reason: null, attempts: 1, started_at: '2026-10-24T01:30:00+00:00', finished_at: '2026-10-24T01:30:05+00:00' }],
+    skipped: [],
     items: [
       { tld: 'com', currency: 'USD', register: 1081, renew: 123456, transfer: 1081, restore: null, min_years: 1, max_years: 10, status: 'active' },
       { tld: 'com.ng', currency: 'USD', register: 900, renew: 900, transfer: null, restore: 4500, min_years: 1, max_years: 1, status: 'active' },
@@ -606,6 +607,34 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
     expect(await screen.findByText(/Sync now is available again 24 Oct 2026, 10:10 WAT\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeDisabled();
+  });
+
+  it('groups the extensions the last sync skipped by reason, as text', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': {
+        status: 200,
+        body: costs({
+          skipped: [
+            { name: 'com.tr', reason: 'unsupported_currency', detail: 'TRY' },
+            { name: 'net.tr', reason: 'unsupported_currency', detail: 'TRY' },
+            { name: 'ai', reason: 'no_register_price', detail: 'periods:2' },
+            { name: null, reason: 'bad_name', detail: null },
+            { name: '<img src=x>', reason: 'bad_price', detail: null },
+          ],
+        }),
+      },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByText('Not on sale yet (5)'));
+    expect(screen.getByText('Priced in a currency we do not accept yet (TRY): 2')).toBeInTheDocument();
+    expect(screen.getByText('.com.tr, .net.tr')).toBeInTheDocument();
+    expect(screen.getByText('No one-year registration price (shortest term 2 years): 1')).toBeInTheDocument();
+    expect(screen.getByText('1 without a readable name')).toBeInTheDocument();
+    expect(screen.getByText('.<img src=x>')).toBeInTheDocument();
+    expect(document.querySelector('img')).toBeNull();
   });
 
   it('shows a held-back list and a failed run without listing their prices', async () => {

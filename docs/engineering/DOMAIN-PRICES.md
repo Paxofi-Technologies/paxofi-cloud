@@ -39,6 +39,12 @@ request is picked up. Requests are limited to one per provider every 10
 minutes, whoever asks; the page says when the next one is allowed. Every
 request and refusal is in the audit log.
 
+**Not on sale yet** lists the extensions the registrar sent that the last
+accepted sync could not price, grouped by reason (DR-14): for example a price
+in a currency we do not accept yet (the currency code is shown), or no
+one-year price (the shortest term on offer is shown). Each sync replaces this
+list; nothing on it is sold until a later sync can read it.
+
 If a request stays "on its way" for more than a minute, the provider worker
 is not running: run the Staging Deploy `status` action.
 

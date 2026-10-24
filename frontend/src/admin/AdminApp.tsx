@@ -16,6 +16,7 @@ import {
   formatMinor,
   requestDomainCostSync,
   type DomainCostItem,
+  type SkippedExtension,
   type DomainCostsResult,
   fetchStaff,
   fetchStaffSession,
@@ -1415,6 +1416,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
           )}
         </>
       )}
+      {costs.skipped.length > 0 && <SkippedExtensions skipped={costs.skipped} />}
       {costs.runs.length > 0 && (
         <details>
           <summary>Recent syncs</summary>
@@ -1431,6 +1433,66 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
         </details>
       )}
     </Card>
+  );
+}
+
+const SKIP_REASONS: Record<string, string> = {
+  unsupported_currency: 'Priced in a currency we do not accept yet',
+  no_register_price: 'No one-year registration price',
+  no_renew_price: 'No one-year renewal price',
+  mixed_currency: 'Prices in more than one currency',
+  bad_price: 'A price we could not read',
+  bad_period: 'Registration periods we could not read',
+  bad_status: 'A status we could not read',
+  bad_name: 'An extension name we could not read',
+  no_prices: 'No prices at all',
+  duplicate: 'Listed twice by the registrar',
+  not_object: 'An entry we could not read',
+};
+
+/** Plain words for a detail code: a currency code as is, `periods:N` as the shortest term on offer. */
+function skipDetail(detail: string | null): string {
+  if (detail === null) return '';
+  const periods = /^periods:(\d{1,2})$/.exec(detail);
+  return periods ? `shortest term ${periods[1]} years` : detail;
+}
+
+/**
+ * DR-14: extensions the registrar lists but the last accepted sync could not
+ * use, grouped by reason, so staff can see what is not on sale and why.
+ * Names and details are server-validated and rendered as text only.
+ */
+function SkippedExtensions({ skipped }: { skipped: SkippedExtension[] }) {
+  const groups = new Map<string, { reason: string; detail: string; names: string[]; unnamed: number }>();
+  for (const item of skipped) {
+    const detail = skipDetail(item.detail);
+    const key = `${item.reason}|${detail}`;
+    const group = groups.get(key) ?? { reason: item.reason, detail, names: [], unnamed: 0 };
+    if (item.name === null) group.unnamed += 1;
+    else group.names.push(`.${item.name}`);
+    groups.set(key, group);
+  }
+  const sorted = [...groups.values()].sort((a, b) => b.names.length + b.unnamed - (a.names.length + a.unnamed));
+
+  return (
+    <details>
+      <summary>Not on sale yet ({skipped.length})</summary>
+      <p className="pc-muted">Extensions the registrar lists that we could not price from the last sync, and why.</p>
+      <ul className="pc-admin__list">
+        {sorted.map((group) => (
+          <li key={`${group.reason}|${group.detail}`}>
+            <strong>
+              {SKIP_REASONS[group.reason] ?? group.reason}
+              {group.detail ? ` (${group.detail})` : ''}: {group.names.length + group.unnamed}
+            </strong>
+            <p className="pc-muted">
+              {group.names.join(', ')}
+              {group.unnamed > 0 ? `${group.names.length > 0 ? ', ' : ''}${group.unnamed} without a readable name` : ''}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

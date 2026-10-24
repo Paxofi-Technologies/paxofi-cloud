@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Domain\Pricing\CostCurrency;
 use PaxofiCloud\Domain\Registrar\CostAmount;
+use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Domain\Registrar\TldName;
@@ -105,6 +106,8 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         yield 'accepted run without snapshot' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'accepted', NULL, NULL, 1, NOW(6), NOW(6))"];
         yield 'failed run without reason' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'failed', NULL, NULL, 1, NOW(6), NOW(6))"];
         yield 'sync request for an unknown staff member' => ["INSERT INTO provider_sync_requests VALUES (REPEAT('d', 32), 'domainnameapi', 'domain_costs', REPEAT('e', 32), NOW(6), NULL)"];
+        yield 'skipped item with a hostile name' => ["INSERT INTO domain_cost_skipped VALUES (:s, 0, '<b>x', 'bad_name', NULL)"];
+        yield 'skipped item with a hostile detail' => ["INSERT INTO domain_cost_skipped VALUES (:s, 0, 'com', 'bad_price', 'a b')"];
         yield 'too many attempts' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'failed', 'transport', NULL, 5, NOW(6), NOW(6))"];
     }
 
@@ -166,5 +169,14 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         self::assertSame(0, $this->requests->claimAll('domainnameapi', new \DateTimeImmutable('2026-10-24T09:07:00Z')), 'claimed once');
         self::assertNull($this->requests->pendingSince('domainnameapi'));
         self::assertSame('2026-10-24T09:05:00+00:00', $this->requests->lastRequestedAt('domainnameapi')?->format(\DATE_ATOM), 'history kept for the limit');
+    }
+
+    public function testStoresSkippedItemsInOrderWithTheSnapshot(): void
+    {
+        $skipped = [new SkippedTld('com.tr', 'unsupported_currency', 'TRY'), new SkippedTld(null, 'bad_name'), new SkippedTld('ai', 'no_register_price', 'periods:2')];
+        $id = $this->store->saveSnapshot('domainnameapi', new TldCostList(array_values(ScriptedPriceFeed::list(['com' => 1081])->items), ['bad_name' => 1], 'live', $skipped), null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
+
+        self::assertEquals($skipped, $this->store->skipped($id));
+        self::assertSame([], $this->store->skipped(str_repeat('0', 32)));
     }
 }
