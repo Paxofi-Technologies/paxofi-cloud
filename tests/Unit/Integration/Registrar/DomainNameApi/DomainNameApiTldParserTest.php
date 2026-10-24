@@ -91,7 +91,6 @@ final class DomainNameApiTldParserTest extends TestCase
         yield 'Turkish lira' => [self::rawItem(['prices' => [['register' => ['price' => '1', 'currency' => 'TRY'], 'renew' => ['price' => '1', 'currency' => 'USD']]]]), 'unsupported_currency'];
         yield 'register in USD, renew in EUR' => [self::rawItem(['prices' => [['register' => ['price' => '1', 'currency' => 'USD'], 'renew' => ['price' => '1', 'currency' => 'EUR']]]]), 'mixed_currency'];
         yield 'missing currency' => [self::rawItem(['prices' => [['register' => ['price' => '1'], 'renew' => ['price' => '1', 'currency' => 'USD']]]]), 'unsupported_currency'];
-        yield 'bad optional transfer price' => [self::rawItem(['prices' => [['register' => ['price' => '1', 'currency' => 'USD'], 'renew' => ['price' => '1', 'currency' => 'USD'], 'transfer' => 'free']]]), 'bad_price'];
     }
 
     #[DataProvider('refusals')]
@@ -119,6 +118,85 @@ final class DomainNameApiTldParserTest extends TestCase
         self::assertSame(['ai', 'no_register_price', 'periods:2'], [$twoYears->name, $twoYears->reason, $twoYears->detail]);
 
         self::assertSame('no_register_price', DomainNameApiTldParser::item(ExactJson::decode(self::rawItem(['prices' => [['renew' => ['price' => '__REN__', 'currency' => 'USD']]]]))));
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function unusableOptionalPrices(): iterable
+    {
+        yield 'zero transfer' => [['price' => 0, 'currency' => 'USD']];
+        yield 'negative transfer' => [['price' => -1, 'currency' => 'USD']];
+        yield 'text instead of object' => ['free'];
+        yield 'unknown currency' => [['price' => '5', 'currency' => 'TRY']];
+        yield 'missing currency' => [['price' => '5']];
+        yield 'other currency than register' => [['price' => '5', 'currency' => 'EUR']];
+        yield 'list of non-objects' => [[1, 2]];
+    }
+
+    /** DR-15: an unusable transfer or restore price drops that price, not the extension. */
+    #[DataProvider('unusableOptionalPrices')]
+    public function testAnUnusableOptionalPriceIsDroppedNotTheExtension(mixed $bad): void
+    {
+        $item = ExactJson::decode(self::rawItem(['name' => 'co.uk', 'prices' => [[
+            'register' => ['price' => '__REG__', 'currency' => 'USD'],
+            'renew' => ['price' => '__REN__', 'currency' => 'USD'],
+            'transfer' => $bad,
+            'restore' => $bad,
+        ]]]));
+
+        $cost = DomainNameApiTldParser::parse($item);
+
+        self::assertInstanceOf(TldCost::class, $cost);
+        self::assertSame('co.uk', $cost->tld->value);
+        self::assertSame([1081, 1125], [$cost->register->minor, $cost->renew->minor]);
+        self::assertNull($cost->transfer);
+        self::assertNull($cost->restore);
+    }
+
+    public function testAReadableRestoreIsKeptWhenOnlyTransferIsUnusable(): void
+    {
+        $cost = DomainNameApiTldParser::parse(ExactJson::decode(self::rawItem(['prices' => [[
+            'register' => ['price' => '__REG__', 'currency' => 'USD'],
+            'renew' => ['price' => '__REN__', 'currency' => 'USD'],
+            'transfer' => ['price' => 0, 'currency' => 'USD'],
+            'restore' => ['price' => '__TRA__', 'currency' => 'USD'],
+        ]]])));
+
+        self::assertInstanceOf(TldCost::class, $cost);
+        self::assertNull($cost->transfer);
+        self::assertSame(1081, $cost->restore?->minor);
+    }
+
+    /** @return iterable<string, array{string, string, string}> */
+    public static function refusalDetails(): iterable
+    {
+        $prices = static fn (mixed $register, mixed $renew = ['price' => '1', 'currency' => 'USD']): array => ['prices' => [['register' => $register, 'renew' => $renew]]];
+
+        yield 'zero register' => [self::rawItem($prices(['price' => 0, 'currency' => 'USD'])), 'bad_price', 'reg:zero'];
+        yield 'zero with decimals' => [self::rawItem($prices(['price' => '0.00', 'currency' => 'USD'])), 'bad_price', 'reg:zero'];
+        yield 'negative renew' => [self::rawItem($prices(['price' => '1', 'currency' => 'USD'], ['price' => -2, 'currency' => 'USD'])), 'bad_price', 'renew:negative'];
+        yield 'exponent register' => [str_replace('10.8100', '1.081e1', self::rawItem()), 'bad_price', 'reg:format'];
+        yield 'price missing' => [self::rawItem($prices(['currency' => 'USD'])), 'bad_price', 'reg:missing'];
+        yield 'price as object' => [self::rawItem($prices(['price' => ['amount' => 1], 'currency' => 'USD'])), 'bad_price', 'reg:type'];
+        yield 'register as text' => [self::rawItem($prices('free')), 'bad_price', 'reg:type'];
+        yield 'register entry not object' => [self::rawItem($prices([1, 2])), 'bad_price', 'reg:entry'];
+        yield 'currency missing' => [self::rawItem($prices(['price' => '1'])), 'unsupported_currency', 'currency:missing'];
+        yield 'currency as boolean' => [self::rawItem($prices(['price' => '1', 'currency' => true])), 'unsupported_currency', 'currency:type'];
+        yield 'currency as ISO number' => [self::rawItem($prices(['price' => '1', 'currency' => 840])), 'unsupported_currency', 'currency:format'];
+        yield 'currency symbol' => [self::rawItem($prices(['price' => '1', 'currency' => '$'])), 'unsupported_currency', 'currency:format'];
+        yield 'max period zero' => [self::rawItem(['maxRegistrationPeriod' => 0]), 'bad_period', 'min:1_max:0'];
+        yield 'min above max' => [self::rawItem(['minRegistrationPeriod' => 5, 'maxRegistrationPeriod' => 2]), 'bad_period', 'min:5_max:2'];
+        yield 'period as text' => [self::rawItem(['maxRegistrationPeriod' => 'ten']), 'bad_period', 'min:1_max:x'];
+        yield 'period too long' => [self::rawItem(['minRegistrationPeriod' => 100]), 'bad_period', 'min:x_max:10'];
+    }
+
+    /** DR-15: every refusal names the field and the kind of failure, within the DR-14 detail pattern. */
+    #[DataProvider('refusalDetails')]
+    public function testRefusalsNameTheFailingFieldAndKind(string $json, string $reason, string $detail): void
+    {
+        $skip = DomainNameApiTldParser::parse(ExactJson::decode($json));
+
+        self::assertInstanceOf(SkippedTld::class, $skip);
+        self::assertSame([$reason, $detail], [$skip->reason, $skip->detail]);
     }
 
     public function testHostileNamesAndDetailsAreDroppedNotStored(): void

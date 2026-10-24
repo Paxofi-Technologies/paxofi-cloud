@@ -1455,11 +1455,37 @@ const SKIP_REASONS: Record<string, string> = {
   not_object: 'An entry we could not read',
 };
 
-/** Plain words for a detail code: a currency code as is, `periods:N` as the shortest term on offer. */
+const PRICE_FIELDS: Record<string, string> = { reg: 'registration', renew: 'renewal' };
+const PRICE_PROBLEMS: Record<string, string> = {
+  missing: 'is missing',
+  zero: 'is 0',
+  negative: 'is negative',
+  format: 'is not a plain number',
+  type: 'is not a number',
+  entry: 'is not readable',
+};
+const CURRENCY_PROBLEMS: Record<string, string> = {
+  missing: 'no currency given',
+  type: 'currency is not text',
+  format: 'currency is not a 3-letter code',
+};
+
+/**
+ * Plain words for a detail code (DR-14, DR-15): a currency code as is,
+ * `periods:N` as the shortest term on offer, `reg:zero` as "registration
+ * price is 0", `currency:missing`, and `min:N_max:M` as the periods sent.
+ */
 function skipDetail(detail: string | null): string {
   if (detail === null) return '';
   const periods = /^periods:(\d{1,2})$/.exec(detail);
-  return periods ? `shortest term ${periods[1]} years` : detail;
+  if (periods) return `shortest term ${periods[1]} years`;
+  const [, field = '', problem = ''] = /^(reg|renew):([a-z]+)$/.exec(detail) ?? [];
+  if (PRICE_FIELDS[field] && PRICE_PROBLEMS[problem]) return `${PRICE_FIELDS[field]} price ${PRICE_PROBLEMS[problem]}`;
+  const [, currencyProblem = ''] = /^currency:([a-z]+)$/.exec(detail) ?? [];
+  if (CURRENCY_PROBLEMS[currencyProblem]) return CURRENCY_PROBLEMS[currencyProblem];
+  const range = /^min:(\d{1,2}|x)_max:(\d{1,2}|x)$/.exec(detail);
+  if (range) return `minimum ${range[1]}, maximum ${range[2]} years`;
+  return detail;
 }
 
 /**
