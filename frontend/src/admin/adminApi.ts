@@ -280,6 +280,15 @@ export interface SkippedExtension {
   detail: string | null;
 }
 
+/** A field path the registrar sent, never its text value (DR-16). */
+export interface FeedFieldSummary {
+  path: string;
+  items: number;
+  kinds: string[];
+  min: number | null;
+  max: number | null;
+}
+
 export interface DomainCosts {
   provider: string;
   environment: string;
@@ -292,6 +301,7 @@ export interface DomainCosts {
   runs: CostSyncRun[];
   items: DomainCostItem[];
   skipped: SkippedExtension[];
+  feedFields: FeedFieldSummary[];
 }
 
 export type DomainCostsResult = { kind: 'ok'; costs: DomainCosts } | { kind: 'failed' };
@@ -342,6 +352,13 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise
     if (!k || typeof k.reason !== 'string') continue;
     skipped.push({ name: nullableString(k.name), reason: k.reason, detail: nullableString(k.detail) });
   }
+  const feedFields: FeedFieldSummary[] = [];
+  for (const raw of Array.isArray(body.feed_fields) ? body.feed_fields : []) {
+    const f = obj(raw);
+    const count = minor(f?.items);
+    if (!f || typeof f.path !== 'string' || count === null) continue;
+    feedFields.push({ path: f.path, items: count, kinds: strings(f.kinds), min: minor(f.min), max: minor(f.max) });
+  }
   return {
     kind: 'ok',
     costs: {
@@ -356,6 +373,7 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch): Promise
       runs,
       items,
       skipped,
+      feedFields,
     },
   };
 }

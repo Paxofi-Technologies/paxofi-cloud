@@ -6,6 +6,7 @@ namespace PaxofiCloud\Application\Contracts;
 
 use PaxofiCloud\Application\Registrar\CostSnapshotSummary;
 use PaxofiCloud\Application\Registrar\SyncRun;
+use PaxofiCloud\Domain\Registrar\FeedField;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCost;
 
@@ -20,6 +21,9 @@ interface DomainCostReport
 
     /** @return list<SkippedTld> in the order the registrar sent them (DR-14) */
     public function skipped(string $snapshotId): array;
+
+    /** @return list<FeedField> ordered by path (DR-16) */
+    public function feedFields(string $snapshotId): array;
 
     /** @return list<SyncRun> newest first */
     public function recentRuns(string $provider, int $limit): array;

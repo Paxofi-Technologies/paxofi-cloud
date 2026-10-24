@@ -47,6 +47,7 @@ final readonly class RuntimeGrants
         'domain_cost_snapshots' => ['SELECT', 'INSERT'],
         'domain_cost_items' => ['SELECT', 'INSERT'],
         'domain_cost_skipped' => ['SELECT', 'INSERT'],
+        'domain_cost_feed_fields' => ['SELECT', 'INSERT'],
         'provider_sync_runs' => ['SELECT', 'INSERT'],
         // "Sync now" requests (DR-12): UPDATE only so the provider worker can mark a claim.
         'provider_sync_requests' => ['SELECT', 'INSERT', 'UPDATE'],

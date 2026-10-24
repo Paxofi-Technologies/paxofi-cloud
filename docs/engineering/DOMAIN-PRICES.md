@@ -52,6 +52,12 @@ or restore price (or one in a different currency) is left empty and the
 extension is still priced; the cost list shows "—" for it, and that action is
 not sold online for the extension until a later sync reads a price (DR-15).
 
+**Fields the registrar sends** lists every field name the last price list
+contained, how many extensions had it, the kinds of value seen and, for
+whole numbers, their range (DR-16). Text values are never stored. Use it to
+check what the registrar provides (for example grace or redemption periods)
+before any change relies on a field.
+
 If a request stays "on its way" for more than a minute, the provider worker
 is not running: run the Staging Deploy `status` action.
 
