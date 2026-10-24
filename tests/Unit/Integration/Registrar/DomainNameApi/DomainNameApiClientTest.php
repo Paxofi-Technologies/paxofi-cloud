@@ -102,6 +102,12 @@ final class DomainNameApiClientTest extends TestCase
             [['tld0', 'duplicate', null], [null, 'bad_name', null], ['try', 'unsupported_currency', 'TRY']],
             array_map(static fn ($s): array => [$s->name, $s->reason, $s->detail], $list->skipped),
         );
+        // DR-16: every item, accepted or refused, adds to the field inventory.
+        $paths = array_map(static fn ($f): string => $f->path, $list->fields);
+        self::assertContains('name', $paths);
+        self::assertContains('prices[].register.currency', $paths);
+        $name = array_values(array_filter($list->fields, static fn ($f): bool => $f->path === 'name'))[0];
+        self::assertSame(5, $name->items, 'all five items sent a name');
     }
 
     public function testStopsAfterThePageLimitWithoutAResult(): void

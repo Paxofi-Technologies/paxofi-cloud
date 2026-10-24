@@ -10,6 +10,7 @@ use PaxofiCloud\Application\Registrar\SyncRequestRefused;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
 use PaxofiCloud\Application\Staff\StaffPermissionDenied;
+use PaxofiCloud\Domain\Registrar\FeedField;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Domain\Staff\StaffRole;
@@ -149,5 +150,20 @@ final class DomainCostAdminTest extends TestCase
         $this->store->saveSnapshot('domainnameapi', $list, null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
 
         self::assertSame([['name' => 'com.tr', 'reason' => 'unsupported_currency', 'detail' => 'TRY']], $this->admin->overview(self::CATALOGUE, AuditFixtures::client())['skipped']);
+    }
+
+    /** DR-16: the field paths of the newest accepted list, never a quarantined one. */
+    public function testListsTheFeedFieldsOfTheAcceptedSnapshot(): void
+    {
+        $fields = [new FeedField('gracePeriod', 631, ['text'], 30, 45), new FeedField('name', 733, ['text'], null, null)];
+        $accepted = new TldCostList(array_values(ScriptedPriceFeed::list(['com' => 1081])->items), [], 'live', [], $fields);
+        $this->store->saveSnapshot('domainnameapi', $accepted, null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
+        $held = new TldCostList(array_values(ScriptedPriceFeed::list(['com' => 9999])->items), [], 'live', [], [new FeedField('leaked', 1, ['text'], null, null)]);
+        $this->store->saveSnapshot('domainnameapi', $held, 'costs_jumped', new \DateTimeImmutable('2026-10-24T02:30:00Z'));
+
+        self::assertSame(
+            [['path' => 'gracePeriod', 'items' => 631, 'kinds' => ['text'], 'min' => 30, 'max' => 45], ['path' => 'name', 'items' => 733, 'kinds' => ['text'], 'min' => null, 'max' => null]],
+            $this->admin->overview(self::CATALOGUE, AuditFixtures::client())['feed_fields'],
+        );
     }
 }

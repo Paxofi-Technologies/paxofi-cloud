@@ -12,6 +12,7 @@ use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\DomainCostReport;
 use PaxofiCloud\Application\Contracts\ProviderSyncRequests;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
+use PaxofiCloud\Domain\Registrar\FeedField;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Staff\Permission;
 
@@ -47,7 +48,8 @@ final readonly class DomainCostAdmin
      *     latest: ?array<string, int|string|null>, quarantined: ?array<string, int|string|null>,
      *     runs: list<array<string, int|string|null>>,
      *     items: list<array{tld: string, currency: string, register: int, renew: int, transfer: ?int, restore: ?int, min_years: int, max_years: int, status: string}>,
-     *     skipped: list<array{name: ?string, reason: string, detail: ?string}>
+     *     skipped: list<array{name: ?string, reason: string, detail: ?string}>,
+     *     feed_fields: list<array{path: string, items: int, kinds: list<string>, min: ?int, max: ?int}>
      * }
      * @throws \PaxofiCloud\Application\Staff\StaffPermissionDenied
      */
@@ -82,6 +84,12 @@ final readonly class DomainCostAdmin
             $this->report->skipped($latest->id),
         );
 
+        // DR-16: the field paths the registrar sent, never their text values.
+        $fields = $latest === null ? [] : array_map(
+            static fn (FeedField $f): array => ['path' => $f->path, 'items' => $f->items, 'kinds' => $f->kinds, 'min' => $f->min, 'max' => $f->max],
+            $this->report->feedFields($latest->id),
+        );
+
         $pending = $this->requests->pendingSince($this->provider);
         $next = $this->nextRequestAt();
 
@@ -104,6 +112,7 @@ final readonly class DomainCostAdmin
             ], $this->report->recentRuns($this->provider, self::RECENT_RUNS)),
             'items' => $items,
             'skipped' => $skipped,
+            'feed_fields' => $fields,
         ];
     }
 
