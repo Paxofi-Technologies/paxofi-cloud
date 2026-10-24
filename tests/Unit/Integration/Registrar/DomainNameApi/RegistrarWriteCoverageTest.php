@@ -10,6 +10,9 @@ use PaxofiCloud\Application\Registrar\RegistrarWritesDisabled;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiOperation;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotEnvironment;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotOperation;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapEnvironment;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapOperation;
@@ -80,6 +83,22 @@ final class RegistrarWriteCoverageTest extends TestCase
         $credentials = new StaticCredentialSource(['namecheap-staging' => '{"api_user":"a","username":"a","api_key":"abcdefgh12","client_ip":"8.8.4.4"}']);
         $guard = new RegistrarWriteGuard(false, new AuditTrail(new InMemoryAuditLog(), new FixedClock(new \DateTimeImmutable('2026-10-24T06:00:00Z')), new RecordingLogger()));
         (new NamecheapClient($transport, $credentials, 'namecheap-staging', NamecheapEnvironment::Live, $guard))->send(NamecheapOperation::GetPricing, ['ProductType' => 'DOMAIN'], 'register');
+
+        self::assertSame(1, $credentials->loads);
+    }
+
+    public function testDynadotOperationsAreAllReadsAndAskTheGuardFirst(): void
+    {
+        foreach (DynadotOperation::cases() as $operation) {
+            self::assertFalse($operation->spec()[2]->isWrite(), $operation->value . ': add a write test when Dynadot writes arrive');
+            self::assertSame('GET', $operation->spec()[0], $operation->value);
+        }
+        $transport = (new FakeProviderTransport())->expect('GET', '/domains/get_tld_price', 200, ['code' => 200, 'data' => ['currency' => 'USD', 'tld_price_list' => []]]);
+        $credentials = new StaticCredentialSource(['dynadot-staging' => '{"api_key":"abcdefgh12","api_secret":"secret-1234"}']);
+        $guard = new RegistrarWriteGuard(false, new AuditTrail(new InMemoryAuditLog(), new FixedClock(new \DateTimeImmutable('2026-10-24T06:00:00Z')), new RecordingLogger()));
+        $client = new DynadotClient($transport, $credentials, 'dynadot-staging', DynadotEnvironment::Live, $guard, static function (int $ms): void {
+        }, static fn (): string => '00000000-0000-4000-8000-000000000000');
+        $client->send(DynadotOperation::TldPrice, ['currency' => 'usd']);
 
         self::assertSame(1, $credentials->loads);
     }

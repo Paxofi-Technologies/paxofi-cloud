@@ -1372,7 +1372,7 @@ const SYNC_REASONS: Record<string, string> = {
 const TRIGGERS: Record<string, string> = { schedule: 'Daily', manual: 'Sync now', cli: 'Operator' };
 
 /** Registrar names as staff know them. */
-const REGISTRAR_NAMES: Record<string, string> = { domainnameapi: 'DomainNameAPI', namecheap: 'Namecheap' };
+const REGISTRAR_NAMES: Record<string, string> = { domainnameapi: 'DomainNameAPI', namecheap: 'Namecheap', dynadot: 'Dynadot' };
 
 /** Extensions per page in the cost list. */
 export const COST_PAGE_SIZE = 15;

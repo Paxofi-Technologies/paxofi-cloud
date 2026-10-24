@@ -26,7 +26,7 @@ PROVIDER_CREDENTIAL_ACTIVE_KEY="k2026a"
 
 ## Entering a credential in the admin console (preferred)
 
-Security Admins set or replace the DomainNameAPI, Namecheap, Hetzner and Vultr credentials on the
+Security Admins set or replace the DomainNameAPI, Namecheap, Dynadot, Hetzner and Vultr credentials on the
 **API providers** pages of the admin console: **API providers → Domain registrars** (DomainNameAPI,
 Namecheap; addresses `/api-providers/domain-registrars`, old `/provider-connections` links land here) and
 **API providers → Server providers** (Hetzner, Vultr; `/api-providers/server-providers`). Every field shows
@@ -74,6 +74,12 @@ Whenever the staging server is replaced (infra apply), its address changes: upda
 whitelist and the connection, or the Namecheap price sync stops with a "credential refused"
 alert while the last good prices stay in use. Only a public IPv4 address is accepted. The values
 travel to Namecheap only in the POST body, never in a URL.
+
+Dynadot takes two values (THREAT-MODEL-DOMAIN-PRICING.md, DY-2): the **API key** and the **API
+secret**, both from Tools > API in the Dynadot account. Use the production key, not the sandbox
+key. The key is sent as a bearer token; the secret never leaves the provider worker and only signs
+each request. Dynadot no longer requires an IP whitelist for the RESTful API; if the account has
+one, add the staging server's IPv4 address to it.
 
 Credential IDs are fixed per environment, for example `domainnameapi-staging` and
 `hetzner-prod`. A credential stored this way gets a review date one year ahead.

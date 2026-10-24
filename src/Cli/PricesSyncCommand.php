@@ -8,7 +8,7 @@ use Paxofi\Core\Contracts\Command;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
 
 /**
- * `bin/paxoficloud prices:sync [--provider=domainnameapi|namecheap]` — pulls
+ * `bin/paxoficloud prices:sync [--provider=domainnameapi|namecheap|dynadot]` — pulls
  * a registrar's domain cost list now (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-8,
  * DR-10; NC-9). Runs only where the provider credential keys are, i.e. in
  * the provider worker. Prints fixed codes and counts only.
@@ -17,7 +17,7 @@ use PaxofiCloud\Application\Registrar\DomainCostSync;
  */
 final readonly class PricesSyncCommand implements Command
 {
-    public const array PROVIDERS = ['domainnameapi', 'namecheap'];
+    public const array PROVIDERS = ['domainnameapi', 'namecheap', 'dynadot'];
 
     /** @param \Closure(string): DomainCostSync $sync built lazily per registrar so keys are read only when it runs */
     public function __construct(private \Closure $sync, private Console $console)

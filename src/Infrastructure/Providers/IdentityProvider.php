@@ -84,6 +84,7 @@ use PaxofiCloud\Application\Registrar\DomainCostAdmin;
 use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
 use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
@@ -436,6 +437,15 @@ final class IdentityProvider implements Provider
                 NamecheapClient::PROVIDER => new DomainCostAdmin(
                     NamecheapClient::PROVIDER,
                     getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                    $authorizer,
+                    $store,
+                    $requests,
+                    new SystemClock(),
+                    $audit,
+                ),
+                DynadotClient::PROVIDER => new DomainCostAdmin(
+                    DynadotClient::PROVIDER,
+                    getenv('DYNADOT_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
                     $authorizer,
                     $store,
                     $requests,

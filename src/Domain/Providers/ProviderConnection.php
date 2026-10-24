@@ -13,6 +13,7 @@ enum ProviderConnection: string
 {
     case DomainNameApi = 'domainnameapi';
     case Namecheap = 'namecheap';
+    case Dynadot = 'dynadot';
     case Hetzner = 'hetzner';
     case Vultr = 'vultr';
 
@@ -25,6 +26,7 @@ enum ProviderConnection: string
         return match ($this) {
             self::DomainNameApi => 'DomainNameAPI (domain registrar)',
             self::Namecheap => 'Namecheap (domain registrar)',
+            self::Dynadot => 'Dynadot (domain registrar)',
             self::Hetzner => 'Hetzner Cloud (servers)',
             self::Vultr => 'Vultr (servers)',
         };
@@ -34,7 +36,7 @@ enum ProviderConnection: string
     public function category(): string
     {
         return match ($this) {
-            self::DomainNameApi, self::Namecheap => 'domains',
+            self::DomainNameApi, self::Namecheap, self::Dynadot => 'domains',
             self::Hetzner, self::Vultr => 'servers',
         };
     }
@@ -53,6 +55,11 @@ enum ProviderConnection: string
                 new ConnectionField('username', 'User name', false, 64, '/^[A-Za-z0-9_.-]{1,64}$/', 'For your own account, the same username as API user.'),
                 new ConnectionField('api_key', 'API key', true, 128, null, 'Namecheap: Profile → Tools → Namecheap API Access → Manage. API access must be switched on.'),
                 new ConnectionField('client_ip', 'Server IPv4 address (whitelisted in Namecheap)', false, 15, '/^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$/', 'The server\'s public IPv4 address (Vultr: Products → the server). Add the same address under Whitelisted IPs on the Namecheap API Access page.'),
+            ],
+            // DY-2: the key authenticates, the secret only signs requests (DY-3).
+            self::Dynadot => [
+                new ConnectionField('api_key', 'API key', true, 256, '/^[\x21-\x7E]{8,256}$/', 'Dynadot: Tools → API. Use the production API key (not the sandbox key).'),
+                new ConnectionField('api_secret', 'API secret', true, 256, '/^[\x21-\x7E]{8,256}$/', 'Same page: the API secret shown with the key. PaxofiCloud uses it only to sign requests.'),
             ],
             self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256, null, 'Hetzner Cloud Console: your project → Security → API tokens → Generate (Read & Write).')],
             self::Vultr => [new ConnectionField('api_key', 'API key', true, 256, null, 'Vultr: Account → API. Use a sub-user key with only the access PaxofiCloud needs.')],

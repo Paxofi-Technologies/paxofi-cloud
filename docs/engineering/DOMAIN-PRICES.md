@@ -1,21 +1,29 @@
 # Domain cost prices — runbook
 
 How PaxofiCloud gets the cost of every domain extension from each registrar
-(DomainNameAPI and Namecheap). Design: `docs/security/THREAT-MODEL-DOMAIN-REGISTRAR.md`,
-`docs/security/THREAT-MODEL-DOMAIN-PRICING.md` (NC-1 to NC-9) and CD-13 in
+(DomainNameAPI, Namecheap and Dynadot). Design: `docs/security/THREAT-MODEL-DOMAIN-REGISTRAR.md`,
+`docs/security/THREAT-MODEL-DOMAIN-PRICING.md` (NC-1 to NC-9, DY-1 to DY-9) and CD-13 in
 `docs/security/THREAT-MODEL-COMMERCE.md`.
 
 ## What runs, and when
 
 - The `provider-worker` container checks about once a minute whether each
   registrar's daily sync is due. Each runs at **02:30 WAT** each day, once.
-- DomainNameAPI always runs. Namecheap runs only once its connection has been
+- DomainNameAPI always runs. Namecheap and Dynadot each run only once their connection has been
   entered under API providers → Domain registrars (so an unused registrar never raises alerts);
   the worker notices a new connection within a minute.
 - Namecheap's price sheet is read as four calls (register, renew, transfer,
   reactivate = restore), each up to 16 MiB, parsed as a stream. Its cost for a
   term is the **higher** of `Price` and `YourPrice`, plus the ICANN fee; a
   promotional one-year price shows the status `promo` and never lowers the cost.
+- Dynadot's list is read through its RESTful API (`GET /restful/v2/domains/get_tld_price`),
+  never the legacy API3 (its key would sit in the URL). The key is the bearer token and every
+  call is signed with the API secret (`X-Request-ID` + `X-Signature`). Pages are fetched one at
+  a time about a second apart (Dynadot allows one request at a time); a 429 waits 2, 4 and 8
+  seconds before giving up. The one-year cost is the first entry of each cumulative price array;
+  a first year cheaper than the renewal shows `promo`. Dynadot sends **no restore price**, so
+  restore through Dynadot is not sold until staff set it. `DYNADOT_ENVIRONMENT=sandbox` uses the
+  sandbox (never in production).
 - It reads the full extension list with one-year register, renew, transfer
   and restore costs, using the credential entered on the admin console's
   API providers → Domain registrars page.
