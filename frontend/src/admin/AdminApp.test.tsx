@@ -622,13 +622,21 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
             { name: 'ai', reason: 'no_register_price', detail: 'periods:2' },
             { name: null, reason: 'bad_name', detail: null },
             { name: '<img src=x>', reason: 'bad_price', detail: null },
+            { name: 'co.uk', reason: 'bad_price', detail: 'reg:zero' },
+            { name: 'au', reason: 'bad_price', detail: 'renew:format' },
+            { name: 'eco', reason: 'unsupported_currency', detail: 'currency:missing' },
+            { name: 'moscow', reason: 'bad_period', detail: 'min:1_max:0' },
           ],
         }),
       },
     });
     render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
-    await user.click(await screen.findByText('Not on sale yet (5)'));
+    await user.click(await screen.findByText('Not on sale yet (9)'));
+    expect(screen.getByText('A price we could not read (registration price is 0): 1')).toBeInTheDocument();
+    expect(screen.getByText('A price we could not read (renewal price is not a plain number): 1')).toBeInTheDocument();
+    expect(screen.getByText('Priced in a currency we do not accept yet (no currency given): 1')).toBeInTheDocument();
+    expect(screen.getByText('Registration periods we could not read (minimum 1, maximum 0 years): 1')).toBeInTheDocument();
     expect(screen.getByText('Priced in a currency we do not accept yet (TRY): 2')).toBeInTheDocument();
     expect(screen.getByText('.com.tr, .net.tr')).toBeInTheDocument();
     expect(screen.getByText('No one-year registration price (shortest term 2 years): 1')).toBeInTheDocument();
