@@ -27,8 +27,11 @@ PROVIDER_CREDENTIAL_ACTIVE_KEY="k2026a"
 ## Entering a credential in the admin console (preferred)
 
 Security Admins set or replace the DomainNameAPI, Namecheap, Hetzner and Vultr credentials on the
-**Provider connections** page of the admin console. The page groups them as **Domain providers**
-(DomainNameAPI, Namecheap) and **Server providers** (Hetzner, Vultr). See
+**API providers** pages of the admin console: **API providers → Domain registrars** (DomainNameAPI,
+Namecheap; addresses `/api-providers/domain-registrars`, old `/provider-connections` links land here) and
+**API providers → Server providers** (Hetzner, Vultr; `/api-providers/server-providers`). Every field shows
+where in the provider's own dashboard to find its value. For Namecheap, **API user** and **User name** are
+both the Namecheap account username (not the email address). See
 `docs/security/THREAT-MODEL-PROVIDER-CONNECTIONS.md` for the design.
 
 1. Open the page, choose the provider, and type the values.
