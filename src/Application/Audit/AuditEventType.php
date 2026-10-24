@@ -54,6 +54,9 @@ final class AuditEventType
     public const string PROVIDER_CREDENTIAL_STORED = 'provider_credential.stored';
     public const string PROVIDER_CREDENTIAL_REJECTED = 'provider_credential.rejected';
     public const string REGISTRAR_WRITE_REFUSED = 'registrar.write_refused';
+    public const string PROVIDER_PRICES_SYNCED = 'provider_prices.synced';
+    public const string PROVIDER_PRICES_QUARANTINED = 'provider_prices.quarantined';
+    public const string PROVIDER_PRICES_SYNC_FAILED = 'provider_prices.sync_failed';
 
     private function __construct()
     {

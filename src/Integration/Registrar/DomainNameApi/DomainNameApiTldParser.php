@@ -21,7 +21,7 @@ final class DomainNameApiTldParser
 {
     public const array REASONS = [
         'not_object', 'bad_name', 'bad_status', 'bad_period', 'no_prices',
-        'no_register_price', 'no_renew_price', 'bad_price', 'unsupported_currency', 'duplicate',
+        'no_register_price', 'no_renew_price', 'bad_price', 'unsupported_currency', 'mixed_currency', 'duplicate',
     ];
 
     /** @return TldCost|string a TldCost, or one of REASONS */
@@ -71,6 +71,12 @@ final class DomainNameApiTldParser
         $restore = self::oneYear($byType['restore'] ?? null);
         if (is_string($restore)) {
             return $restore;
+        }
+
+        foreach ([$renew, $transfer, $restore] as $other) {
+            if ($other !== null && $other->currency !== $register->currency) {
+                return 'mixed_currency';
+            }
         }
 
         return new TldCost($tld, $register, $renew, $transfer, $restore, $minYears, min($maxYears, 10), $status);

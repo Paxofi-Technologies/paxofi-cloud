@@ -88,6 +88,7 @@ final class DomainNameApiTldParserTest extends TestCase
         yield 'exponent price' => [str_replace('10.8100', '1.081e1', self::rawItem()), 'bad_price'];
         yield 'price as text with words' => [self::rawItem(['prices' => [['register' => ['price' => 'ten', 'currency' => 'USD'], 'renew' => ['price' => '1', 'currency' => 'USD']]]]), 'bad_price'];
         yield 'Turkish lira' => [self::rawItem(['prices' => [['register' => ['price' => '1', 'currency' => 'TRY'], 'renew' => ['price' => '1', 'currency' => 'USD']]]]), 'unsupported_currency'];
+        yield 'register in USD, renew in EUR' => [self::rawItem(['prices' => [['register' => ['price' => '1', 'currency' => 'USD'], 'renew' => ['price' => '1', 'currency' => 'EUR']]]]), 'mixed_currency'];
         yield 'missing currency' => [self::rawItem(['prices' => [['register' => ['price' => '1'], 'renew' => ['price' => '1', 'currency' => 'USD']]]]), 'unsupported_currency'];
         yield 'bad optional transfer price' => [self::rawItem(['prices' => [['register' => ['price' => '1', 'currency' => 'USD'], 'renew' => ['price' => '1', 'currency' => 'USD'], 'transfer' => 'free']]]), 'bad_price'];
     }

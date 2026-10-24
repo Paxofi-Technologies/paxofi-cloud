@@ -22,6 +22,17 @@ use PaxofiCloud\Cli\DbGrantsCommand;
 use PaxofiCloud\Cli\FxStatusCommand;
 use PaxofiCloud\Cli\FxUpdateCommand;
 use PaxofiCloud\Cli\ProvidersWorkCommand;
+use PaxofiCloud\Application\Registrar\DomainCostSync;
+use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
+use PaxofiCloud\Application\Staff\StaffManagerAlerts;
+use PaxofiCloud\Cli\PricesStatusCommand;
+use PaxofiCloud\Cli\PricesSyncCommand;
+use PaxofiCloud\Domain\Registrar\CostQuarantinePolicy;
+use PaxofiCloud\Infrastructure\Database\MysqlNamedLock;
+use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
+use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
+use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
+use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
 use PaxofiCloud\Application\Audit\AuditTrail;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\StaffDirectory;
@@ -106,6 +117,45 @@ final readonly class CliProvider implements Provider
             $registry->register(new AuditPurgeContextCommand($auditChain, $console, $clock));
             $registry->register(new FxUpdateCommand(static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class), $console));
             $registry->register(new FxStatusCommand(Resolve::get($c, FxRateStore::class), $console));
+            $appEnv = Resolve::get($c, Configuration::class)->get('app.env');
+            $appEnv = is_string($appEnv) ? $appEnv : '';
+            $costStore = new MysqlDomainCostStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class));
+            // Domain cost sync (THREAT-MODEL-DOMAIN-REGISTRAR.md): built only when it runs, in the
+            // provider worker, because it needs the KEK to open the registrar credential.
+            $domainCostSync = static function () use ($c, $appEnv, $costStore): DomainCostSync {
+                $environment = DomainNameApiEnvironment::fromSetting((string) getenv('DOMAINNAMEAPI_ENVIRONMENT'), $appEnv);
+                $audit = Resolve::get($c, AuditTrail::class);
+                $logger = Resolve::get($c, Logger::class);
+                $guard = new RegistrarWriteGuard(RegistrarWriteGuard::writesEnabled((string) getenv('REGISTRAR_WRITES'), $appEnv), $audit);
+                $feed = new DomainNameApiClient(
+                    new ProviderHttpClient([DomainNameApiClient::endpoint($environment)], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: 1_048_576),
+                    new MysqlProviderCredentialStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), new SecretCipher(KeyRing::fromProcessEnvironment())),
+                    ProviderConnection::DomainNameApi->credentialId(ProviderConnection::environmentFor($appEnv)),
+                    $environment,
+                    $guard,
+                );
+
+                return new DomainCostSync(
+                    $feed,
+                    $costStore,
+                    new MysqlNamedLock(Resolve::get($c, Repository::class)),
+                    new CostQuarantinePolicy(),
+                    new StaffManagerAlerts(Resolve::get($c, StaffDirectory::class), Resolve::get($c, EmailOutbox::class), $logger),
+                    $audit,
+                    new SystemClock(),
+                    $logger,
+                    static function (int $seconds): void {
+                        sleep($seconds);
+                    },
+                );
+            };
+            $registry->register(new PricesSyncCommand($domainCostSync, $console));
+            $registry->register(new PricesStatusCommand(
+                $costStore,
+                $console,
+                DomainNameApiClient::PROVIDER,
+                getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
+            ));
             // Provider worker (PC-6): the only process with the intake secret key and the KEK.
             $registry->register(new ProvidersWorkCommand(static function () use ($c): CredentialIntakeWorker {
                 $public = getenv('CREDENTIAL_INTAKE_PUBLIC_KEY');
@@ -128,7 +178,7 @@ final readonly class CliProvider implements Provider
                     new SystemClock(),
                     Resolve::get($c, Logger::class),
                 );
-            }, $console));
+            }, $console, null, $domainCostSync));
             $registry->register(new StaffBootstrapCommand(static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class), $console));
 
             return $registry;
