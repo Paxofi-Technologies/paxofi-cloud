@@ -83,6 +83,17 @@ final class ProviderConnectionCatalogueTest extends TestCase
         }
     }
 
+    public function testEveryFieldTellsStaffWhereToFindTheValue(): void
+    {
+        foreach (ProviderConnection::cases() as $provider) {
+            foreach ($provider->fields() as $field) {
+                self::assertNotSame('', trim((string) $field->hint), $provider->value . '.' . $field->name);
+            }
+        }
+        self::assertStringContainsString('username', (string) ProviderConnection::Namecheap->fields()[0]->hint);
+        self::assertSame(['domains' => 'Domain registrars', 'servers' => 'Server providers'], ProviderConnection::CATEGORIES);
+    }
+
     public function testEveryConnectionHasAKnownCategory(): void
     {
         foreach (ProviderConnection::cases() as $provider) {

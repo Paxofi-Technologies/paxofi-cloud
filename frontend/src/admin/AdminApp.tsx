@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Alert, AppShell, Badge, Button, Card, Logo, RecoveryCodesView, TextField, type NavItem } from '../components';
-import { HomeIcon, KeyIcon, ShieldIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
+import { GlobeIcon, HomeIcon, KeyIcon, ServerIcon, ShieldIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
 import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
 import { describeLocation, eventLabel, formatWhen } from '../lib/activity';
@@ -593,7 +593,7 @@ function Console({ path, fetchImpl, credentials }: { path: string; fetchImpl?: t
   return <Dashboard path={path} session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
 }
 
-type AdminPage = 'overview' | 'account' | 'staff' | 'providers' | 'domain-costs' | 'audit-log';
+type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'domain-costs' | 'audit-log';
 
 interface AdminPageSpec {
   id: AdminPage;
@@ -602,14 +602,44 @@ interface AdminPageSpec {
   icon: ReactNode;
   /** The permission the page needs; the API enforces it again on every call. */
   permission: string | null;
+  /** The menu heading the page sits under, if any. */
+  group?: AdminGroup;
 }
+
+type AdminGroup = 'api-providers';
+
+/** Menu headings that hold pages (CEO decision 24 Oct 2026: "API providers" with registrars and server providers under it). */
+const ADMIN_GROUPS: Record<AdminGroup, { label: string; icon: ReactNode }> = {
+  'api-providers': { label: 'API providers', icon: <KeyIcon /> },
+};
+
+/** Old addresses that still open the right page (links in earlier staff emails and bookmarks). */
+const ADMIN_PATH_ALIASES: Record<string, string> = {
+  '/provider-connections': '/api-providers/domain-registrars',
+  '/api-providers': '/api-providers/domain-registrars',
+};
 
 /** Each page has its own address, so refresh, back/forward and links in staff emails land on it. */
 const ADMIN_PAGES: readonly AdminPageSpec[] = [
   { id: 'overview', path: '/', label: 'Overview', icon: <HomeIcon />, permission: null },
   { id: 'account', path: '/account', label: 'Your sign-in', icon: <UserIcon />, permission: null },
   { id: 'staff', path: '/staff', label: 'Staff', icon: <UsersIcon />, permission: 'staff.manage' },
-  { id: 'providers', path: '/provider-connections', label: 'Provider connections', icon: <KeyIcon />, permission: 'provider_credentials.manage' },
+  {
+    id: 'providers-domains',
+    path: '/api-providers/domain-registrars',
+    label: 'Domain registrars',
+    icon: <GlobeIcon />,
+    permission: 'provider_credentials.manage',
+    group: 'api-providers',
+  },
+  {
+    id: 'providers-servers',
+    path: '/api-providers/server-providers',
+    label: 'Server providers',
+    icon: <ServerIcon />,
+    permission: 'provider_credentials.manage',
+    group: 'api-providers',
+  },
   { id: 'domain-costs', path: '/domain-costs', label: 'Domain costs', icon: <TagIcon />, permission: 'catalogue.view' },
   { id: 'audit-log', path: '/audit-log', label: 'Audit log', icon: <ShieldIcon />, permission: 'audit.view' },
 ];
@@ -621,7 +651,29 @@ export function adminPagesFor(permissions: readonly string[]): AdminPageSpec[] {
 
 /** An unknown path, or a page the member may not open, shows the overview. */
 export function adminPageForPath(path: string, permissions: readonly string[]): AdminPage {
-  return adminPagesFor(permissions).find((page) => page.path === path)?.id ?? 'overview';
+  const target = ADMIN_PATH_ALIASES[path] ?? path;
+  return adminPagesFor(permissions).find((page) => page.path === target)?.id ?? 'overview';
+}
+
+/** The sidebar: pages in table order, grouped pages under their heading where the first of them appears. */
+export function adminNav(pages: readonly AdminPageSpec[]): NavItem[] {
+  const nav: NavItem[] = [];
+  const groups = new Map<AdminGroup, NavItem[]>();
+  for (const page of pages) {
+    const item: NavItem = { id: page.id, label: page.label, icon: page.icon };
+    if (page.group === undefined) {
+      nav.push(item);
+      continue;
+    }
+    let children = groups.get(page.group);
+    if (children === undefined) {
+      children = [];
+      groups.set(page.group, children);
+      nav.push({ id: page.group, ...ADMIN_GROUPS[page.group], children });
+    }
+    children.push(item);
+  }
+  return nav;
 }
 
 function Dashboard({
@@ -664,7 +716,7 @@ function Dashboard({
     onSignedOut();
   }
 
-  const nav: NavItem[] = pages.map((p) => ({ id: p.id, label: p.label, icon: p.icon }));
+  const nav = adminNav(pages);
 
   return (
     <AppShell
@@ -684,7 +736,8 @@ function Dashboard({
           </>
         )}
         {page === 'staff' && <StaffManagement session={session} fetchImpl={fetchImpl} />}
-        {page === 'providers' && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
+        {page === 'providers-domains' && <ProviderConnections category="domains" session={session} fetchImpl={fetchImpl} />}
+        {page === 'providers-servers' && <ProviderConnections category="servers" session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
         {page === 'audit-log' && <AuditLogCard fetchImpl={fetchImpl} />}
       </div>
@@ -721,7 +774,7 @@ function Overview({ session, pages, onOpen }: { session: StaffSession; pages: Ad
             .map((p) => (
               <li key={p.id}>
                 <button type="button" className="pc-link-button" onClick={() => onOpen(p.id)}>
-                  {p.label}
+                  {p.group ? `${ADMIN_GROUPS[p.group].label}: ${p.label}` : p.label}
                 </button>
               </li>
             ))}
@@ -1112,7 +1165,7 @@ function InviteForm({ session, fetchImpl, onInvited }: { session: StaffSession; 
  * submission needs a fresh authenticator code (PC-3); values are cleared
  * from page state as soon as they are sent (PC-8).
  */
-function ProviderConnections({ session, fetchImpl }: { session: StaffSession; fetchImpl?: typeof fetch | undefined }) {
+function ProviderConnections({ category, session, fetchImpl }: { category: ProviderCategory; session: StaffSession; fetchImpl?: typeof fetch | undefined }) {
   const [list, setList] = useState<ProviderConnectionList | 'loading'>('loading');
   const [version, setVersion] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
@@ -1136,71 +1189,64 @@ function ProviderConnections({ session, fetchImpl }: { session: StaffSession; fe
   }, [list]);
 
   return (
-    <Card title="Provider connections">
+    <Card title={PROVIDER_PAGES[category].title}>
       <p className="pc-muted">
-        API credentials PaxofiCloud uses to work with its suppliers. They are encrypted as soon as you save them, and nobody can view them again: to change one,
-        enter it again.
+        {PROVIDER_PAGES[category].intro} Credentials are encrypted as soon as you save them, and nobody can view them again: to change one, enter it again.
       </p>
       {message && <Alert tone={message.tone}>{message.text}</Alert>}
-      {list === 'loading' && <p className="pc-muted">Loading provider connections…</p>}
-      {list !== 'loading' && list.kind === 'failed' && <Alert tone="danger">Provider connections could not be loaded.</Alert>}
-      {list !== 'loading' &&
-        list.kind === 'ok' &&
-        PROVIDER_GROUPS.map(([category, title]) => {
-          const providers = list.providers.filter((p) => (PROVIDER_GROUPS.some(([c]) => c === p.category) ? p.category : 'other') === category);
-          if (providers.length === 0) return null;
-          return (
-            <section key={category} className="pc-stack" aria-label={title}>
-              <h3 className="pc-admin__group">{title}</h3>
-              <ul className="pc-admin__list">
-                {providers.map((provider) => (
-                  <li key={provider.provider} className="pc-stack">
-                    <div className="pc-admin__row">
-                      <div>
-                        <strong>{provider.label}</strong>
-                        <p className="pc-muted">{connectionStatus(provider)}</p>
-                      </div>
-                      {editing !== provider.provider && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setMessage(null);
-                            setEditing(provider.provider);
-                          }}
-                        >
-                          {provider.configuredAt ? 'Replace credential' : 'Set credential'}
-                        </Button>
-                      )}
-                    </div>
-                    {editing === provider.provider && (
-                      <CredentialForm
-                        session={session}
-                        provider={provider}
-                        fetchImpl={fetchImpl}
-                        onCancel={() => setEditing(null)}
-                        onSaved={() => {
-                          setEditing(null);
-                          setMessage({ tone: 'success', text: `${provider.label}: saved. It is encrypted and stored within a few seconds, and every security administrator is emailed.` });
-                          setVersion((n) => n + 1);
-                        }}
-                      />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          );
-        })}
+      {list === 'loading' && <p className="pc-muted">Loading API providers…</p>}
+      {list !== 'loading' && list.kind === 'failed' && <Alert tone="danger">API providers could not be loaded.</Alert>}
+      {list !== 'loading' && list.kind === 'ok' && (
+        <ul className="pc-admin__list">
+          {list.providers
+            .filter((provider) => provider.category === category)
+            .map((provider) => (
+              <li key={provider.provider} className="pc-stack">
+                <div className="pc-admin__row">
+                  <div>
+                    <strong>{provider.label}</strong>
+                    <p className="pc-muted">{connectionStatus(provider)}</p>
+                  </div>
+                  {editing !== provider.provider && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setMessage(null);
+                        setEditing(provider.provider);
+                      }}
+                    >
+                      {provider.configuredAt ? 'Replace credential' : 'Set credential'}
+                    </Button>
+                  )}
+                </div>
+                {editing === provider.provider && (
+                  <CredentialForm
+                    session={session}
+                    provider={provider}
+                    fetchImpl={fetchImpl}
+                    onCancel={() => setEditing(null)}
+                    onSaved={() => {
+                      setEditing(null);
+                      setMessage({ tone: 'success', text: `${provider.label}: saved. It is encrypted and stored within a few seconds, and every security administrator is emailed.` });
+                      setVersion((n) => n + 1);
+                    }}
+                  />
+                )}
+              </li>
+            ))}
+        </ul>
+      )}
     </Card>
   );
 }
 
-/** Connections are shown in these groups, in this order (CEO decision 24 Oct 2026). */
-const PROVIDER_GROUPS: ReadonlyArray<readonly [string, string]> = [
-  ['domains', 'Domain providers'],
-  ['servers', 'Server providers'],
-  ['other', 'Other providers'],
-];
+type ProviderCategory = 'domains' | 'servers';
+
+/** The two pages under "API providers" (CEO decision 24 Oct 2026). */
+const PROVIDER_PAGES: Record<ProviderCategory, { title: string; intro: string }> = {
+  domains: { title: 'Domain registrars', intro: 'API credentials PaxofiCloud uses to read prices from, and later register domains with, each registrar.' },
+  servers: { title: 'Server providers', intro: 'API credentials PaxofiCloud uses to create and manage servers.' },
+};
 
 function connectionStatus(provider: ProviderConnectionStatus): string {
   if (provider.pendingSince) return `Saved ${formatWhen(provider.pendingSince)}, being encrypted and stored…`;
@@ -1271,6 +1317,7 @@ function CredentialForm({
         <TextField
           key={field.name}
           label={field.label}
+          {...(field.hint ? { hint: field.hint } : {})}
           type={field.secret ? 'password' : 'text'}
           autoComplete={field.secret ? 'new-password' : 'off'}
           spellCheck={false}
@@ -1309,9 +1356,9 @@ function CredentialForm({
 }
 
 const SYNC_REASONS: Record<string, string> = {
-  unauthorised: 'the registrar refused the API key (for Namecheap, also check that the server IP address is whitelisted). Fix it under Provider connections',
-  credential_missing: 'no API key is stored. Set it under Provider connections',
-  credential_invalid: 'the stored API key could not be used. Set it again under Provider connections',
+  unauthorised: 'the registrar refused the API key (for Namecheap, also check that the server IP address is whitelisted). Fix it under API providers → Domain registrars',
+  credential_missing: 'no API key is stored. Set it under API providers → Domain registrars',
+  credential_invalid: 'the stored API key could not be used. Set it again under API providers → Domain registrars',
   rate_limited: 'the registrar asked us to slow down',
   provider_error: 'the registrar had an error',
   transport: 'the registrar could not be reached',

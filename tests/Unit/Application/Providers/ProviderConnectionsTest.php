@@ -89,7 +89,9 @@ final class ProviderConnectionsTest extends TestCase
         self::assertNotNull($byProvider['domainnameapi']['pending_since']);
         self::assertNull($byProvider['domainnameapi']['configured_at']);
         self::assertSame('2027-10-20', $byProvider['hetzner']['review_due_on']);
-        self::assertSame([['name' => 'reseller_id', 'label' => 'Reseller ID', 'secret' => false], ['name' => 'api_key', 'label' => 'API key', 'secret' => true]], $byProvider['domainnameapi']['fields']);
+        self::assertSame(['reseller_id', 'api_key'], array_column($byProvider['domainnameapi']['fields'], 'name'));
+        self::assertSame([false, true], array_column($byProvider['domainnameapi']['fields'], 'secret'));
+        self::assertStringContainsString('Integration Information', (string) $byProvider['domainnameapi']['fields'][0]['hint']);
         self::assertStringNotContainsString(self::PASSWORD, (string) json_encode($overview), 'PC-T1: no read path');
         self::assertStringNotContainsString('0b6f1c2e-1111-4222-8333-444455556666', (string) json_encode($overview));
     }
