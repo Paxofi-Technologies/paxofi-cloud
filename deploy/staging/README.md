@@ -80,7 +80,7 @@ keeps the old copy. It accepts exactly these verbs:
 | `release <40-hex sha>` | Generates secrets on first run (separate MySQL owner and runtime users, §6.22), starts MySQL/Redis, runs `bin/paxoficloud migrate` and `db:grants paxoficloud_app` as the schema owner, starts the new version and waits for `/health/ready`. On success records `current`/`previous` and prunes older images; on failure restarts the previous version and exits 1. |
 | `mail-secrets` | Reads `NAME=value` lines from stdin (max 8 KiB). Accepts only `POSTMARK_SERVER_TOKEN`, `RESEND_API_KEY`, `SMTP_HOST`, `SMTP_PORT` (465/587), `SMTP_USERNAME`, `SMTP_PASSWORD` (stored base64-encoded as `SMTP_PASSWORD_B64`), `SMTP_TLS_NAME` (optional; must be `SMTP_HOST` or a parent domain of it), `EMAIL_PROVIDER` and `EMAIL_RECIPIENT_ALLOWLIST`, each format-checked; any bad line rejects the whole update. Writes `mail-providers.env` atomically (0600) and logs names only. |
 | `web-secrets` | Reads `NAME=value` lines from stdin (max 4 KiB). Accepts only `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (8–128 of `A-Z a-z 0-9 _ -`, or empty to turn the challenge off); any bad line rejects the whole update. Writes `web.env` atomically (0600) and logs names only. Hosts installed before this verb existed answer exit 64; the workflow then warns and deploys with the challenge off until an infra apply replaces the host. |
-| `staff-bootstrap` | Reads `EMAIL=` and `NAME=` from stdin (max 1 KiB; fixed formats, no shell metacharacters) and runs `bin/paxoficloud staff:bootstrap` in the running release with them as arguments (no shell). Logs neither value. Exit 2 when the app refuses (an active staff manager already exists, or the address is already staff). Used by the workflow action `staff-bootstrap`. |
+| `staff-bootstrap` | Reads `EMAIL=` and `NAME=` from stdin (max 1 KiB; fixed formats, no shell metacharacters) and runs `bin/paxoficloud staff:bootstrap` in the running release with them as arguments (no shell). Logs neither value. Once a staff manager exists, the same command adds the founder roles to the sole active Security Admin with that email (§6.23). Exit 2 when the app refuses (another staff member is active, the address is not the founder's, or it is already staff). Used by the workflow action `staff-bootstrap`. |
 | `status` | Prints the current and previous release SHAs, the containers, and a mail summary: worker enabled or disabled, `EMAIL_PROVIDER`, the number of allow-list entries, the names (never values) of the mail settings that are set, and `mail:status` (outbox counts plus the latest delivery problems with their fixed failure reason, e.g. `suppressed-not-allowlisted`). The deploy workflow runs it after every deploy; run the workflow with `action: status` to print it without deploying. |
 
 Every run is appended to `/var/log/paxoficloud/deploy.log` (time, verb, SHA,
@@ -105,4 +105,15 @@ the smoke test.
 4. Sign in at `https://cloud-staging-admin.paxofi.com/`: email and password,
    then the authenticator code, then the 6-digit code emailed to you. From
    "Your sign-in" you can add an optional passkey. Invite further staff from
-   the console. The bootstrap action refuses from now on.
+   the console. The bootstrap action no longer invites anyone from now on.
+
+### Founder roles (identity threat model §6.23)
+
+While you are the **only** active staff member, nobody else can grant you a
+role. Run the same `action: staff-bootstrap` again (same secret and variable):
+it adds the founder roles (today: Catalogue, for products, prices and provider
+costs) to your account. It never grants Super Admin. Every grant is audited and
+you get a "Roles were added to your staff account" email; that email is the
+confirmation (hosts set up before this change log "invitation queued" even
+when roles were granted). It refuses (exit 2) as soon as a second staff member
+is active; from then on roles are granted in the console by another manager.

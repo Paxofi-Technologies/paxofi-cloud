@@ -24,6 +24,7 @@ use PaxofiCloud\Cli\FxUpdateCommand;
 use PaxofiCloud\Cli\ProvidersWorkCommand;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
 use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
+use PaxofiCloud\Application\Staff\FounderBootstrap;
 use PaxofiCloud\Application\Staff\StaffManagerAlerts;
 use PaxofiCloud\Cli\PricesStatusCommand;
 use PaxofiCloud\Cli\PricesSyncCommand;
@@ -181,7 +182,17 @@ final readonly class CliProvider implements Provider
                     Resolve::get($c, Logger::class),
                 );
             }, $console, null, $domainCostSync));
-            $registry->register(new StaffBootstrapCommand(static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class), $console));
+            $registry->register(new StaffBootstrapCommand(
+                static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
+                $console,
+                static fn (): FounderBootstrap => new FounderBootstrap(
+                    Resolve::get($c, StaffDirectory::class),
+                    Resolve::get($c, TransactionManager::class),
+                    new SystemClock(),
+                    Resolve::get($c, AuditTrail::class),
+                    Resolve::get($c, EmailOutbox::class),
+                ),
+            ));
 
             return $registry;
         });

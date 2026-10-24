@@ -14,6 +14,8 @@ final class StaffRoleChangeRefused extends \RuntimeException
     public const string SAME_PERSON = 'same_person';
     public const string NOT_GRANTED = 'not_granted';
     public const string LAST_ADMIN = 'last_admin';
+    public const string NOT_SOLE_FOUNDER = 'not_sole_founder';
+    public const string FOUNDER_MISMATCH = 'founder_mismatch';
 
     public function __construct(public readonly string $reason)
     {

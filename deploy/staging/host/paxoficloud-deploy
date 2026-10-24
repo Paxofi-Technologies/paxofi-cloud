@@ -12,7 +12,9 @@
 #   release <sha>      migrate, start <sha>, health-check; roll back on failure
 #   staff-bootstrap    stdin: EMAIL= and NAME= lines; invites the first staff
 #                      Security Admin (identity threat model §6.19). Refused by
-#                      the app once an active staff manager exists
+#                      the app once an active staff manager exists, except
+#                      that the sole active Security Admin gets the founder
+#                      roles (identity threat model §6.23)
 #   status             current/previous version and container health
 #
 # Runtime secrets (DB/Redis passwords, the email outbox key pair, the MFA keys) are generated
@@ -188,8 +190,8 @@ cmd_staff_bootstrap() {
   # Arguments go to the CLI as argv (no shell); its output (staff ID) stays in the host log.
   compose "$current" exec -T php bin/paxoficloud staff:bootstrap "$email" "$full_name" >>"$LOG_FILE" 2>&1 || status=$?
   case "$status" in
-    0) log "staff-bootstrap: invitation queued; the link is sent by email only (valid 24 hours)" ;;
-    2) log "staff-bootstrap: refused (an active staff manager already exists, or the address is already staff)"; exit 2 ;;
+    0) log "staff-bootstrap: done: first-admin invitation queued (link by email only, valid 24 hours), or founder roles granted (confirmed by email)" ;;
+    2) log "staff-bootstrap: refused (another staff member is active, the address is not the founder's, or it is already staff)"; exit 2 ;;
     *) die "staff-bootstrap: failed (exit $status)" ;;
   esac
 }

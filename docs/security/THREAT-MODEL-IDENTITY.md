@@ -407,6 +407,23 @@ Written before the code. Closes the §6.14 residual: until now the application c
 - **Rollout.** The agent and compose file reach the host through cloud-init, so this needs an infra apply (new server, empty volume). The agent refuses to release on a host whose secrets predate the split rather than silently running as the owner.
 - **Still not covered.** Whoever holds the owner password or root on the host can still rewrite the table. That is limited by the daily external anchor (O-2, R-3).
 
+### 6.23 Founder bootstrap of operational roles (CEO decision 24 Oct 2026)
+
+Problem: the only staff member is the founding Security Admin. Nobody may grant a role to themselves (§6.16), so the founder cannot obtain the Catalogue role needed to see provider costs and run "Sync now" (CD-19) until a second staff manager exists.
+
+Decision (CEO, 24 Oct 2026): a **founder bootstrap**, through the existing `staff-bootstrap` deploy action and `staff:bootstrap` CLI.
+
+- When `staff:bootstrap <email> <name>` runs and staff managers already exist, it no longer simply refuses. If **all** of the following hold, it grants the founder roles instead. Today that is **Catalogue** only.
+  - Exactly **one** staff member is active.
+  - That member holds the active Security Admin role.
+  - That member's email matches the email given to the command.
+- Checks and grants run in one transaction that locks the role grants, so two concurrent runs cannot both pass.
+- Otherwise it refuses with a fixed reason (`not_sole_founder`, `founder_mismatch`) and changes nothing.
+- The path closes by itself as soon as a second staff member is active. From then on, roles come only from another staff manager (§6.16 two-person rule).
+- Super Admin is never a founder role.
+- Each grant is audited (`staff.role.granted`, `via = founder_bootstrap`) and the founder is emailed that the role was added.
+- **Residual (R-6):** someone with deploy-workflow access and the staging environment approval could run it, but only for the sole existing Security Admin's own email, and only to add Catalogue. Both controls are already required to deploy.
+
 ## 8. Residual risks
 
 | ID | Risk | Why accepted | Owner | Revisit |
@@ -416,6 +433,7 @@ Written before the code. Closes the §6.14 residual: until now the application c
 | R-3 | A malicious insider with database and backup access could rewrite the audit chain between anchors | Daily anchoring limits the window to 24 h; tighter anchoring when an external log store is chosen | Engineering | Sprint 9 |
 | R-4 | XSS in the SPA can act as the user within the session even without stealing the cookie | Strict CSP and output encoding; independent penetration test before launch | Engineering | Sprint 11 |
 | R-5 | Staff code sign-in (password + TOTP + email code) can be relayed by a real-time phishing proxy; passkeys could not | CEO decision 19 Oct 2026: passkey setup friction. Cloudflare Access gate in front of the admin host, the email code names the device/location/IP signing in, short staff sessions, passkeys offered as the stronger option. Revisit before production staff onboarding | CEO | Sprint 11 |
+| R-6 | Founder bootstrap (§6.23) lets the sole Security Admin hold Catalogue as well, without a second person | CEO decision 24 Oct 2026: one-person company today. Limited to the sole active member's own email and to Catalogue, audited and emailed, closes automatically when a second staff member is active | CEO | When the first engineer joins |
 
 ## 9. Open items
 
@@ -446,3 +464,4 @@ Written before the code. Closes the §6.14 residual: until now the application c
 | 2026-10-19 | §6.21 customer session list and revoke (T-23), other sessions ended on MFA changes; written before the code | Claude (security engineering) |
 | 2026-10-19 | §6.20 staff sign-in with password + TOTP + email code, passkeys optional (CEO decision); D-11 and T-29 amended; R-5 added; written before the code | Claude (security engineering) |
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |
+| 2026-10-24 | §6.23 founder bootstrap of the Catalogue role while the founding Security Admin is the only active staff member (CEO decision); written before the code | Claude (security engineering) |

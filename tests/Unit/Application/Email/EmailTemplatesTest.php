@@ -174,6 +174,20 @@ final class EmailTemplatesTest extends TestCase
         self::assertStringContainsString('href="https://admin.paxofi.com/staff"', $message->htmlBody);
     }
 
+    /** §6.23: names the roles in plain words; an unknown role is refused rather than printed. */
+    public function testStaffRolesAddedNamesTheRoles(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com');
+        $message = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_ROLES_ADDED, ['name' => 'Ada', 'roles' => 'catalogue'], 'k5');
+
+        self::assertSame('Roles were added to your staff account', $message->subject);
+        self::assertStringContainsString('Catalogue (products, prices and provider costs)', $message->textBody);
+        self::assertStringContainsString('href="https://admin.paxofi.com/staff"', $message->htmlBody);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_ROLES_ADDED, ['name' => 'Ada', 'roles' => 'super_admin'], 'k6');
+    }
+
     /** §6.20: the code, the device signing in, where the code may be typed; no link, code not in the subject. */
     public function testStaffSignInCodeNamesTheDeviceAndTheOnlyPlaceToTypeIt(): void
     {
