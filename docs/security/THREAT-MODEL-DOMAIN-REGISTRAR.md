@@ -114,3 +114,4 @@ Boundaries:
 | 24 Oct 2026 | DR-14 skipped-item details (the first live sync skipped 102 items), before code. |
 | 24 Oct 2026 | DR-15 after the first DR-14 sync: 68 ccTLDs (.uk, .au, .jp, .tr, …) were skipped for one unreadable price; optional prices no longer block an extension, and every skip names the failing field, before code. |
 | 24 Oct 2026 | DR-16 feed field inventory (grace/redemption periods not synced; record field names and whole-number ranges, never text values), before code. |
+| 24 Oct 2026 | Namecheap (registrar #2), registrar choice, USD base, loss guard and grace/redemption are modelled in THREAT-MODEL-DOMAIN-PRICING.md (NC-1 to NC-9, DX-1 to DX-13); its rules extend DR-4, DR-7, DR-12 and DR-14 to DR-16 to every registrar. |
