@@ -369,3 +369,90 @@ export function formatMinor(amount: number, currency: string): string {
   const cents = String(amount % 100).padStart(2, '0');
   return `${currency} ${whole}.${cents}`;
 }
+
+/** One audit event as the staff audit log shows it (identity threat model §6.24). */
+export interface AuditLogEvent {
+  seq: number;
+  occurredAt: string;
+  type: string;
+  outcome: 'success' | 'failure';
+  identityId: string | null;
+  accountId: string | null;
+  details: Record<string, string | number | boolean>;
+  /** Full address: only for staff managers (T-56); others get null. */
+  ip: string | null;
+  ipNetwork: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  userAgent: string | null;
+  device: string | null;
+}
+
+export interface AuditLogFilters {
+  outcome?: '' | 'success' | 'failure';
+  group?: string;
+  subject?: string;
+  before?: number | null;
+}
+
+export type AuditLogResult =
+  | { kind: 'loaded'; head: { seq: number; hash: string }; fullContext: boolean; groups: string[]; nextBefore: number | null; events: AuditLogEvent[] }
+  | { kind: 'invalid_filter' }
+  | { kind: 'forbidden' }
+  | { kind: 'failed' };
+
+function auditEvent(raw: unknown): AuditLogEvent | null {
+  const e = obj(raw);
+  const seq = minor(e?.seq);
+  if (!e || seq === null || typeof e.occurred_at !== 'string' || typeof e.type !== 'string' || (e.outcome !== 'success' && e.outcome !== 'failure')) return null;
+  const details: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(obj(e.details) ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') details[key] = value;
+  }
+  const d = obj(e.device);
+  const device =
+    d && typeof d.browser === 'string' && typeof d.os === 'string' && typeof d.device_type === 'string'
+      ? `${d.browser}${typeof d.browser_version === 'string' && d.browser_version !== '' ? ` ${d.browser_version}` : ''} on ${d.os} (${d.device_type})`
+      : null;
+  return {
+    seq,
+    occurredAt: e.occurred_at,
+    type: e.type,
+    outcome: e.outcome,
+    identityId: nullableString(e.identity_id),
+    accountId: nullableString(e.account_id),
+    details,
+    ip: nullableString(e.ip),
+    ipNetwork: nullableString(e.ip_network),
+    country: nullableString(e.country),
+    region: nullableString(e.region),
+    city: nullableString(e.city),
+    userAgent: nullableString(e.user_agent),
+    device,
+  };
+}
+
+export async function fetchAuditLog(filters: AuditLogFilters, fetchImpl: typeof fetch = fetch): Promise<AuditLogResult> {
+  const query = new URLSearchParams();
+  if (filters.outcome) query.set('outcome', filters.outcome);
+  if (filters.group) query.set('group', filters.group);
+  if (filters.subject) query.set('subject', filters.subject);
+  if (filters.before) query.set('before', String(filters.before));
+  const qs = query.toString();
+  const result = await getJson(`${ADMIN_API}/audit-events${qs === '' ? '' : `?${qs}`}`, fetchImpl);
+  if (result?.status === 422) return { kind: 'invalid_filter' };
+  if (result?.status === 403) return { kind: 'forbidden' };
+  const body = obj(result?.data);
+  const head = obj(body?.head);
+  const headSeq = minor(head?.seq);
+  if (result === null || result.status !== 200 || !body || !Array.isArray(body.events) || headSeq === null || typeof head?.hash !== 'string') return { kind: 'failed' };
+  return {
+    kind: 'loaded',
+    head: { seq: headSeq, hash: head.hash },
+    fullContext: body.full_context === true,
+    groups: strings(body.groups),
+    nextBefore: minor(body.next_before),
+    events: body.events.map(auditEvent).filter((e): e is AuditLogEvent => e !== null),
+  };
+}

@@ -15,6 +15,7 @@ use PaxofiCloud\Http\Admin\AdminGate;
 use PaxofiCloud\Http\Admin\AdminRoute;
 use PaxofiCloud\Http\Admin\AdminRoutes;
 use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
+use PaxofiCloud\Http\Controllers\Admin\AdminAuditLogController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
@@ -50,6 +51,29 @@ final class AdminRouteCoverageTest extends TestCase
         'POST /admin-api/v1/auth/passkey',
         'POST /admin-api/v1/enrolment/start',
         'POST /admin-api/v1/enrolment',
+    ];
+
+    /**
+     * The exact rule of every non-public route: "signed-in" or the one permission it needs.
+     * Changing a route's rule means changing this list too, in review (T-32).
+     */
+    private const array RULES = [
+        'GET /admin-api/v1/auth/session' => 'signed-in',
+        'POST /admin-api/v1/auth/sign-out' => 'signed-in',
+        'POST /admin-api/v1/account/sign-in-setup/start' => 'signed-in',
+        'POST /admin-api/v1/account/sign-in-setup' => 'signed-in',
+        'POST /admin-api/v1/account/passkeys/options' => 'signed-in',
+        'POST /admin-api/v1/account/passkeys' => 'signed-in',
+        'GET /admin-api/v1/staff' => 'staff.manage',
+        'POST /admin-api/v1/staff/invitations' => 'staff.manage',
+        'POST /admin-api/v1/staff/roles/grant' => 'staff.manage',
+        'POST /admin-api/v1/staff/roles/approve' => 'staff.manage',
+        'POST /admin-api/v1/staff/roles/revoke' => 'staff.manage',
+        'GET /admin-api/v1/provider-connections' => 'provider_credentials.manage',
+        'POST /admin-api/v1/provider-connections' => 'provider_credentials.manage',
+        'GET /admin-api/v1/domain-costs' => 'catalogue.view',
+        'POST /admin-api/v1/domain-costs/sync' => 'catalogue.manage',
+        'GET /admin-api/v1/audit-events' => 'audit.view',
     ];
 
     private InMemoryStaffDirectory $directory;
@@ -88,6 +112,17 @@ final class AdminRouteCoverageTest extends TestCase
             }
         }
         self::assertSame(self::PUBLIC, $public);
+    }
+
+    public function testEveryRouteCarriesExactlyItsListedRule(): void
+    {
+        $actual = [];
+        foreach (self::table() as $route) {
+            if (!$route->access->public) {
+                $actual[$route->method . ' ' . $route->path] = $route->access->permission === null ? 'signed-in' : $route->access->permission->value;
+            }
+        }
+        self::assertSame(self::RULES, $actual);
     }
 
     #[DataProvider('routes')]
@@ -179,6 +214,7 @@ final class AdminRouteCoverageTest extends TestCase
             static fn (): AdminAccountController => throw new ReachedController(),
             static fn (): AdminProviderConnectionsController => throw new ReachedController(),
             static fn (): AdminDomainCostsController => throw new ReachedController(),
+            static fn (): AdminAuditLogController => throw new ReachedController(),
         );
     }
 }

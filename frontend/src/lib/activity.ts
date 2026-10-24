@@ -40,10 +40,7 @@ function readEvent(raw: unknown): ActivityEvent | null {
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') details[key] = value;
     }
   }
-  const city = typeof location.city === 'string' ? location.city : null;
-  const region = typeof location.region === 'string' && location.region !== city ? location.region : null;
-  const country = typeof location.country === 'string' ? countryName(location.country) : null;
-  const where = [city, region, country].filter((part): part is string => part !== null).join(', ');
+  const where = describeLocation(location.city, location.region, location.country) ?? '';
 
   return {
     id: e.id,
@@ -90,6 +87,21 @@ const REASONS: Record<string, string> = {
   wrong_code: 'wrong code',
   wrong_recovery_code: 'wrong recovery code',
 };
+
+/** "Ikeja, Lagos, Nigeria" from Cloudflare's approximate location; null when nothing is known. */
+export function describeLocation(city: unknown, region: unknown, country: unknown): string | null {
+  const c = typeof city === 'string' && city !== '' ? city : null;
+  const r = typeof region === 'string' && region !== '' && region !== c ? region : null;
+  const n = typeof country === 'string' && country !== '' ? countryName(country) : null;
+  const where = [c, r, n].filter((part): part is string => part !== null).join(', ');
+
+  return where === '' ? null : where;
+}
+
+/** The plain-English label for a known event type, or null. */
+export function eventLabel(type: string): string | null {
+  return LABELS[type] ?? null;
+}
 
 /** Plain-English description; unknown types fall back to a generic label rather than raw codes. */
 export function describe(event: Pick<ActivityEvent, 'type' | 'details'>): string {

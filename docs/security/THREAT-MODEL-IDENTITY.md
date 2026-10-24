@@ -219,6 +219,8 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale; risk = L × I.
 | T-53 | S | A sign-in alert email is used for phishing, or carries attacker-controlled text (user agent, city) | 2 | 2 | Alerts contain no action links except the fixed `APP_URL/security` page (the customer signs in normally); device, location and IP are rendered only from validated parameters (label, location and IP patterns) and HTML-escaped; no reply-to | IAM-017 | `EmailTemplatesTest` |
 | T-54 | D | Repeated sign-ins flood the owner's inbox with alerts | 2 | 1 | At most 10 sign-in alerts per identity per hour (counted in Redis); further sign-ins are still audited, the email is skipped and logged | IAM-017 | `SignInAlertsTest` |
 | T-55 | S | A copied or forged device cookie makes a new device look known | 2 | 1 | The device cookie only chooses between the "new device" and the normal sign-in email: it never skips the password, MFA or any check; it is a 256-bit random value stored as SHA-256 per identity, `__Host-`, HttpOnly, Secure, SameSite=Lax | IAM-017 | `SignInAlertsTest` |
+| T-56 | I | Staff without a security role read customers' full IP addresses and user agents from the audit log | 2 | 2 | §6.24: `audit.view` required, deny by default; full IP and raw user agent only with `staff.manage`; others see /24 or /64 and parsed device; purged after 180 days (T-51) | AUD-001 | `AuditLogViewerTest` |
+| T-57 | R | A staff member browses the audit log (personal data) and no record shows who looked | 2 | 2 | §6.24: every page load records `audit.viewed` with subject, filters and row count (deduplicated within 60 s) | AUD-001 | `AuditLogViewerTest` |
 
 ### 6.9 Edge and transport (API-004…006, SEC-007)
 
@@ -230,6 +232,17 @@ Ratings: **L** likelihood and **I** impact on a 1–3 scale; risk = L × I.
 | T-46 | S | Origin bypass: attacker hits the origin IP directly, spoofing `CF-Connecting-IP` | 2 | 2 | Origin firewall allows Cloudflare ranges only; authenticated origin pulls | SEC-007, SEC-013 | staging check (Sprint 0) |
 | T-47 | D | Request floods on auth endpoints | 3 | 2 | Cloudflare rate rules + application limits with 429 and `Retry-After` | API-004 | `RateLimitTest` |
 | T-48 | I | Authenticated responses cached by a proxy | 1 | 2 | `Cache-Control: no-store` on authenticated responses | API-005 | `SecurityHeadersTest` |
+
+### 6.24 Staff audit log viewer (CEO request 24 Oct 2026)
+
+The audit log (§6.14) records every security event, but until now staff could only check it with `audit:verify` on the host. This adds a read-only page in the admin console.
+
+- **Who (SRS §2.2).** `GET /admin-api/v1/audit-events` needs `audit.view` (Billing, Provisioning Operator, Abuse, Catalogue, Finance, Security Admin, Super Admin). Support holds only `audit.view_own`, which comes with the support tools (Sprint 9); here it is refused like any missing permission, and the refusal is audited (§6.16).
+- **What is shown.** Sequence number, time, event type, outcome, the customer identity/account IDs or staff subject, the fixed-code details, and the request context (approximate location, browser/OS/device). Newest first, 50 per page, cursor by sequence number (`before`), filters: outcome, event-type group (a fixed list of prefixes such as `auth.`, `mfa.`, `staff.`, `provider.`) and one exact identity or staff ID (32 hex). Nothing typed by a staff member reaches SQL except as a bound, pattern-checked value.
+- **Personal data (T-51, T-56).** The full IP address and the raw user agent are shown only to staff who also hold `staff.manage` (Security Admin, Super Admin), who investigate account takeover. Everyone else sees the IP network (/24 or /64) and the parsed device, which is enough to correlate events. Purged context (after 180 days) shows as "not kept". Nothing is decided from location (T-50).
+- **Viewing is audited (T-57).** Every page load records `audit.viewed` with the staff subject, the filters and the number of rows returned, so access to personal data is itself traceable. Repeated page loads within 60 seconds with the same filters are recorded once, so the chain does not fill with refreshes.
+- **Read-only.** The route has no write path and the runtime database user only holds `SELECT` (plus `INSERT` for new events) on `audit_events` (§6.22). Chain integrity remains `audit:verify`; the page shows the head sequence number and hash as the manual anchor.
+- **Rendering.** Every value is rendered as text (React), never as HTML; details are fixed codes from our own code.
 
 ## 7. Sprint 1 security test plan
 
@@ -465,3 +478,4 @@ Decision (CEO, 24 Oct 2026): a **founder bootstrap**, through the existing `staf
 | 2026-10-19 | §6.20 staff sign-in with password + TOTP + email code, passkeys optional (CEO decision); D-11 and T-29 amended; R-5 added; written before the code | Claude (security engineering) |
 | 2026-10-18 | §6.15 sign-in notifications (every sign-in and new device, CEO decision), T-53 alert phishing/injection, T-54 alert flooding, T-55 forged device cookie; written before the notification code | Claude (security engineering) |
 | 2026-10-24 | §6.23 founder bootstrap of the Catalogue role while the founding Security Admin is the only active staff member (CEO decision); written before the code | Claude (security engineering) |
+| 2026-10-24 | §6.24 staff audit log viewer (CEO request), T-56 personal data in the viewer, T-57 unaudited browsing; written before the code | Claude (security engineering) |

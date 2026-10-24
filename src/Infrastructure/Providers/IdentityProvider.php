@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Infrastructure\Providers;
 
+use PaxofiCloud\Application\Audit\AuditLogViewer;
 use PaxofiCloud\Application\Audit\AuditTrail;
 use PaxofiCloud\Application\Contracts\AuditLog;
+use PaxofiCloud\Application\Contracts\AuditLogSearch;
 use PaxofiCloud\Application\Contracts\BreachedPasswordCheck;
 use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\HumanVerification;
@@ -73,6 +75,7 @@ use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
 use PaxofiCloud\Integration\Security\TurnstileVerification;
 use PaxofiCloud\Application\Providers\ProviderConnections;
 use PaxofiCloud\Domain\Providers\ProviderConnection;
+use PaxofiCloud\Http\Controllers\Admin\AdminAuditLogController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Application\Registrar\DomainCostAdmin;
@@ -408,6 +411,19 @@ final class IdentityProvider implements Provider
                 new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
                 new MysqlProviderSyncRequests($connection, $repository),
                 new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            ));
+        });
+
+        // Audit log page (§6.24): read-only search; every look is itself audited.
+        $container->singleton(AdminAuditLogController::class, static function (Container $c): AdminAuditLogController {
+            $log = Resolve::get($c, AuditLog::class);
+            \assert($log instanceof AuditLogSearch);
+
+            return new AdminAuditLogController(new AuditLogViewer(
+                Resolve::get($c, StaffAuthorizer::class),
+                $log,
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 Resolve::get($c, AuditTrail::class),
             ));
         });
