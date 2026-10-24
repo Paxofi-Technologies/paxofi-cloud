@@ -1,5 +1,5 @@
 /* ---------- Layout helpers ---------- */
-.pc-stack { display: grid; gap: var(--pc-space-6); }
+.pc-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--pc-space-6); }
 .pc-muted { color: var(--pc-semantic-text-secondary); }
 .pc-small { font-size: var(--pc-font-size-sm); }
 .pc-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--pc-space-4); flex-wrap: wrap; }
@@ -86,3 +86,4 @@
 .pc-admin__list > li { padding-top: var(--pc-space-4); border-top: 1px solid var(--pc-semantic-border-default); }
 .pc-admin__list > li:first-child { padding-top: 0; border-top: 0; }
 .pc-admin__row { display: flex; align-items: center; justify-content: space-between; gap: var(--pc-space-4); flex-wrap: wrap; }
+.pc-table caption { text-align: left; }

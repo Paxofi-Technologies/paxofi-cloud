@@ -62,6 +62,7 @@
 
 /* ---------- Card ---------- */
 .pc-card {
+  min-width: 0;
   background: var(--pc-semantic-surface-card);
   border: 1px solid var(--pc-semantic-border-default);
   border-radius: var(--pc-radius-lg);
@@ -108,9 +109,18 @@
 /* ---------- App shell ---------- */
 .pc-skip-link { position: absolute; left: var(--pc-space-4); top: -4rem; z-index: 10; background: var(--pc-semantic-surface-card); padding: var(--pc-space-2) var(--pc-space-4); border-radius: var(--pc-radius-sm); }
 .pc-skip-link:focus { top: var(--pc-space-4); }
-.pc-shell { display: grid; grid-template-columns: var(--pc-size-sidebar) 1fr; min-height: 100vh; }
-.pc-shell__sidebar { background: var(--pc-semantic-surface-inverse); color: var(--pc-semantic-text-inverse); padding: var(--pc-space-6) var(--pc-space-4); }
-.pc-shell__brand { padding: 0 var(--pc-space-2) var(--pc-space-8); }
+.pc-shell { display: grid; grid-template-columns: var(--pc-size-sidebar) minmax(0, 1fr); min-height: 100vh; }
+.pc-shell__sidebar {
+  background: var(--pc-semantic-surface-inverse); color: var(--pc-semantic-text-inverse); padding: var(--pc-space-6) var(--pc-space-4);
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.pc-shell__brand { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--pc-space-2) var(--pc-space-8); }
+.pc-shell__close, .pc-topbar__menu {
+  display: none; align-items: center; justify-content: center;
+  width: var(--pc-size-control); height: var(--pc-size-control);
+  background: transparent; border: 0; border-radius: var(--pc-radius-md); color: inherit; cursor: pointer;
+}
+.pc-shell__backdrop { display: none; }
 .pc-nav { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--pc-space-1); }
 .pc-nav__item {
   width: 100%; display: flex; align-items: center; gap: var(--pc-space-3);
@@ -130,18 +140,33 @@
   background: var(--pc-semantic-surface-card); border-bottom: 1px solid var(--pc-semantic-border-default);
 }
 .pc-topbar__env { font-size: var(--pc-font-size-xs); font-weight: var(--pc-font-weight-semibold); color: var(--pc-semantic-feedback-warningText); background: var(--pc-semantic-feedback-warningSurface); padding: var(--pc-space-1) var(--pc-space-3); border-radius: var(--pc-radius-pill); }
+.pc-topbar__start { display: flex; align-items: center; gap: var(--pc-space-2); min-width: 0; }
 .pc-topbar__user { display: flex; align-items: center; gap: var(--pc-space-3); }
 .pc-topbar__name { font-weight: var(--pc-font-weight-medium); }
 .pc-avatar { width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; background: var(--pc-color-blue-100); color: var(--pc-color-blue-700); font-weight: var(--pc-font-weight-bold); }
-.pc-content { padding: var(--pc-space-8); width: 100%; max-width: var(--pc-size-content); outline: none; }
+.pc-content { padding: var(--pc-space-8); width: 100%; max-width: var(--pc-size-content); min-width: 0; outline: none; }
 
+/* Phones and small tablets: the sidebar becomes a drawer behind the menu button. */
 @media (max-width: 860px) {
-  .pc-shell { grid-template-columns: 1fr; }
-  .pc-shell__sidebar { padding: var(--pc-space-4); }
+  .pc-shell { grid-template-columns: minmax(0, 1fr); }
+  .pc-shell__sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: 30; width: min(18rem, 85vw); height: 100%;
+    padding: var(--pc-space-4); transform: translateX(-100%); visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s;
+  }
+  .pc-shell--menu-open .pc-shell__sidebar { transform: none; visibility: visible; box-shadow: 0 0 2rem rgb(0 0 0 / 0.35); }
   .pc-shell__brand { padding-bottom: var(--pc-space-4); }
-  .pc-nav { grid-auto-flow: column; overflow-x: auto; }
-  .pc-nav__soon { display: none; }
+  .pc-shell__close, .pc-topbar__menu { display: inline-flex; }
+  .pc-shell__backdrop { display: block; position: fixed; inset: 0; z-index: 20; background: rgb(11 31 58 / 0.5); }
   .pc-topbar, .pc-content { padding-left: var(--pc-space-4); padding-right: var(--pc-space-4); }
+  .pc-topbar { position: sticky; top: 0; z-index: 10; }
+}
+@media (max-width: 480px) {
+  .pc-topbar__name { display: none; }
+  .pc-content { padding-top: var(--pc-space-4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc-shell__sidebar { transition: none; }
 }
 
 /* Checkbox (sign-up terms). The native control keeps keyboard and screen-reader behaviour. */

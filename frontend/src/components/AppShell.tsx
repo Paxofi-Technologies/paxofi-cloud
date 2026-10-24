@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { CloseIcon, MenuIcon } from './icons';
 import { Logo } from './Logo';
 
 export interface NavItem {
@@ -20,15 +21,49 @@ export interface AppShellProps {
   children: ReactNode;
 }
 
+/**
+ * Left sidebar on wide screens. On phones (860px and narrower) the sidebar is
+ * a drawer opened by the menu button in the top bar; it closes on choosing a
+ * page, on the close button, on tapping outside it, and on Escape.
+ */
 export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLabel = 'Prototype · sample data', children }: AppShellProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    closeButton.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+        menuButton.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
   return (
-    <div className="pc-shell">
+    <div className={`pc-shell${menuOpen ? ' pc-shell--menu-open' : ''}`}>
       <a className="pc-skip-link" href="#main">
         Skip to content
       </a>
-      <aside className="pc-shell__sidebar">
+      <aside id="pc-sidebar" className="pc-shell__sidebar" aria-label="Menu">
         <div className="pc-shell__brand">
           <Logo inverse />
+          <button
+            ref={closeButton}
+            type="button"
+            className="pc-shell__close"
+            aria-label="Close menu"
+            onClick={() => {
+              setMenuOpen(false);
+              menuButton.current?.focus();
+            }}
+          >
+            <CloseIcon />
+          </button>
         </div>
         <nav aria-label="Main">
           <ul className="pc-nav">
@@ -43,7 +78,9 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
                     aria-current={active ? 'page' : undefined}
                     aria-disabled={disabled || undefined}
                     onClick={() => {
-                      if (!disabled) onNavigate(item.id);
+                      if (disabled) return;
+                      setMenuOpen(false);
+                      onNavigate(item.id);
                     }}
                   >
                     <span className="pc-nav__icon" aria-hidden="true">
@@ -58,9 +95,23 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
           </ul>
         </nav>
       </aside>
+      {menuOpen && <div className="pc-shell__backdrop" aria-hidden="true" onClick={() => setMenuOpen(false)} />}
       <div className="pc-shell__main">
         <header className="pc-topbar">
-          <span className="pc-topbar__env">{envLabel}</span>
+          <div className="pc-topbar__start">
+            <button
+              ref={menuButton}
+              type="button"
+              className="pc-topbar__menu"
+              aria-label="Open menu"
+              aria-controls="pc-sidebar"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen(true)}
+            >
+              <MenuIcon />
+            </button>
+            <span className="pc-topbar__env">{envLabel}</span>
+          </div>
           <div className="pc-topbar__user">
             <span className="pc-avatar" aria-hidden="true">
               {userName.slice(0, 1).toUpperCase()}

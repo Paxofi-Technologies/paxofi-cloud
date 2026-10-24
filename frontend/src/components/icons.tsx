@@ -40,3 +40,9 @@ export const TagIcon = () => (
 export const UserIcon = () => (
   <svg {...base} aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
 );
+export const MenuIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+);
+export const CloseIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18" /></svg>
+);
