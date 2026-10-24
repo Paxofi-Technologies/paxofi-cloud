@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Card, Logo, RecoveryCodesView, TextField } from '../components';
+import { Alert, AppShell, Badge, Button, Card, Logo, RecoveryCodesView, TextField, type NavItem } from '../components';
+import { HomeIcon, KeyIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
 import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
 import { formatWhen } from '../lib/activity';
@@ -69,7 +70,7 @@ export function invitationToken(hash: string): string | null {
 export function AdminApp({ path = window.location.pathname, initialHash, fetchImpl, credentials }: AdminAppProps) {
   if (path === '/enrol') return <EnrolScreen initialHash={initialHash} fetchImpl={fetchImpl} />;
 
-  return <Console fetchImpl={fetchImpl} credentials={credentials} />;
+  return <Console path={path} fetchImpl={fetchImpl} credentials={credentials} />;
 }
 
 function StaffAuthLayout({ children }: { children: ReactNode }) {
@@ -547,7 +548,7 @@ function EmailCodeStep({ fetchImpl, onSignedIn, onRestart }: { fetchImpl?: typeo
   );
 }
 
-function Console({ fetchImpl, credentials }: { fetchImpl?: typeof fetch | undefined; credentials?: CredentialsApi | null | undefined }) {
+function Console({ path, fetchImpl, credentials }: { path: string; fetchImpl?: typeof fetch | undefined; credentials?: CredentialsApi | null | undefined }) {
   const [state, setState] = useState<StaffSessionState | 'loading'>('loading');
   const [attempt, setAttempt] = useState(0);
 
@@ -582,16 +583,48 @@ function Console({ fetchImpl, credentials }: { fetchImpl?: typeof fetch | undefi
     );
   }
 
-  return <Dashboard session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
+  return <Dashboard path={path} session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
+}
+
+type AdminPage = 'overview' | 'account' | 'staff' | 'providers' | 'domain-costs';
+
+interface AdminPageSpec {
+  id: AdminPage;
+  path: string;
+  label: string;
+  icon: ReactNode;
+  /** The permission the page needs; the API enforces it again on every call. */
+  permission: string | null;
+}
+
+/** Each page has its own address, so refresh, back/forward and links in staff emails land on it. */
+const ADMIN_PAGES: readonly AdminPageSpec[] = [
+  { id: 'overview', path: '/', label: 'Overview', icon: <HomeIcon />, permission: null },
+  { id: 'account', path: '/account', label: 'Your sign-in', icon: <UserIcon />, permission: null },
+  { id: 'staff', path: '/staff', label: 'Staff', icon: <UsersIcon />, permission: 'staff.manage' },
+  { id: 'providers', path: '/provider-connections', label: 'Provider connections', icon: <KeyIcon />, permission: 'provider_credentials.manage' },
+  { id: 'domain-costs', path: '/domain-costs', label: 'Domain costs', icon: <TagIcon />, permission: 'catalogue.view' },
+];
+
+/** The pages this member may open; the menu shows only these. */
+export function adminPagesFor(permissions: readonly string[]): AdminPageSpec[] {
+  return ADMIN_PAGES.filter((page) => page.permission === null || permissions.includes(page.permission));
+}
+
+/** An unknown path, or a page the member may not open, shows the overview. */
+export function adminPageForPath(path: string, permissions: readonly string[]): AdminPage {
+  return adminPagesFor(permissions).find((page) => page.path === path)?.id ?? 'overview';
 }
 
 function Dashboard({
+  path,
   session,
   fetchImpl,
   credentials,
   onSignedOut,
   onChanged,
 }: {
+  path: string;
   session: StaffSession;
   fetchImpl?: typeof fetch | undefined;
   credentials?: CredentialsApi | null | undefined;
@@ -599,54 +632,88 @@ function Dashboard({
   onChanged: () => void;
 }) {
   const [signingOut, setSigningOut] = useState(false);
-  const canManage = session.permissions.includes('staff.manage');
-  const canSetCredentials = session.permissions.includes('provider_credentials.manage');
-  const canSeeCosts = session.permissions.includes('catalogue.view');
+  const pages = adminPagesFor(session.permissions);
+  const [page, setPage] = useState<AdminPage>(() => adminPageForPath(path, session.permissions));
+
+  useEffect(() => {
+    const onPop = () => setPage(adminPageForPath(window.location.pathname, session.permissions));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [session.permissions]);
+
+  function go(next: AdminPage) {
+    setPage(next);
+    // The path comes from our own constant table, never from input.
+    const target = ADMIN_PAGES.find((p) => p.id === next)?.path ?? '/';
+    if (window.location.pathname !== target) window.history.pushState(null, '', target);
+  }
 
   async function signOut() {
+    if (signingOut) return;
     setSigningOut(true);
     await signOutStaff(session.csrfToken, fetchImpl);
     setSigningOut(false);
     onSignedOut();
   }
 
+  const nav: NavItem[] = pages.map((p) => ({ id: p.id, label: p.label, icon: p.icon }));
+
   return (
-    <div className="pc-admin">
-      <header className="pc-topbar">
-        <Logo />
-        <div className="pc-topbar__user">
-          <span className="pc-topbar__name">{session.fullName}</span>
-          <button type="button" className="pc-link-button" onClick={() => void signOut()} disabled={signingOut}>
-            Sign out
-          </button>
+    <AppShell
+      nav={nav}
+      current={page}
+      onNavigate={(id) => go(adminPageForPath(ADMIN_PAGES.find((p) => p.id === id)?.path ?? '/', session.permissions))}
+      userName={session.fullName}
+      onSignOut={() => void signOut()}
+      envLabel="Staff console"
+    >
+      <div className="pc-stack">
+        {page === 'overview' && <Overview session={session} pages={pages} onOpen={go} />}
+        {page === 'account' && <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />}
+        {page === 'staff' && <StaffManagement session={session} fetchImpl={fetchImpl} />}
+        {page === 'providers' && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
+        {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
+      </div>
+    </AppShell>
+  );
+}
+
+function Overview({ session, pages, onOpen }: { session: StaffSession; pages: AdminPageSpec[]; onOpen: (page: AdminPage) => void }) {
+  return (
+    <>
+      <div className="pc-page-header">
+        <div>
+          <h1>Staff console</h1>
+          <p className="pc-muted">Signed in as {session.email}. The menu shows the areas your roles allow.</p>
         </div>
-      </header>
-      <main id="main" className="pc-content pc-stack" tabIndex={-1}>
-        <div className="pc-page-header">
-          <div>
-            <h1>Staff console</h1>
-            <p className="pc-muted">Signed in as {session.email}. The full admin console arrives in Sprint 9.</p>
-          </div>
-        </div>
-        <Card title="Your access">
-          <p>
-            {session.roles.length === 0 ? (
-              <span className="pc-muted">No roles yet. Ask a security administrator to grant one.</span>
-            ) : (
-              session.roles.map((role) => (
-                <span key={role} className="pc-admin__role">
-                  <Badge tone="info">{roleLabel(role)}</Badge>
-                </span>
-              ))
-            )}
-          </p>
-        </Card>
-        <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />
-        {canManage && <StaffManagement session={session} fetchImpl={fetchImpl} />}
-        {canSetCredentials && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
-        {canSeeCosts && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
-      </main>
-    </div>
+      </div>
+      <Card title="Your access">
+        <p>
+          {session.roles.length === 0 ? (
+            <span className="pc-muted">No roles yet. Ask a security administrator to grant one.</span>
+          ) : (
+            session.roles.map((role) => (
+              <span key={role} className="pc-admin__role">
+                <Badge tone="info">{roleLabel(role)}</Badge>
+              </span>
+            ))
+          )}
+        </p>
+      </Card>
+      <Card title="Go to">
+        <ul className="pc-admin__list">
+          {pages
+            .filter((p) => p.id !== 'overview')
+            .map((p) => (
+              <li key={p.id}>
+                <button type="button" className="pc-link-button" onClick={() => onOpen(p.id)}>
+                  {p.label}
+                </button>
+              </li>
+            ))}
+        </ul>
+      </Card>
+    </>
   );
 }
 
@@ -1189,8 +1256,8 @@ const SYNC_REASONS: Record<string, string> = {
 
 const TRIGGERS: Record<string, string> = { schedule: 'Daily', manual: 'Sync now', cli: 'Operator' };
 
-/** How many matching extensions are drawn at once; search narrows the rest. */
-const COST_ROWS = 100;
+/** Extensions per page in the cost list. */
+export const COST_PAGE_SIZE = 15;
 
 /**
  * Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13): what each
@@ -1202,6 +1269,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   const [result, setResult] = useState<DomainCostsResult | 'loading'>('loading');
   const [version, setVersion] = useState(0);
   const [query, setQuery] = useState('');
+  const [costPage, setCostPage] = useState(1);
   const [message, setMessage] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null);
   const [requesting, setRequesting] = useState(false);
 
@@ -1256,7 +1324,10 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   const costs = result.costs;
   const needle = query.trim().toLowerCase().replace(/^\./, '');
   const matching = needle === '' ? costs.items : costs.items.filter((item) => item.tld.includes(needle));
-  const shown = matching.slice(0, COST_ROWS);
+  const pageCount = Math.max(1, Math.ceil(matching.length / COST_PAGE_SIZE));
+  const currentPage = Math.min(costPage, pageCount);
+  const firstRow = (currentPage - 1) * COST_PAGE_SIZE;
+  const shown = matching.slice(firstRow, firstRow + COST_PAGE_SIZE);
   const lastRun = costs.runs[0];
   const syncBlocked = costs.pendingSince !== null || costs.nextRequestAt !== null;
 
@@ -1296,12 +1367,21 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
       )}
       {costs.items.length > 0 && (
         <>
-          <TextField label="Find an extension" hint="For example com, ng or com.ng" value={query} spellCheck={false} onChange={(e) => setQuery(e.target.value)} />
+          <TextField
+            label="Find an extension"
+            hint="For example com, ng or com.ng"
+            value={query}
+            spellCheck={false}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setCostPage(1);
+            }}
+          />
           <div className="pc-table-scroll">
             <table className="pc-table">
               <caption className="pc-muted">
-                Cost for one year. Showing {shown.length} of {matching.length}
-                {matching.length > shown.length ? ': search to narrow the list' : ''}.
+                Cost for one year.{' '}
+                {matching.length === 0 ? 'No extension matches.' : `Showing ${firstRow + 1}–${firstRow + shown.length} of ${matching.length}.`}
               </caption>
               <thead>
                 <tr>
@@ -1320,6 +1400,19 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
               </tbody>
             </table>
           </div>
+          {pageCount > 1 && (
+            <nav className="pc-admin__row" aria-label="Domain cost pages">
+              <Button variant="secondary" onClick={() => setCostPage(currentPage - 1)} disabled={currentPage <= 1}>
+                Previous
+              </Button>
+              <span aria-live="polite">
+                Page {currentPage} of {pageCount}
+              </span>
+              <Button variant="secondary" onClick={() => setCostPage(currentPage + 1)} disabled={currentPage >= pageCount}>
+                Next
+              </Button>
+            </nav>
+          )}
         </>
       )}
       {costs.runs.length > 0 && (

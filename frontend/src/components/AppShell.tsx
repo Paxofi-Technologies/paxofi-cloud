@@ -15,10 +15,12 @@ export interface AppShellProps {
   onNavigate: (id: string) => void;
   userName: string;
   onSignOut: () => void;
+  /** Label at the top of the page; the customer portal still shows sample data in places. */
+  envLabel?: string;
   children: ReactNode;
 }
 
-export function AppShell({ nav, current, onNavigate, userName, onSignOut, children }: AppShellProps) {
+export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLabel = 'Prototype · sample data', children }: AppShellProps) {
   return (
     <div className="pc-shell">
       <a className="pc-skip-link" href="#main">
@@ -58,7 +60,7 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, childr
       </aside>
       <div className="pc-shell__main">
         <header className="pc-topbar">
-          <span className="pc-topbar__env">Prototype · sample data</span>
+          <span className="pc-topbar__env">{envLabel}</span>
           <div className="pc-topbar__user">
             <span className="pc-avatar" aria-hidden="true">
               {userName.slice(0, 1).toUpperCase()}

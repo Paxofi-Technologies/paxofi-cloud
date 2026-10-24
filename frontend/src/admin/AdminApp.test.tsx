@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { AdminApp, invitationToken } from './AdminApp';
+import { AdminApp, adminPageForPath, adminPagesFor, invitationToken } from './AdminApp';
 import type { CredentialsApi } from './webauthn';
 
 type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
@@ -324,7 +324,7 @@ describe('Your sign-in (§6.20)', () => {
       'POST /admin-api/v1/account/passkeys': { status: 200, body: { passkeys: 1 } },
     });
     const credentials = authenticator();
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={credentials} />);
+    render(<AdminApp path="/account" fetchImpl={fetchImpl} credentials={credentials} />);
 
     await user.click(await screen.findByRole('button', { name: 'Add a passkey' }));
     await user.type(screen.getByLabelText('Code from your app'), '000000');
@@ -354,7 +354,7 @@ describe('Your sign-in (§6.20)', () => {
       'POST /admin-api/v1/account/sign-in-setup/start': { status: 200, body: setup },
       'POST /admin-api/v1/account/sign-in-setup': { status: 200, body: { recovery_codes: recoveryCodes } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/account" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Set up password and authenticator app' }));
     await user.type(await screen.findByLabelText(/^Password/), PASSWORD);
@@ -383,7 +383,7 @@ describe('Staff console', () => {
       },
       'POST /admin-api/v1/staff/invitations': { status: 201, body: { staff_id: 's-2', status: 'invited' } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/staff" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByRole('cell', { name: 'Ada Lovelace' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'Super admin' })).toBeNull();
@@ -402,7 +402,7 @@ describe('Staff console', () => {
     const fetchImpl = adminApi({
       'GET /admin-api/v1/auth/session': { status: 200, body: { ...manager, staff: { ...manager.staff, roles: ['support'], permissions: ['ticket.reply'] } } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/staff" fetchImpl={fetchImpl} credentials={authenticator()} />);
     await screen.findByRole('heading', { name: 'Staff console' });
     expect(screen.getByText('Support')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Invite a staff member' })).toBeNull();
@@ -428,7 +428,7 @@ describe('Staff console', () => {
       },
       'POST /admin-api/v1/staff/roles/approve': { status: 200, body: { status: 'active' } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/staff" fetchImpl={fetchImpl} credentials={authenticator()} />);
     const approve = await screen.findAllByRole('button', { name: 'Approve' });
     expect(approve).toHaveLength(1);
     await user.click(approve[0] as HTMLElement);
@@ -488,7 +488,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
       'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
       'POST /admin-api/v1/provider-connections': { status: 202, body: { status: 'pending' } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByText('Not connected yet.')).toBeInTheDocument();
     expect(screen.getByText(/Connected\. Last set 20 Oct 2026, 09:00 WAT; review by 2027-10-20\./)).toBeInTheDocument();
@@ -518,7 +518,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
       'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
       'POST /admin-api/v1/provider-connections': { status: 401, body: { code: 'code_invalid' } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Replace credential' }));
     await user.type(screen.getByLabelText('API token (read & write)'), 'tok-1');
@@ -533,7 +533,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
   it('checks the form before sending anything', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Set credential' }));
     await user.click(screen.getByRole('button', { name: 'Save credential' }));
@@ -576,7 +576,7 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
   it('lists costs from integer minor units and filters by extension', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: catalogue }, 'GET /admin-api/v1/domain-costs': { status: 200, body: costs() } });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByText(/2 extensions, fetched 24 Oct 2026, 02:30 WAT; 1 skipped as unreadable\./)).toBeInTheDocument();
     expect(screen.getByText('.com')).toBeInTheDocument();
@@ -597,7 +597,7 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
       'GET /admin-api/v1/domain-costs': [{ status: 200, body: costs() }, { status: 200, body: costs({ next_request_at: '2026-10-24T09:10:00+00:00' }) }],
       'POST /admin-api/v1/domain-costs/sync': { status: 429, body: { code: 'too_soon' }, headers: { 'retry-after': '300' } },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
 
@@ -619,7 +619,7 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
         }),
       },
     });
-    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByText(/was held back because more than 20% of costs changed by over 50%/)).toBeInTheDocument();
     expect(screen.getByText(/failed: the registrar refused the API key/)).toBeInTheDocument();
@@ -627,7 +627,7 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
 
   it('lets Finance read but not sync, and hides the card from staff without catalogue.view', async () => {
     const financeFetch = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: finance }, 'GET /admin-api/v1/domain-costs': { status: 200, body: costs({ can_sync: false }) } });
-    const { unmount } = render(<AdminApp path="/" fetchImpl={financeFetch} credentials={authenticator()} />);
+    const { unmount } = render(<AdminApp path="/domain-costs" fetchImpl={financeFetch} credentials={authenticator()} />);
     expect(await screen.findByText('.com.ng')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sync now' })).toBeNull();
     unmount();
@@ -637,5 +637,97 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     await screen.findByRole('heading', { name: 'Staff console' });
     expect(screen.queryByText('Domain costs')).toBeNull();
     expect(calls(supportFetch, 'GET /admin-api/v1/domain-costs')).toHaveLength(0);
+  });
+});
+
+describe('Admin navigation', () => {
+  it('lists only the pages the permissions allow and falls back to the overview', () => {
+    expect(adminPagesFor(['ticket.reply']).map((p) => p.path)).toEqual(['/', '/account']);
+    expect(adminPagesFor(['staff.manage', 'provider_credentials.manage', 'catalogue.view']).map((p) => p.path)).toEqual([
+      '/',
+      '/account',
+      '/staff',
+      '/provider-connections',
+      '/domain-costs',
+    ]);
+    expect(adminPageForPath('/domain-costs', ['catalogue.view'])).toBe('domain-costs');
+    expect(adminPageForPath('/domain-costs', ['ticket.reply'])).toBe('overview');
+    expect(adminPageForPath('/nope', ['catalogue.view'])).toBe('overview');
+  });
+
+  it('shows a sidebar menu, gives each page its own address and follows back/forward', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/');
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: { ...manager, staff: { ...manager.staff, permissions: ['staff.manage', 'audit.view'] } } },
+      'GET /admin-api/v1/staff': { status: 200, body: { staff: [], pending_grants: [] } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    const menu = await screen.findByRole('navigation', { name: 'Main' });
+    expect(Array.from(menu.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Overview', 'Your sign-in', 'Staff']);
+    expect(screen.getByText('Staff console', { selector: '.pc-topbar__env' })).toBeInTheDocument();
+
+    await user.click(within(menu).getByRole('button', { name: 'Staff' }));
+    expect(window.location.pathname).toBe('/staff');
+    expect(await screen.findByRole('heading', { name: 'Invite a staff member' })).toBeInTheDocument();
+    expect(within(menu).getByRole('button', { name: 'Staff' })).toHaveAttribute('aria-current', 'page');
+
+    window.history.pushState(null, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(await screen.findByRole('heading', { name: 'Staff console' })).toBeInTheDocument();
+  });
+});
+
+describe('Domain cost pages', () => {
+  it('shows 15 extensions per page with previous/next, and a search starts again at page 1', async () => {
+    const user = userEvent.setup();
+    const items = Array.from({ length: 40 }, (_, i) => ({
+      tld: `ext${String(i + 1).padStart(2, '0')}`,
+      currency: 'USD',
+      register: 1000 + i,
+      renew: 1000,
+      transfer: null,
+      restore: null,
+      min_years: 1,
+      max_years: 10,
+      status: 'active',
+    }));
+    const body = {
+      provider: 'domainnameapi',
+      environment: 'live',
+      can_sync: false,
+      daily_at: '02:30 WAT',
+      pending_since: null,
+      next_request_at: null,
+      latest: { status: 'accepted', reason: null, items: 40, refused: 0, fetched_at: '2026-10-24T01:30:00+00:00' },
+      quarantined: null,
+      runs: [],
+      items,
+    };
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: { ...manager, staff: { ...manager.staff, permissions: ['catalogue.view'] } } },
+      'GET /admin-api/v1/domain-costs': { status: 200, body },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText('.ext01')).toBeInTheDocument();
+    expect(screen.getByText(/Showing 1–15 of 40\./)).toBeInTheDocument();
+    expect(screen.queryByText('.ext16')).toBeNull();
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('.ext16')).toBeInTheDocument();
+    expect(screen.queryByText('.ext01')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText(/Showing 31–40 of 40\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    await user.type(screen.getByLabelText('Find an extension'), 'ext');
+    expect(screen.getByText(/Showing 1–15 of 40\./)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Find an extension'), '2');
+    expect(screen.getByText(/Showing 1–10 of 10\./)).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Domain cost pages' })).toBeNull();
   });
 });
