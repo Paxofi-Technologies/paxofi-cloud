@@ -30,6 +30,7 @@ use PaxofiCloud\Cli\PricesSyncCommand;
 use PaxofiCloud\Domain\Registrar\CostQuarantinePolicy;
 use PaxofiCloud\Infrastructure\Database\MysqlNamedLock;
 use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
+use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
 use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
@@ -147,6 +148,7 @@ final readonly class CliProvider implements Provider
                     static function (int $seconds): void {
                         sleep($seconds);
                     },
+                    new MysqlProviderSyncRequests(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 );
             };
             $registry->register(new PricesSyncCommand($domainCostSync, $console));

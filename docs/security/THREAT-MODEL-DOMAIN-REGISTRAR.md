@@ -73,6 +73,8 @@ Boundaries:
 | DR-9 | **Errors.** The adapter maps results to fixed reason codes (`unauthorised`, `rate_limited`, `provider_error`, `malformed`, `transport`). HTTP 401/403 means the credential is wrong or revoked: the run stops, staff are alerted, and it is not retried until the credential is replaced. 429 and 5xx get at most 3 retries with backoff (2 s, 8 s, 30 s). Bodies and headers are never logged. |
 | DR-10 | **One sync at a time.** A Redis lock per provider (TTL 15 minutes) stops overlapping runs. "Sync now" is limited to one request per provider per 10 minutes and needs `catalogue.manage`; it is audited. The schedule is daily at 02:30 WAT. |
 | DR-11 | **Egress.** Only the provider worker gets the egress network, and the client only allows the two DomainNameAPI hosts for this adapter. No redirects are followed. |
+| DR-12 | **"Sync now" is a queued request, not a call.** The admin API never calls the registrar and never touches the credential. A staff member with `catalogue.manage` inserts a row into `provider_sync_requests` (provider, kind, who, when). The provider worker checks for unclaimed rows every few seconds, claims them all in one `UPDATE … WHERE picked_up_at IS NULL` (so two workers cannot both claim one), and runs the normal sync with trigger `manual`: the same lock, retries, quarantine and alerts as the schedule. Requests are limited to **one per provider per 10 minutes**, counted from the newest request, whoever made it. A refusal says when the next request is allowed. Every request and every refusal is audited (`provider_prices.sync_requested`, `provider_prices.sync_request_refused`). The runtime user may SELECT, INSERT and UPDATE that table (UPDATE only so the worker can mark a claim), never DELETE. |
+| DR-13 | **Who sees costs.** The cost list and the run history are internal (commerce CD-19). They are served only on the admin host, under `/admin-api`, to staff with `catalogue.view` (Catalogue, Finance and Super Admin). Responses are `no-store` like every admin response. The customer API never exposes cost data. The list is the newest **accepted** snapshot; a newer quarantined snapshot is shown only as a summary (time, counts, reason), never as prices, so nobody prices from it by mistake. Amounts are integer minor units with their currency, never floats. |
 
 ## 6. Threats (STRIDE)
 
@@ -88,6 +90,9 @@ Boundaries:
 | DR-T8 | D | Registrar outage or credential revoked; prices go stale | 2 | 2 | DR-8 keep last good snapshot; DR-9 stop on 401/403 and alert; alert after 3 failures | `DomainCostSyncTest` |
 | DR-T9 | D | Runaway paging or retries hit the provider's rate limits or hang the worker | 2 | 1 | DR-6 page limit, DR-9 bounded retries, DR-10 lock and manual limit | `DomainCostSyncTest` |
 | DR-T10 | R | Nobody can tell who triggered a sync or a refused write | 2 | 1 | DR-4, DR-10 audit events | `DomainCostSyncTest` |
+| DR-T11 | I | Cost prices (our margins) leak to customers or to staff without a need, e.g. Support | 2 | 2 | DR-13: admin host only, `catalogue.view`, deny by default, denials audited; quarantined prices never listed | `AdminRouteCoverageTest`, `DomainCostAdminTest` |
+| DR-T12 | D | Repeated "Sync now" clicks, or a stolen staff session, hammer the registrar and trip its rate limit, so the scheduled sync fails | 2 | 1 | DR-12: one request per provider per 10 minutes, claimed together, one lock; `catalogue.manage` only; audited | `DomainCostAdminTest`, `DomainCostSyncTest` |
+| DR-T13 | E | The web tier is used to reach the registrar or the credential through "Sync now" | 1 | 3 | DR-12: the web tier only inserts a row; only the provider worker holds the KEK and egress (PC-6, DR-11) | `LayeringTest`; compose review |
 
 ## 7. Residual risks
 
@@ -102,3 +107,4 @@ Boundaries:
 | Date | Change |
 |---|---|
 | 24 Oct 2026 | First version, before code. CEO decision: staging uses the Live key, read only. |
+| 24 Oct 2026 | DR-12 "Sync now" request queue and DR-13 cost visibility, with DR-T11 to DR-T13, before the admin screen's code. |

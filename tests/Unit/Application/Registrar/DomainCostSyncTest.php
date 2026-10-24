@@ -13,6 +13,7 @@ use PaxofiCloud\Domain\Registrar\CostQuarantinePolicy;
 use PaxofiCloud\Domain\Staff\StaffRole;
 use PaxofiCloud\Tests\Support\InMemoryAuditLog;
 use PaxofiCloud\Tests\Support\InMemoryDomainCostStore;
+use PaxofiCloud\Tests\Support\InMemoryProviderSyncRequests;
 use PaxofiCloud\Tests\Support\InMemoryStaffDirectory;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\RecordingLock;
@@ -30,6 +31,7 @@ final class DomainCostSyncTest extends TestCase
     private RecordingOutbox $outbox;
     private InMemoryAuditLog $audit;
     private MutableClock $clock;
+    private InMemoryProviderSyncRequests $requests;
     /** @var list<int> */
     private array $slept = [];
 
@@ -37,6 +39,7 @@ final class DomainCostSyncTest extends TestCase
     {
         $this->feed = new ScriptedPriceFeed();
         $this->store = new InMemoryDomainCostStore();
+        $this->requests = new InMemoryProviderSyncRequests();
         $this->lock = new RecordingLock();
         $this->outbox = new RecordingOutbox();
         $this->audit = new InMemoryAuditLog();
@@ -66,6 +69,7 @@ final class DomainCostSyncTest extends TestCase
             static function (int $seconds) use (&$slept): void {
                 $slept[] = $seconds;
             },
+            $this->requests,
         );
     }
 
@@ -230,5 +234,27 @@ final class DomainCostSyncTest extends TestCase
         $sync->run('manual');
 
         self::assertSame('schedule', $sync->runIfDue()?->trigger);
+    }
+
+    /** DR-12: "Sync now" requests run once however many are waiting, as a manual run. */
+    public function testRunsOnceForWaitingSyncNowRequests(): void
+    {
+        $this->feed->then(ScriptedPriceFeed::list(['com' => 1081]));
+        $sync = $this->sync();
+        $requested = static function () use ($sync): string {
+            return $sync->runIfRequested()->trigger ?? 'nothing';
+        };
+        self::assertSame('nothing', $requested(), 'nothing requested');
+
+        $provider = $this->feed->provider();
+        $this->requests->add($provider, str_repeat('m1', 16), $this->clock->now());
+        $this->requests->add($provider, str_repeat('m1', 16), $this->clock->now());
+        $this->requests->add('other', str_repeat('m1', 16), $this->clock->now());
+
+        self::assertSame('manual', $requested());
+        self::assertSame('nothing', $requested(), 'both requests were used up by one run');
+        self::assertSame(1, $this->feed->calls);
+        self::assertNull($this->requests->pendingSince($provider));
+        self::assertNotNull($this->requests->pendingSince('other'), 'another provider is untouched');
     }
 }

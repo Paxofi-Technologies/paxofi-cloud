@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Support;
 
+use PaxofiCloud\Application\Contracts\DomainCostReport;
 use PaxofiCloud\Application\Contracts\DomainCostStore;
+use PaxofiCloud\Application\Registrar\CostSnapshotSummary;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Domain\Registrar\TldCostList;
 
-class InMemoryDomainCostStore implements DomainCostStore
+class InMemoryDomainCostStore implements DomainCostStore, DomainCostReport
 {
     /** @var list<array{id: string, provider: string, list: TldCostList, reason: ?string, at: \DateTimeImmutable}> */
     public array $snapshots = [];
@@ -57,5 +59,38 @@ class InMemoryDomainCostStore implements DomainCostStore
         }
 
         return $last;
+    }
+
+    public function latestSnapshot(string $provider, string $environment, bool $acceptedOnly): ?CostSnapshotSummary
+    {
+        foreach (array_reverse($this->snapshots) as $snapshot) {
+            if ($snapshot['provider'] === $provider && $snapshot['list']->environment === $environment && (!$acceptedOnly || $snapshot['reason'] === null)) {
+                return new CostSnapshotSummary(
+                    $snapshot['id'],
+                    $environment,
+                    $snapshot['reason'] === null ? 'accepted' : 'quarantined',
+                    $snapshot['reason'],
+                    count($snapshot['list']->items),
+                    $snapshot['list']->refusedTotal(),
+                    $snapshot['at'],
+                );
+            }
+        }
+
+        return null;
+    }
+
+    public function items(string $snapshotId): array
+    {
+        foreach ($this->snapshots as $snapshot) {
+            if ($snapshot['id'] === $snapshotId) {
+                $items = $snapshot['list']->items;
+                ksort($items, SORT_STRING);
+
+                return $items;
+            }
+        }
+
+        return [];
     }
 }

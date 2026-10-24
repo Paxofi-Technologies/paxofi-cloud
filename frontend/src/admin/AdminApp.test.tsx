@@ -552,3 +552,90 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(calls(fetchImpl, 'GET /admin-api/v1/provider-connections')).toHaveLength(0);
   });
 });
+
+describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
+  const catalogue = { ...manager, staff: { ...manager.staff, roles: ['catalogue'], permissions: ['catalogue.manage', 'catalogue.view'] } };
+  const finance = { ...manager, staff: { ...manager.staff, roles: ['finance'], permissions: ['catalogue.view', 'reports.view'] } };
+  const costs = (overrides: Record<string, unknown> = {}) => ({
+    provider: 'domainnameapi',
+    environment: 'live',
+    can_sync: true,
+    daily_at: '02:30 WAT',
+    pending_since: null,
+    next_request_at: null,
+    latest: { status: 'accepted', reason: null, items: 2, refused: 1, fetched_at: '2026-10-24T01:30:00+00:00' },
+    quarantined: null,
+    runs: [{ trigger: 'schedule', outcome: 'accepted', reason: null, attempts: 1, started_at: '2026-10-24T01:30:00+00:00', finished_at: '2026-10-24T01:30:05+00:00' }],
+    items: [
+      { tld: 'com', currency: 'USD', register: 1081, renew: 123456, transfer: 1081, restore: null, min_years: 1, max_years: 10, status: 'active' },
+      { tld: 'com.ng', currency: 'USD', register: 900, renew: 900, transfer: null, restore: 4500, min_years: 1, max_years: 1, status: 'active' },
+    ],
+    ...overrides,
+  });
+
+  it('lists costs from integer minor units and filters by extension', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: catalogue }, 'GET /admin-api/v1/domain-costs': { status: 200, body: costs() } });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText(/2 extensions, fetched 24 Oct 2026, 02:30 WAT; 1 skipped as unreadable\./)).toBeInTheDocument();
+    expect(screen.getByText('.com')).toBeInTheDocument();
+    expect(screen.getByText('USD 1,234.56')).toBeInTheDocument();
+    expect(screen.getAllByText('USD 10.81')).toHaveLength(2);
+    expect(screen.getByText('1–10')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Find an extension'), '.ng');
+    expect(screen.queryByText('.com')).toBeNull();
+    expect(screen.getByText('.com.ng')).toBeInTheDocument();
+    expect(screen.getByText('USD 45.00')).toBeInTheDocument();
+  });
+
+  it('requests a sync with the CSRF token and explains the 10-minute limit', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': [{ status: 200, body: costs() }, { status: 200, body: costs({ next_request_at: '2026-10-24T09:10:00+00:00' }) }],
+      'POST /admin-api/v1/domain-costs/sync': { status: 429, body: { code: 'too_soon' }, headers: { 'retry-after': '300' } },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+
+    expect(await screen.findByText(/Prices were requested recently\. You can ask again/)).toBeInTheDocument();
+    const [init] = calls(fetchImpl, 'POST /admin-api/v1/domain-costs/sync');
+    expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
+    expect(await screen.findByText(/Sync now is available again 24 Oct 2026, 10:10 WAT\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeDisabled();
+  });
+
+  it('shows a held-back list and a failed run without listing their prices', async () => {
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': {
+        status: 200,
+        body: costs({
+          quarantined: { status: 'quarantined', reason: 'costs_jumped', items: 2, refused: 0, fetched_at: '2026-10-24T02:00:00+00:00' },
+          runs: [{ trigger: 'manual', outcome: 'failed', reason: 'unauthorised', attempts: 1, started_at: '2026-10-24T03:00:00+00:00', finished_at: '2026-10-24T03:00:01+00:00' }],
+        }),
+      },
+    });
+    render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText(/was held back because more than 20% of costs changed by over 50%/)).toBeInTheDocument();
+    expect(screen.getByText(/failed: the registrar refused the API key/)).toBeInTheDocument();
+  });
+
+  it('lets Finance read but not sync, and hides the card from staff without catalogue.view', async () => {
+    const financeFetch = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: finance }, 'GET /admin-api/v1/domain-costs': { status: 200, body: costs({ can_sync: false }) } });
+    const { unmount } = render(<AdminApp path="/" fetchImpl={financeFetch} credentials={authenticator()} />);
+    expect(await screen.findByText('.com.ng')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync now' })).toBeNull();
+    unmount();
+
+    const supportFetch = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: { ...manager, staff: { ...manager.staff, permissions: ['ticket.reply'] } } } });
+    render(<AdminApp path="/" fetchImpl={supportFetch} credentials={authenticator()} />);
+    await screen.findByRole('heading', { name: 'Staff console' });
+    expect(screen.queryByText('Domain costs')).toBeNull();
+    expect(calls(supportFetch, 'GET /admin-api/v1/domain-costs')).toHaveLength(0);
+  });
+});

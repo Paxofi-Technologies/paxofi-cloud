@@ -13,6 +13,7 @@ use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\DomainCostStore;
 use PaxofiCloud\Application\Contracts\DomainPriceFeed;
 use PaxofiCloud\Application\Contracts\ExclusiveLock;
+use PaxofiCloud\Application\Contracts\ProviderSyncRequests;
 use PaxofiCloud\Application\Email\EmailTemplates;
 use PaxofiCloud\Application\Staff\StaffManagerAlerts;
 use PaxofiCloud\Domain\Registrar\CostQuarantinePolicy;
@@ -31,7 +32,8 @@ use PaxofiCloud\Domain\Registrar\TldCostList;
  *   quarantined and changes nothing until staff review it.
  * - Staff managers are emailed when the credential is refused (once per
  *   streak), after the third failure in a row, and on every quarantine.
- * - Scheduled daily at 02:30 WAT (runIfDue).
+ * - Scheduled daily at 02:30 WAT (runIfDue), and on request from the admin
+ *   console's "Sync now" (runIfRequested, DR-12).
  */
 final class DomainCostSync
 {
@@ -53,6 +55,7 @@ final class DomainCostSync
         private readonly Clock $clock,
         private readonly Logger $logger,
         private readonly \Closure $sleep,
+        private readonly ProviderSyncRequests $requests,
     ) {
     }
 
@@ -70,6 +73,20 @@ final class DomainCostSync
         }
 
         return $this->run('schedule');
+    }
+
+    /**
+     * Runs once for every "Sync now" request waiting, however many there are
+     * (DR-12). The requests are claimed before the run, so a run that cannot
+     * get the lock still uses them up: the run holding it fetches fresh prices anyway.
+     */
+    public function runIfRequested(): ?SyncRun
+    {
+        if ($this->requests->claimAll($this->feed->provider(), $this->clock->now()) === 0) {
+            return null;
+        }
+
+        return $this->run('manual');
     }
 
     /** Today's scheduled time in WAT, as an absolute instant. */

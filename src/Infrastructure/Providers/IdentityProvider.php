@@ -73,7 +73,12 @@ use PaxofiCloud\Integration\Security\PwnedPasswordsRangeCheck;
 use PaxofiCloud\Integration\Security\TurnstileVerification;
 use PaxofiCloud\Application\Providers\ProviderConnections;
 use PaxofiCloud\Domain\Providers\ProviderConnection;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
+use PaxofiCloud\Application\Registrar\DomainCostAdmin;
+use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
+use PaxofiCloud\Infrastructure\Registrar\MysqlProviderSyncRequests;
+use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
 use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
 use PaxofiCloud\Infrastructure\Secrets\SealedBox;
@@ -391,6 +396,21 @@ final class IdentityProvider implements Provider
         $container->singleton(AdminProviderConnectionsController::class, static fn (Container $c): AdminProviderConnectionsController => new AdminProviderConnectionsController(
             Resolve::get($c, ProviderConnections::class),
         ));
+        // Domain costs (DR-12, DR-13): the web tier reads snapshots and queues "Sync now"; it never calls the registrar.
+        $container->singleton(AdminDomainCostsController::class, static function (Container $c): AdminDomainCostsController {
+            $connection = Resolve::get($c, Connection::class);
+            $repository = Resolve::get($c, Repository::class);
+
+            return new AdminDomainCostsController(new DomainCostAdmin(
+                DomainNameApiClient::PROVIDER,
+                getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
+                Resolve::get($c, StaffAuthorizer::class),
+                new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
+                new MysqlProviderSyncRequests($connection, $repository),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            ));
+        });
 
         $container->singleton(HumanVerification::class, static fn (Container $c): HumanVerification => self::humanVerification($c));
         $container->singleton(ChallengeGate::class, static fn (Container $c): ChallengeGate => new ChallengeGate(Resolve::get($c, HumanVerification::class)));

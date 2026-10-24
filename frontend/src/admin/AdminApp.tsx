@@ -11,6 +11,11 @@ import {
   approveGrant,
   ceremony,
   fetchProviderConnections,
+  fetchDomainCosts,
+  formatMinor,
+  requestDomainCostSync,
+  type DomainCostItem,
+  type DomainCostsResult,
   fetchStaff,
   fetchStaffSession,
   finishEnrolment,
@@ -596,6 +601,7 @@ function Dashboard({
   const [signingOut, setSigningOut] = useState(false);
   const canManage = session.permissions.includes('staff.manage');
   const canSetCredentials = session.permissions.includes('provider_credentials.manage');
+  const canSeeCosts = session.permissions.includes('catalogue.view');
 
   async function signOut() {
     setSigningOut(true);
@@ -638,6 +644,7 @@ function Dashboard({
         <SignInMethods session={session} fetchImpl={fetchImpl} credentials={credentials} onChanged={onChanged} />
         {canManage && <StaffManagement session={session} fetchImpl={fetchImpl} />}
         {canSetCredentials && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
+        {canSeeCosts && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
       </main>
     </div>
   );
@@ -1163,5 +1170,187 @@ function CredentialForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+const SYNC_REASONS: Record<string, string> = {
+  unauthorised: 'the registrar refused the API key. Replace it under Provider connections',
+  credential_missing: 'no API key is stored. Set it under Provider connections',
+  credential_invalid: 'the stored API key could not be used. Set it again under Provider connections',
+  rate_limited: 'the registrar asked us to slow down',
+  provider_error: 'the registrar had an error',
+  transport: 'the registrar could not be reached',
+  malformed: 'the registrar sent a reply we could not read',
+  too_many_pages: 'the price list was longer than expected',
+  empty: 'the list was empty',
+  items_disappeared: 'more than 20% of extensions disappeared',
+  costs_jumped: 'more than 20% of costs changed by over 50%',
+};
+
+const TRIGGERS: Record<string, string> = { schedule: 'Daily', manual: 'Sync now', cli: 'Operator' };
+
+/** How many matching extensions are drawn at once; search narrows the rest. */
+const COST_ROWS = 100;
+
+/**
+ * Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13): what each
+ * extension costs us at the registrar, from the newest accepted snapshot.
+ * Internal: Catalogue and Finance only. "Sync now" queues a fetch for the
+ * provider worker; this page never talks to the registrar.
+ */
+function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchImpl?: typeof fetch | undefined }) {
+  const [result, setResult] = useState<DomainCostsResult | 'loading'>('loading');
+  const [version, setVersion] = useState(0);
+  const [query, setQuery] = useState('');
+  const [message, setMessage] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null);
+  const [requesting, setRequesting] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void fetchDomainCosts(fetchImpl).then((next) => {
+      if (active) setResult(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchImpl, version]);
+
+  // While a request waits for the worker (or its run is in progress), look again every few seconds.
+  const pending = result !== 'loading' && result.kind === 'ok' && result.costs.pendingSince !== null;
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setTimeout(() => setVersion((n) => n + 1), 5000);
+    return () => window.clearTimeout(timer);
+  }, [pending, version]);
+
+  async function syncNow() {
+    setRequesting(true);
+    setMessage(null);
+    const sent = await requestDomainCostSync(session.csrfToken, fetchImpl);
+    setRequesting(false);
+    if (sent.kind === 'ok') {
+      setMessage({ tone: 'success', text: 'Sync requested. New prices usually arrive within a minute; this page updates by itself.' });
+    } else if (sent.kind === 'throttled') {
+      setMessage({ tone: 'warning', text: `Prices were requested recently. You can ask again ${describeWait(sent.retryAfterSeconds)}.` });
+    } else {
+      setMessage({ tone: 'danger', text: problemText(sent, 'The sync could not be requested.') });
+    }
+    setVersion((n) => n + 1);
+  }
+
+  if (result === 'loading') {
+    return (
+      <Card title="Domain costs">
+        <p className="pc-muted">Loading domain costs…</p>
+      </Card>
+    );
+  }
+  if (result.kind === 'failed') {
+    return (
+      <Card title="Domain costs">
+        <Alert tone="danger">Domain costs could not be loaded.</Alert>
+      </Card>
+    );
+  }
+
+  const costs = result.costs;
+  const needle = query.trim().toLowerCase().replace(/^\./, '');
+  const matching = needle === '' ? costs.items : costs.items.filter((item) => item.tld.includes(needle));
+  const shown = matching.slice(0, COST_ROWS);
+  const lastRun = costs.runs[0];
+  const syncBlocked = costs.pendingSince !== null || costs.nextRequestAt !== null;
+
+  return (
+    <Card title="Domain costs">
+      <p className="pc-muted">
+        What each extension costs us at DomainNameAPI ({costs.environment === 'ote' ? 'test environment' : 'live prices'}), before our markup. Internal: never shown to
+        customers. Updated daily at {costs.dailyAt}.
+      </p>
+      {message && <Alert tone={message.tone}>{message.text}</Alert>}
+      {costs.quarantined && (
+        <Alert tone="warning">
+          The list fetched {formatWhen(costs.quarantined.fetchedAt)} was held back because {SYNC_REASONS[costs.quarantined.reason ?? ''] ?? 'it looked wrong'}. The
+          prices below are still the last good ones.
+        </Alert>
+      )}
+      {lastRun && lastRun.outcome === 'failed' && (
+        <Alert tone="danger">
+          The last sync ({formatWhen(lastRun.startedAt)}) failed: {SYNC_REASONS[lastRun.reason ?? ''] ?? 'unknown problem'}.
+        </Alert>
+      )}
+      <div className="pc-admin__row">
+        <p>
+          {costs.latest
+            ? `${costs.latest.items} extensions, fetched ${formatWhen(costs.latest.fetchedAt)}${costs.latest.refused > 0 ? `; ${costs.latest.refused} skipped as unreadable` : ''}.`
+            : 'No prices have been fetched yet.'}
+          {costs.pendingSince && <span className="pc-muted"> A sync is on its way…</span>}
+        </p>
+        {costs.canSync && (
+          <Button variant="secondary" onClick={() => void syncNow()} loading={requesting} disabled={syncBlocked}>
+            Sync now
+          </Button>
+        )}
+      </div>
+      {costs.canSync && costs.nextRequestAt && !costs.pendingSince && (
+        <p className="pc-muted">Sync now is available again {formatWhen(costs.nextRequestAt)}.</p>
+      )}
+      {costs.items.length > 0 && (
+        <>
+          <TextField label="Find an extension" hint="For example com, ng or com.ng" value={query} spellCheck={false} onChange={(e) => setQuery(e.target.value)} />
+          <div className="pc-table-scroll">
+            <table className="pc-table">
+              <caption className="pc-muted">
+                Cost for one year. Showing {shown.length} of {matching.length}
+                {matching.length > shown.length ? ': search to narrow the list' : ''}.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Extension</th>
+                  <th scope="col">Register</th>
+                  <th scope="col">Renew</th>
+                  <th scope="col">Transfer</th>
+                  <th scope="col">Restore</th>
+                  <th scope="col">Years</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((item) => (
+                  <CostRow key={item.tld} item={item} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {costs.runs.length > 0 && (
+        <details>
+          <summary>Recent syncs</summary>
+          <ul className="pc-admin__list">
+            {costs.runs.map((run) => (
+              <li key={`${run.startedAt}-${run.trigger}`}>
+                {formatWhen(run.startedAt)} · {TRIGGERS[run.trigger] ?? run.trigger} ·{' '}
+                <Badge tone={run.outcome === 'accepted' ? 'success' : run.outcome === 'quarantined' ? 'warning' : 'danger'}>{run.outcome}</Badge>
+                {run.reason ? ` ${SYNC_REASONS[run.reason] ?? run.reason}` : ''}
+                {run.attempts > 1 ? ` (${run.attempts} attempts)` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </Card>
+  );
+}
+
+function CostRow({ item }: { item: DomainCostItem }) {
+  const amount = (value: number | null) => (value === null ? '—' : formatMinor(value, item.currency));
+  return (
+    <tr>
+      <td className="pc-table__primary">.{item.tld}</td>
+      <td>{amount(item.register)}</td>
+      <td>{amount(item.renew)}</td>
+      <td>{amount(item.transfer)}</td>
+      <td>{amount(item.restore)}</td>
+      <td>{item.minYears === item.maxYears ? item.minYears : `${item.minYears}–${item.maxYears}`}</td>
+    </tr>
   );
 }
