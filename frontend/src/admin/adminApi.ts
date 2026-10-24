@@ -199,12 +199,14 @@ export interface ProviderConnectionField {
   name: string;
   label: string;
   secret: boolean;
+  /** Where in the provider's own dashboard staff find this value. */
+  hint: string | null;
 }
 
 export interface ProviderConnectionStatus {
   provider: string;
   label: string;
-  /** "domains" or "servers"; the page groups connections by it. */
+  /** "domains" or "servers": which page under "API providers" shows it. */
   category: string;
   fields: ProviderConnectionField[];
   configuredAt: string | null;
@@ -229,7 +231,7 @@ export async function fetchProviderConnections(fetchImpl: typeof fetch = fetch):
     const fields = p.fields
       .map(obj)
       .filter((f): f is Record<string, unknown> => f !== null && typeof f.name === 'string' && typeof f.label === 'string' && typeof f.secret === 'boolean')
-      .map((f) => ({ name: f.name as string, label: f.label as string, secret: f.secret as boolean }));
+      .map((f) => ({ name: f.name as string, label: f.label as string, secret: f.secret as boolean, hint: typeof f.hint === 'string' ? f.hint : null }));
     providers.push({
       provider: p.provider,
       label: p.label,

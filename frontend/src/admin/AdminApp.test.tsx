@@ -449,7 +449,7 @@ describe('Staff console', () => {
   });
 });
 
-describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
+describe('API providers (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
   const securityAdmin = { ...manager, staff: { ...manager.staff, permissions: ['staff.manage', 'provider_credentials.manage', 'audit.view'] } };
   const providers = {
     providers: [
@@ -459,8 +459,8 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
         category: 'domains',
         credential_id: 'domainnameapi-staging',
         fields: [
-          { name: 'reseller_id', label: 'Reseller ID', secret: false },
-          { name: 'api_key', label: 'API key', secret: true },
+          { name: 'reseller_id', label: 'Reseller ID', secret: false, hint: 'Reseller Settings → Integration Information.' },
+          { name: 'api_key', label: 'API key', secret: true, hint: null },
         ],
         configured_at: null,
         review_due_on: null,
@@ -490,13 +490,13 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
       'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
       'POST /admin-api/v1/provider-connections': { status: 202, body: { status: 'pending' } },
     });
-    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/api-providers/domain-registrars" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByText('Not connected yet.')).toBeInTheDocument();
-    expect(screen.getByText(/Connected\. Last set 20 Oct 2026, 09:00 WAT; review by 2027-10-20\./)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Replace credential' })).toBeInTheDocument();
+    expect(screen.queryByText('Hetzner Cloud (servers)')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Set credential' }));
+    expect(screen.getByLabelText('Reseller ID')).toHaveAccessibleDescription('Reseller Settings → Integration Information.');
     const password = screen.getByLabelText('API key');
     expect(password).toHaveAttribute('type', 'password');
     expect(password).toHaveAttribute('autocomplete', 'new-password');
@@ -520,9 +520,10 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
       'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
       'POST /admin-api/v1/provider-connections': { status: 401, body: { code: 'code_invalid' } },
     });
-    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/api-providers/server-providers" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
-    await user.click(await screen.findByRole('button', { name: 'Replace credential' }));
+    expect(await screen.findByText(/Connected\. Last set 20 Oct 2026, 09:00 WAT; review by 2027-10-20\./)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Replace credential' }));
     await user.type(screen.getByLabelText('API token (read & write)'), 'tok-1');
     await user.type(screen.getByLabelText('Authenticator code'), '000000');
     await user.click(screen.getByRole('button', { name: 'Save credential' }));
@@ -535,7 +536,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
   it('checks the form before sending anything', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
-    render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    render(<AdminApp path="/api-providers/domain-registrars" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Set credential' }));
     await user.click(screen.getByRole('button', { name: 'Save credential' }));
@@ -545,16 +546,23 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(calls(fetchImpl, 'POST /admin-api/v1/provider-connections')).toHaveLength(0);
   });
 
-  it('groups connections into domain and server providers', async () => {
+  it('puts registrars and server providers on their own pages under "API providers", and keeps the old address working', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/provider-connections');
     const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
     render(<AdminApp path="/provider-connections" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
-    const domains = await screen.findByRole('region', { name: 'Domain providers' });
-    const servers = screen.getByRole('region', { name: 'Server providers' });
-    expect(within(domains).getByText('DomainNameAPI (domain registrar)')).toBeInTheDocument();
-    expect(within(domains).queryByText('Hetzner Cloud (servers)')).toBeNull();
-    expect(within(servers).getByText('Hetzner Cloud (servers)')).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Other providers' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Domain registrars' })).toBeInTheDocument();
+    expect(await screen.findByText('DomainNameAPI (domain registrar)')).toBeInTheDocument();
+    const menu = screen.getByRole('navigation', { name: 'Main' });
+    const group = within(menu).getByRole('list', { name: 'API providers' });
+    expect(Array.from(group.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Domain registrars', 'Server providers']);
+    expect(within(group).getByRole('button', { name: 'Domain registrars' })).toHaveAttribute('aria-current', 'page');
+
+    await user.click(within(group).getByRole('button', { name: 'Server providers' }));
+    expect(window.location.pathname).toBe('/api-providers/server-providers');
+    expect(await screen.findByText('Hetzner Cloud (servers)')).toBeInTheDocument();
+    expect(screen.queryByText('DomainNameAPI (domain registrar)')).toBeNull();
   });
 
   it('is hidden from staff without provider_credentials.manage', async () => {
@@ -562,7 +570,7 @@ describe('Provider connections (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     await screen.findByRole('heading', { name: 'Staff console' });
-    expect(screen.queryByText('Provider connections')).toBeNull();
+    expect(screen.queryByText('API providers')).toBeNull();
     expect(calls(fetchImpl, 'GET /admin-api/v1/provider-connections')).toHaveLength(0);
   });
 });
@@ -763,9 +771,12 @@ describe('Admin navigation', () => {
       '/',
       '/account',
       '/staff',
-      '/provider-connections',
+      '/api-providers/domain-registrars',
+      '/api-providers/server-providers',
       '/domain-costs',
     ]);
+    expect(adminPageForPath('/provider-connections', ['provider_credentials.manage'])).toBe('providers-domains');
+    expect(adminPageForPath('/provider-connections', ['catalogue.view'])).toBe('overview');
     expect(adminPageForPath('/domain-costs', ['catalogue.view'])).toBe('domain-costs');
     expect(adminPageForPath('/domain-costs', ['ticket.reply'])).toBe('overview');
     expect(adminPageForPath('/nope', ['catalogue.view'])).toBe('overview');

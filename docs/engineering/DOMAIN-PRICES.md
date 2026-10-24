@@ -10,7 +10,7 @@ How PaxofiCloud gets the cost of every domain extension from each registrar
 - The `provider-worker` container checks about once a minute whether each
   registrar's daily sync is due. Each runs at **02:30 WAT** each day, once.
 - DomainNameAPI always runs. Namecheap runs only once its connection has been
-  entered on Provider connections (so an unused registrar never raises alerts);
+  entered under API providers → Domain registrars (so an unused registrar never raises alerts);
   the worker notices a new connection within a minute.
 - Namecheap's price sheet is read as four calls (register, renew, transfer,
   reactivate = restore), each up to 16 MiB, parsed as a stream. Its cost for a
@@ -18,7 +18,7 @@ How PaxofiCloud gets the cost of every domain extension from each registrar
   promotional one-year price shows the status `promo` and never lowers the cost.
 - It reads the full extension list with one-year register, renew, transfer
   and restore costs, using the credential entered on the admin console's
-  Provider connections page.
+  API providers → Domain registrars page.
 - Every result is stored as a **snapshot**. Snapshots and run records are
   append-only: nothing is edited or deleted.
 - A plausible list is **accepted** and becomes the current cost list.
@@ -75,7 +75,7 @@ Every active staff manager is emailed ("Price sync needs attention") when:
 
 | Problem | When |
 |---|---|
-| Credential refused | The registrar answered 401/403, Namecheap returned a global-parameter error (API user, key or **client IP not whitelisted**), or the stored credential is unusable. Not retried. One email per streak. Fix: re-enter the credential on Provider connections; for Namecheap also check the whitelisted IP (it changes whenever the staging server is replaced). |
+| Credential refused | The registrar answered 401/403, Namecheap returned a global-parameter error (API user, key or **client IP not whitelisted**), or the stored credential is unusable. Not retried. One email per streak. Fix: re-enter the credential under API providers → Domain registrars; for Namecheap also check the whitelisted IP (it changes whenever the staging server is replaced). |
 | Repeated failures | The third failed run in a row (rate limits, provider errors, network). Each run already retried up to 3 times (2 s, 8 s, 30 s). |
 | Quarantined | Every quarantined list. Check the registrar's panel; the Domain costs card shows the held list's summary. A release flow for held lists comes with markup and repricing. |
 

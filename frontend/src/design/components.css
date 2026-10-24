@@ -132,6 +132,12 @@
 .pc-nav__item--active { background: var(--pc-semantic-nav-active); color: var(--pc-semantic-nav-textActive); }
 .pc-nav__item[aria-disabled] { cursor: default; color: var(--pc-semantic-nav-textMuted); }
 .pc-nav__icon { display: inline-flex; }
+.pc-nav__group {
+  display: flex; align-items: center; gap: var(--pc-space-3);
+  min-height: var(--pc-size-control); padding: 0 var(--pc-space-3);
+  color: var(--pc-semantic-nav-text); font-weight: var(--pc-font-weight-medium);
+}
+.pc-nav--sub { padding-left: var(--pc-space-6); }
 .pc-nav__soon { margin-left: auto; font-size: var(--pc-font-size-xs); color: var(--pc-semantic-nav-textMuted); }
 .pc-shell__main { display: flex; flex-direction: column; min-width: 0; }
 .pc-topbar {

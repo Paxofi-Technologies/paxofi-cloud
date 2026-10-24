@@ -50,7 +50,7 @@ final readonly class ProviderConnections
     /**
      * Status only: never a secret, a fragment, a length or a hash (PC-2).
      *
-     * @return list<array{provider: string, label: string, credential_id: string, fields: list<array{name: string, label: string, secret: bool}>, configured_at: ?string, review_due_on: ?string, pending_since: ?string}>
+     * @return list<array{provider: string, label: string, credential_id: string, category: string, fields: list<array{name: string, label: string, secret: bool, hint: ?string}>, configured_at: ?string, review_due_on: ?string, pending_since: ?string}>
      */
     public function overview(string $staffId, ClientContext $client): array
     {
@@ -65,7 +65,7 @@ final readonly class ProviderConnections
                 'label' => $provider->label(),
                 'category' => $provider->category(),
                 'credential_id' => $id,
-                'fields' => array_map(static fn (ConnectionField $f): array => ['name' => $f->name, 'label' => $f->label, 'secret' => $f->secret], $provider->fields()),
+                'fields' => array_map(static fn (ConnectionField $f): array => ['name' => $f->name, 'label' => $f->label, 'secret' => $f->secret, 'hint' => $f->hint], $provider->fields()),
                 'configured_at' => isset($configured[$id]) ? $configured[$id]['updated_at']->format(\DATE_ATOM) : null,
                 'review_due_on' => isset($configured[$id]) ? $configured[$id]['review_due_on']->format('Y-m-d') : null,
                 'pending_since' => isset($pending[$id]) ? $pending[$id]->format(\DATE_ATOM) : null,

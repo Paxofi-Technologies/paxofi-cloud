@@ -85,7 +85,6 @@
 .pc-admin__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--pc-space-4); }
 .pc-admin__list > li { padding-top: var(--pc-space-4); border-top: 1px solid var(--pc-semantic-border-default); }
 .pc-admin__list > li:first-child { padding-top: 0; border-top: 0; }
-.pc-admin__group { margin: var(--pc-space-4) 0 0; font-size: var(--pc-font-size-sm); font-weight: var(--pc-font-weight-semibold); text-transform: uppercase; letter-spacing: 0.04em; color: var(--pc-semantic-text-secondary); }
 .pc-admin__tabs { display: flex; flex-wrap: wrap; gap: var(--pc-space-2); margin-bottom: var(--pc-space-4); }
 .pc-admin__row { display: flex; align-items: center; justify-content: space-between; gap: var(--pc-space-4); flex-wrap: wrap; }
 .pc-admin__filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--pc-space-4); align-items: end; }
