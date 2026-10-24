@@ -18,6 +18,9 @@ final readonly class TldCostList
     /** @var list<SkippedTld> */
     public array $skipped;
 
+    /** @var list<FeedField> the field paths the registrar sent (DR-16) */
+    public array $fields;
+
     /** @var array<string, TldCost> keyed by extension */
     public array $items;
 
@@ -25,10 +28,12 @@ final readonly class TldCostList
      * @param list<TldCost> $items
      * @param array<string, int> $refused reason => count
      * @param list<SkippedTld> $skipped
+     * @param list<FeedField> $fields
      */
-    public function __construct(array $items, public array $refused, public string $environment, array $skipped = [])
+    public function __construct(array $items, public array $refused, public string $environment, array $skipped = [], array $fields = [])
     {
         $this->skipped = array_slice($skipped, 0, self::MAX_SKIPPED);
+        $this->fields = array_slice($fields, 0, FeedFieldInventory::MAX_PATHS);
         $byTld = [];
         foreach ($items as $item) {
             if (isset($byTld[$item->tld->value])) {

@@ -19,6 +19,7 @@ import {
   requestDomainCostSync,
   type DomainCostItem,
   type SkippedExtension,
+  type FeedFieldSummary,
   type DomainCostsResult,
   type AuditLogEvent,
   type AuditLogResult,
@@ -1467,6 +1468,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
         </>
       )}
       {costs.skipped.length > 0 && <SkippedExtensions skipped={costs.skipped} />}
+      {costs.feedFields.length > 0 && <FeedFields fields={costs.feedFields} />}
       {costs.runs.length > 0 && (
         <details>
           <summary>Recent syncs</summary>
@@ -1788,6 +1790,52 @@ function AuditRow({ event, onOnly }: { event: AuditLogEvent; onOnly: (id: string
         <span title={event.userAgent ?? undefined}>{event.device ?? <span className="pc-muted">—</span>}</span>
       </td>
     </tr>
+  );
+}
+
+/** Fields whose names suggest domain lifecycle periods are listed first (DR-16). */
+const LIFECYCLE_FIELD = /grace|redemption|restore|expir|period|days|hold|delete/i;
+
+/**
+ * DR-16: the field paths the registrar sent with the newest accepted list,
+ * so staff can see whether it includes grace or redemption periods before
+ * the parser relies on them. Names, counts and whole-number ranges only;
+ * rendered as text.
+ */
+function FeedFields({ fields }: { fields: FeedFieldSummary[] }) {
+  const sorted = [...fields].sort((a, b) => Number(LIFECYCLE_FIELD.test(b.path)) - Number(LIFECYCLE_FIELD.test(a.path)) || a.path.localeCompare(b.path));
+  return (
+    <details>
+      <summary>Fields the registrar sends ({fields.length})</summary>
+      <p className="pc-muted">
+        What the extensions in the last price list contained (priced and skipped), by field name. Values are not stored; whole numbers show their range. Period-like fields come first.
+      </p>
+      <div className="pc-table-scroll">
+        <table className="pc-table">
+          <caption className="pc-visually-hidden">Fields in the registrar price list</caption>
+          <thead>
+            <tr>
+              <th scope="col">Field</th>
+              <th scope="col">In extensions</th>
+              <th scope="col">Value kinds</th>
+              <th scope="col">Whole-number range</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((f) => (
+              <tr key={f.path}>
+                <td>
+                  <code>{f.path}</code>
+                </td>
+                <td>{f.items}</td>
+                <td>{f.kinds.join(', ')}</td>
+                <td>{f.min === null || f.max === null ? '—' : f.min === f.max ? f.min : `${f.min}–${f.max}`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 

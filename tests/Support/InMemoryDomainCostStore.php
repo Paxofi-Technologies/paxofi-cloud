@@ -94,6 +94,17 @@ class InMemoryDomainCostStore implements DomainCostStore, DomainCostReport
         return [];
     }
 
+    public function feedFields(string $snapshotId): array
+    {
+        foreach ($this->snapshots as $snapshot) {
+            if ($snapshot['id'] === $snapshotId) {
+                return $snapshot['list']->fields;
+            }
+        }
+
+        return [];
+    }
+
     public function skipped(string $snapshotId): array
     {
         foreach ($this->snapshots as $snapshot) {

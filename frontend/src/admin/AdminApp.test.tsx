@@ -645,6 +645,36 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
+  it('lists the fields the registrar sends, period-like ones first, as text (DR-16)', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': {
+        status: 200,
+        body: costs({
+          feed_fields: [
+            { path: 'name', items: 733, kinds: ['text'], min: null, max: null },
+            { path: 'gracePeriod', items: 600, kinds: ['text'], min: 30, max: 45 },
+            { path: 'prices[].register.period', items: 733, kinds: ['text'], min: 1, max: 1 },
+            { path: '<img src=x>', items: 1, kinds: ['text'], min: null, max: null },
+          ],
+        }),
+      },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByText('Fields the registrar sends (4)'));
+    const table = screen.getByRole('table', { name: 'Fields in the registrar price list' });
+    const rows = within(table).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell').map((cell) => cell.textContent));
+    expect(rows).toEqual([
+      ['gracePeriod', '600', 'text', '30–45'],
+      ['prices[].register.period', '733', 'text', '1'],
+      ['<img src=x>', '1', 'text', '—'],
+      ['name', '733', 'text', '—'],
+    ]);
+    expect(document.querySelector('img')).toBeNull();
+  });
+
   it('shows a held-back list and a failed run without listing their prices', async () => {
     const fetchImpl = adminApi({
       'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },

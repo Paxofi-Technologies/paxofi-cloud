@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Domain\Pricing\CostCurrency;
 use PaxofiCloud\Domain\Registrar\CostAmount;
+use PaxofiCloud\Domain\Registrar\FeedField;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Domain\Registrar\TldCostList;
@@ -108,6 +109,10 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
         yield 'sync request for an unknown staff member' => ["INSERT INTO provider_sync_requests VALUES (REPEAT('d', 32), 'domainnameapi', 'domain_costs', REPEAT('e', 32), NOW(6), NULL)"];
         yield 'skipped item with a hostile name' => ["INSERT INTO domain_cost_skipped VALUES (:s, 0, '<b>x', 'bad_name', NULL)"];
         yield 'skipped item with a hostile detail' => ["INSERT INTO domain_cost_skipped VALUES (:s, 0, 'com', 'bad_price', 'a b')"];
+        yield 'feed field with a hostile path' => ["INSERT INTO domain_cost_feed_fields VALUES (:s, '<b>x', 1, 'text', NULL, NULL)"];
+        yield 'feed field with an unknown kind' => ["INSERT INTO domain_cost_feed_fields VALUES (:s, 'name', 1, 'html', NULL, NULL)"];
+        yield 'feed field with half a range' => ["INSERT INTO domain_cost_feed_fields VALUES (:s, 'name', 1, 'text', 3, NULL)"];
+        yield 'feed field with zero items' => ["INSERT INTO domain_cost_feed_fields VALUES (:s, 'name', 0, 'text', NULL, NULL)"];
         yield 'too many attempts' => ["INSERT INTO provider_sync_runs VALUES (REPEAT('c', 32), 'domainnameapi', 'domain_costs', 'schedule', 'failed', 'transport', NULL, 5, NOW(6), NOW(6))"];
     }
 
@@ -178,5 +183,19 @@ final class DomainCostStoreIntegrationTest extends IntegrationTestCase
 
         self::assertEquals($skipped, $this->store->skipped($id));
         self::assertSame([], $this->store->skipped(str_repeat('0', 32)));
+    }
+
+    /** DR-16: field paths round-trip in path order, including the (other) group and list-style paths. */
+    public function testStoresTheFeedFieldsWithTheSnapshot(): void
+    {
+        $fields = [
+            new FeedField('(other)', 2, ['text'], null, null),
+            new FeedField('gracePeriod', 631, ['null', 'text'], null, null),
+            new FeedField('prices[].register.period', 733, ['text'], 1, 10),
+        ];
+        $id = $this->store->saveSnapshot('domainnameapi', new TldCostList(array_values(ScriptedPriceFeed::list(['com' => 1081])->items), [], 'live', [], $fields), null, new \DateTimeImmutable('2026-10-24T01:30:00Z'));
+
+        self::assertEquals($fields, $this->store->feedFields($id));
+        self::assertSame([], $this->store->feedFields(str_repeat('0', 32)));
     }
 }

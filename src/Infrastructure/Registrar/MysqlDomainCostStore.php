@@ -13,6 +13,7 @@ use PaxofiCloud\Application\Registrar\CostSnapshotSummary;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Domain\Pricing\CostCurrency;
 use PaxofiCloud\Domain\Registrar\CostAmount;
+use PaxofiCloud\Domain\Registrar\FeedField;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Domain\Registrar\TldCostList;
@@ -151,6 +152,18 @@ final readonly class MysqlDomainCostStore implements DomainCostStore, DomainCost
                     $parameters,
                 );
             }
+            foreach (array_chunk($list->fields, self::BATCH) as $batch) {
+                $rows = [];
+                $parameters = [];
+                foreach ($batch as $i => $field) {
+                    $rows[] = sprintf('(:s%1$d, :p%1$d, :i%1$d, :k%1$d, :a%1$d, :b%1$d)', $i);
+                    $parameters += ['s' . $i => $id, 'p' . $i => $field->path, 'i' . $i => $field->items, 'k' . $i => implode(',', $field->kinds), 'a' . $i => $field->min, 'b' . $i => $field->max];
+                }
+                $this->connection->execute(
+                    'INSERT INTO domain_cost_feed_fields (snapshot_id, path, items, kinds, min_value, max_value) VALUES ' . implode(', ', $rows),
+                    $parameters,
+                );
+            }
         });
 
         return $id;
@@ -171,6 +184,25 @@ final readonly class MysqlDomainCostStore implements DomainCostStore, DomainCost
         }
 
         return $skipped;
+    }
+
+    public function feedFields(string $snapshotId): array
+    {
+        $fields = [];
+        foreach ($this->repository->fetchAll(
+            'SELECT path, items, kinds, min_value, max_value FROM domain_cost_feed_fields WHERE snapshot_id = :id ORDER BY path',
+            ['id' => $snapshotId],
+        ) as $row) {
+            $fields[] = new FeedField(
+                Row::string($row, 'path'),
+                Row::int($row, 'items'),
+                explode(',', Row::string($row, 'kinds')),
+                ($row['min_value'] ?? null) === null ? null : Row::int($row, 'min_value'),
+                ($row['max_value'] ?? null) === null ? null : Row::int($row, 'max_value'),
+            );
+        }
+
+        return $fields;
     }
 
     public function recordRun(SyncRun $run): void

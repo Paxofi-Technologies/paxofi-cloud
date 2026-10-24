@@ -7,6 +7,7 @@ namespace PaxofiCloud\Integration\Registrar\DomainNameApi;
 use PaxofiCloud\Application\Contracts\DomainPriceFeed;
 use PaxofiCloud\Application\Registrar\RegistrarUnavailable;
 use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
+use PaxofiCloud\Domain\Registrar\FeedFieldInventory;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
 use PaxofiCloud\Domain\Registrar\TldCostList;
 use PaxofiCloud\Integration\Provider\Http\ExactJson;
@@ -58,6 +59,7 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
         $refused = [];
         $skipped = [];
         $seen = [];
+        $fields = new FeedFieldInventory();
         for ($page = 0; $page < self::MAX_PAGES; $page++) {
             $document = $this->send(DomainNameApiOperation::TldList, ['MaxResultCount' => self::PAGE_SIZE, 'SkipCount' => $page * self::PAGE_SIZE]);
             $list = $document['items'] ?? null;
@@ -65,6 +67,7 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
                 throw new RegistrarUnavailable('malformed');
             }
             foreach ($list as $raw) {
+                $fields->add($raw);
                 $result = DomainNameApiTldParser::parse($raw);
                 if ($result instanceof SkippedTld) {
                     $refused[$result->reason] = ($refused[$result->reason] ?? 0) + 1;
@@ -84,7 +87,7 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
             if (count($list) < self::PAGE_SIZE || (is_string($total) && ctype_digit($total) && $fetched >= (int) $total)) {
                 ksort($refused, SORT_STRING);
 
-                return new TldCostList($items, $refused, $this->environment->value, $skipped);
+                return new TldCostList($items, $refused, $this->environment->value, $skipped, $fields->fields());
             }
         }
 
