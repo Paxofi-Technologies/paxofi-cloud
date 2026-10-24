@@ -17,6 +17,10 @@ use PaxofiCloud\Domain\Registrar\TldName;
  * model): name, status, minRegistrationPeriod, maxRegistrationPeriod and
  * prices[0].{register,renew,transfer,restore}, each either one
  * {price, currency, period} object or a list of them per period.
+ *
+ * register and renew are required. An unreadable transfer or restore price
+ * drops that one price, not the extension (DR-15). Every refusal carries a
+ * short detail naming the failing field and how it failed (DR-14).
  */
 final class DomainNameApiTldParser
 {
@@ -54,10 +58,12 @@ final class DomainNameApiTldParser
         if ($status === null) {
             return $skip('bad_status');
         }
-        $minYears = self::years($raw['minRegistrationPeriod'] ?? '1');
-        $maxYears = self::years($raw['maxRegistrationPeriod'] ?? '10');
+        $minRaw = $raw['minRegistrationPeriod'] ?? '1';
+        $maxRaw = $raw['maxRegistrationPeriod'] ?? '10';
+        $minYears = self::years($minRaw);
+        $maxYears = self::years($maxRaw);
         if ($minYears === null || $maxYears === null || $minYears > min($maxYears, 10)) {
-            return $skip('bad_period');
+            return $skip('bad_period', 'min:' . self::periodText($minRaw) . '_max:' . self::periodText($maxRaw));
         }
 
         $prices = $raw['prices'] ?? null;
@@ -65,35 +71,39 @@ final class DomainNameApiTldParser
             return $skip('no_prices');
         }
         $byType = $prices[0];
-        $amounts = [];
-        foreach (['register' => true, 'renew' => true, 'transfer' => false, 'restore' => false] as $type => $required) {
+        $required = [];
+        foreach (['register' => 'reg', 'renew' => 'renew'] as $type => $short) {
             $detail = null;
             $amount = self::oneYear($byType[$type] ?? null, $detail);
             if (is_string($amount)) {
-                return $skip($amount, $detail);
+                return $skip($amount, $amount === 'bad_price' ? $short . ':' . $detail : $detail);
             }
-            if ($amount === null && $required) {
+            if ($amount === null) {
                 return $skip('no_' . $type . '_price', $detail);
             }
-            $amounts[$type] = $amount;
+            $required[$type] = $amount;
         }
-        $register = $amounts['register'];
-        $renew = $amounts['renew'];
-        \assert($register instanceof CostAmount && $renew instanceof CostAmount);
-
-        foreach ([$renew, $amounts['transfer'], $amounts['restore']] as $other) {
-            if ($other !== null && $other->currency !== $register->currency) {
-                return $skip('mixed_currency');
-            }
+        [$register, $renew] = [$required['register'], $required['renew']];
+        if ($renew->currency !== $register->currency) {
+            return $skip('mixed_currency');
         }
 
-        return new TldCost($tld, $register, $renew, $amounts['transfer'], $amounts['restore'], $minYears, min($maxYears, 10), $status);
+        // DR-15: an optional price that cannot be used is dropped on its own.
+        $optional = [];
+        foreach (['transfer', 'restore'] as $type) {
+            $detail = null;
+            $amount = self::oneYear($byType[$type] ?? null, $detail);
+            $optional[$type] = $amount instanceof CostAmount && $amount->currency === $register->currency ? $amount : null;
+        }
+
+        return new TldCost($tld, $register, $renew, $optional['transfer'], $optional['restore'], $minYears, min($maxYears, 10), $status);
     }
 
     /**
      * null = absent; string = refusal reason. $detail receives the currency
-     * code for an unsupported currency, or `periods:N` when the only prices
-     * are for more than one year.
+     * code for an unsupported currency (or `currency:<kind>` when there is no
+     * usable code), the kind of an unreadable price (`zero`, `negative`, …),
+     * or `periods:N` when the only prices are for more than one year.
      */
     private static function oneYear(mixed $value, ?string &$detail): CostAmount|string|null
     {
@@ -101,12 +111,16 @@ final class DomainNameApiTldParser
             return null;
         }
         if (!is_array($value)) {
+            $detail = 'type';
+
             return 'bad_price';
         }
         $entries = $value !== [] && array_is_list($value) ? $value : [$value];
         $shortest = null;
         foreach ($entries as $entry) {
             if (!is_array($entry)) {
+                $detail = 'entry';
+
                 return 'bad_price';
             }
             $period = $entry['period'] ?? '1';
@@ -116,10 +130,16 @@ final class DomainNameApiTldParser
                 }
                 continue;
             }
-            $code = strtoupper(is_string($entry['currency'] ?? null) ? $entry['currency'] : '');
+            $rawCode = $entry['currency'] ?? null;
+            $code = strtoupper(is_string($rawCode) ? $rawCode : '');
             $currency = CostCurrency::tryFrom($code);
             if ($currency === null) {
-                $detail = $code;
+                $detail = match (true) {
+                    $rawCode === null => 'currency:missing',
+                    !is_string($rawCode) => 'currency:type',
+                    preg_match('/^[A-Z]{3}$/', $code) === 1 => $code,
+                    default => 'currency:format',
+                };
 
                 return 'unsupported_currency';
             }
@@ -127,6 +147,8 @@ final class DomainNameApiTldParser
             try {
                 return CostAmount::fromDecimalText($currency, is_string($price) ? $price : '');
             } catch (\InvalidArgumentException) {
+                $detail = self::priceProblem($price);
+
                 return 'bad_price';
             }
         }
@@ -135,6 +157,24 @@ final class DomainNameApiTldParser
         }
 
         return null;
+    }
+
+    /** A short, fixed word for why a price could not be read (DR-14 detail). */
+    private static function priceProblem(mixed $price): string
+    {
+        return match (true) {
+            $price === null => 'missing',
+            !is_string($price) => 'type',
+            preg_match('/^-/', $price) === 1 => 'negative',
+            preg_match('/^0+(\.0+)?$/', $price) === 1 => 'zero',
+            default => 'format',
+        };
+    }
+
+    /** A period value for a detail: one or two digits as is, anything else `x`. */
+    private static function periodText(mixed $value): string
+    {
+        return is_string($value) && preg_match('/^[0-9]{1,2}$/', $value) === 1 ? $value : 'x';
     }
 
     private static function years(mixed $value): ?int
