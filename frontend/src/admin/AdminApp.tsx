@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Alert, AppShell, Badge, Button, Card, Logo, RecoveryCodesView, TextField, type NavItem } from '../components';
-import { HomeIcon, KeyIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
+import { HomeIcon, KeyIcon, ShieldIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
 import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
-import { formatWhen } from '../lib/activity';
+import { describeLocation, eventLabel, formatWhen } from '../lib/activity';
 import { groupSecret, readRecoveryCodes } from '../lib/mfa';
 import {
   INVITABLE_ROLES,
@@ -11,6 +11,7 @@ import {
   addPasskeyOptions,
   approveGrant,
   ceremony,
+  fetchAuditLog,
   fetchProviderConnections,
   fetchDomainCosts,
   formatMinor,
@@ -18,6 +19,8 @@ import {
   type DomainCostItem,
   type SkippedExtension,
   type DomainCostsResult,
+  type AuditLogEvent,
+  type AuditLogResult,
   fetchStaff,
   fetchStaffSession,
   finishEnrolment,
@@ -587,7 +590,7 @@ function Console({ path, fetchImpl, credentials }: { path: string; fetchImpl?: t
   return <Dashboard path={path} session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
 }
 
-type AdminPage = 'overview' | 'account' | 'staff' | 'providers' | 'domain-costs';
+type AdminPage = 'overview' | 'account' | 'staff' | 'providers' | 'domain-costs' | 'audit-log';
 
 interface AdminPageSpec {
   id: AdminPage;
@@ -605,6 +608,7 @@ const ADMIN_PAGES: readonly AdminPageSpec[] = [
   { id: 'staff', path: '/staff', label: 'Staff', icon: <UsersIcon />, permission: 'staff.manage' },
   { id: 'providers', path: '/provider-connections', label: 'Provider connections', icon: <KeyIcon />, permission: 'provider_credentials.manage' },
   { id: 'domain-costs', path: '/domain-costs', label: 'Domain costs', icon: <TagIcon />, permission: 'catalogue.view' },
+  { id: 'audit-log', path: '/audit-log', label: 'Audit log', icon: <ShieldIcon />, permission: 'audit.view' },
 ];
 
 /** The pages this member may open; the menu shows only these. */
@@ -674,6 +678,7 @@ function Dashboard({
         {page === 'staff' && <StaffManagement session={session} fetchImpl={fetchImpl} />}
         {page === 'providers' && <ProviderConnections session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
+        {page === 'audit-log' && <AuditLogCard fetchImpl={fetchImpl} />}
       </div>
     </AppShell>
   );
@@ -1519,6 +1524,225 @@ function SkippedExtensions({ skipped }: { skipped: SkippedExtension[] }) {
         ))}
       </ul>
     </details>
+  );
+}
+
+const AUDIT_GROUPS: Record<string, string> = {
+  auth: 'Customer sign-in',
+  identity: 'Customer sign-up',
+  mfa: 'Customer two-step',
+  staff: 'Staff',
+  provider_credential: 'Provider credentials',
+  provider_prices: 'Provider prices',
+  registrar: 'Registrar',
+  audit: 'Audit log views',
+};
+
+/**
+ * The staff audit log (identity threat model §6.24): every recorded security
+ * event, newest first, 50 at a time. Full IP addresses and user agents arrive
+ * only for staff managers (T-56); every look is itself recorded (T-57).
+ * Everything is rendered as text.
+ */
+function AuditLogCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
+  const [outcome, setOutcome] = useState<'' | 'success' | 'failure'>('');
+  const [group, setGroup] = useState('');
+  const [subject, setSubject] = useState('');
+  const [applied, setApplied] = useState<{ outcome: '' | 'success' | 'failure'; group: string; subject: string }>({ outcome: '', group: '', subject: '' });
+  // Cursors of the pages already seen, so "Newer" can step back.
+  const [cursors, setCursors] = useState<(number | null)[]>([null]);
+  const [result, setResult] = useState<AuditLogResult | 'loading'>('loading');
+  const outcomeId = useId();
+  const groupId = useId();
+  const before = cursors[cursors.length - 1] ?? null;
+
+  useEffect(() => {
+    let active = true;
+    void fetchAuditLog({ ...applied, before }, fetchImpl).then((next) => {
+      if (active) setResult(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchImpl, applied, before]);
+
+  function search(event: FormEvent) {
+    event.preventDefault();
+    setResult('loading');
+    setApplied({ outcome, group, subject: subject.trim().toLowerCase() });
+    setCursors([null]);
+  }
+
+  /** "Only this" in the Who column: show every event about one customer or staff member. */
+  function only(id: string) {
+    setSubject(id);
+    setOutcome('');
+    setGroup('');
+    setResult('loading');
+    setApplied({ outcome: '', group: '', subject: id });
+    setCursors([null]);
+  }
+
+  function turnPage(next: (c: (number | null)[]) => (number | null)[]) {
+    setResult('loading');
+    setCursors(next);
+  }
+
+  const loaded = result !== 'loading' && result.kind === 'loaded' ? result : null;
+
+  return (
+    <>
+      <div className="pc-page-header">
+        <div>
+          <h1>Audit log</h1>
+          <p className="pc-muted">Every security event, newest first. Append-only and hash-chained; your viewing is recorded too.</p>
+        </div>
+      </div>
+      <Card title="Find events">
+        <form className="pc-admin__filters" onSubmit={search}>
+          <div className="pc-field">
+            <label className="pc-field__label" htmlFor={groupId}>
+              Area
+            </label>
+            <select id={groupId} className="pc-input" value={group} onChange={(e) => setGroup(e.target.value)}>
+              <option value="">All areas</option>
+              {Object.entries(AUDIT_GROUPS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="pc-field">
+            <label className="pc-field__label" htmlFor={outcomeId}>
+              Outcome
+            </label>
+            <select id={outcomeId} className="pc-input" value={outcome} onChange={(e) => setOutcome(e.target.value as '' | 'success' | 'failure')}>
+              <option value="">Any outcome</option>
+              <option value="success">Succeeded</option>
+              <option value="failure">Failed</option>
+            </select>
+          </div>
+          <TextField
+            label="Customer, account or staff ID"
+            hint="Or use “Only this” in the list"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <Button type="submit">Search</Button>
+        </form>
+      </Card>
+      <Card title="Events">
+        {result === 'loading' && <p className="pc-muted">Loading events…</p>}
+        {result !== 'loading' && result.kind === 'invalid_filter' && <Alert tone="warning">That ID is not valid. IDs are 32 letters and digits (0–9, a–f).</Alert>}
+        {result !== 'loading' && result.kind === 'forbidden' && <Alert tone="danger">Your roles do not include the audit log.</Alert>}
+        {result !== 'loading' && result.kind === 'failed' && <Alert tone="danger">The audit log could not be loaded. Try again shortly.</Alert>}
+        {loaded && (
+          <>
+            {!loaded.fullContext && <p className="pc-muted">Full IP addresses are shown to security administrators only; you see the network.</p>}
+            {loaded.events.length === 0 ? (
+              <p className="pc-muted">No events match.</p>
+            ) : (
+              <div className="pc-table-scroll">
+                <table className="pc-table pc-audit">
+                  <caption className="pc-visually-hidden">Audit events, newest first</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">#</th>
+                      <th scope="col">When</th>
+                      <th scope="col">Event</th>
+                      <th scope="col">Who</th>
+                      <th scope="col">Where</th>
+                      <th scope="col">Device</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loaded.events.map((event) => (
+                      <AuditRow key={event.seq} event={event} onOnly={only} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <nav className="pc-admin__row" aria-label="Audit log pages">
+              <Button variant="secondary" disabled={cursors.length <= 1} onClick={() => turnPage((c) => c.slice(0, -1))}>
+                Newer
+              </Button>
+              <span className="pc-muted">
+                Chain head #{loaded.head.seq} · <code title={loaded.head.hash}>{loaded.head.hash.slice(0, 12)}…</code>
+              </span>
+              <Button variant="secondary" disabled={loaded.nextBefore === null} onClick={() => turnPage((c) => [...c, loaded.nextBefore])}>
+                Older
+              </Button>
+            </nav>
+          </>
+        )}
+      </Card>
+    </>
+  );
+}
+
+function ShortId({ id, kind, onOnly }: { id: string; kind: string; onOnly: (id: string) => void }) {
+  return (
+    <>
+      <code title={`${kind} ${id}`}>
+        {kind === 'Staff' ? 'staff ' : ''}
+        {id.slice(0, 8)}…
+      </code>{' '}
+      <button type="button" className="pc-link-button" onClick={() => onOnly(id)} aria-label={`Only events about ${kind.toLowerCase()} ${id}`}>
+        Only this
+      </button>
+    </>
+  );
+}
+
+function AuditRow({ event, onOnly }: { event: AuditLogEvent; onOnly: (id: string) => void }) {
+  const label = eventLabel(event.type);
+  const detailText = Object.entries(event.details)
+    .filter(([key]) => key !== 'subject')
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join(', ');
+  const staff = typeof event.details.subject === 'string' ? event.details.subject : null;
+  const where = describeLocation(event.city, event.region, event.country);
+  return (
+    <tr>
+      <td>{event.seq}</td>
+      <td>{formatWhen(event.occurredAt)}</td>
+      <td>
+        <span className="pc-table__primary">{label ?? event.type}</span> {event.outcome === 'failure' && <Badge tone="danger">Failed</Badge>}
+        {label !== null && (
+          <>
+            <br />
+            <code className="pc-muted">{event.type}</code>
+          </>
+        )}
+        {detailText !== '' && (
+          <>
+            <br />
+            <span className="pc-muted">{detailText}</span>
+          </>
+        )}
+      </td>
+      <td>
+        {event.identityId !== null && <ShortId id={event.identityId} kind="Customer" onOnly={onOnly} />}
+        {staff !== null && <ShortId id={staff} kind="Staff" onOnly={onOnly} />}
+        {event.identityId === null && staff === null && <span className="pc-muted">—</span>}
+      </td>
+      <td>
+        {event.ip ?? event.ipNetwork ?? <span className="pc-muted">not kept</span>}
+        {where !== null && (
+          <>
+            <br />
+            <span className="pc-muted">{where}</span>
+          </>
+        )}
+      </td>
+      <td>
+        <span title={event.userAgent ?? undefined}>{event.device ?? <span className="pc-muted">—</span>}</span>
+      </td>
+    </tr>
   );
 }
 

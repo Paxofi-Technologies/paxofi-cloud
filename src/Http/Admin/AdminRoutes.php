@@ -8,6 +8,7 @@ use Paxofi\Core\Contracts\HttpRequest;
 use Paxofi\Core\Contracts\HttpResponse;
 use PaxofiCloud\Domain\Staff\Permission;
 use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
+use PaxofiCloud\Http\Controllers\Admin\AdminAuditLogController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
@@ -30,9 +31,10 @@ final class AdminRoutes
      * @param \Closure(): AdminAccountController $account
      * @param \Closure(): AdminProviderConnectionsController $providers
      * @param \Closure(): AdminDomainCostsController $domainCosts
+     * @param \Closure(): AdminAuditLogController $auditLog
      * @return list<AdminRoute>
      */
-    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts): array
+    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog): array
     {
         $credentials = AdminAccess::permission(Permission::ProviderCredentialsManage);
         $public = AdminAccess::public();
@@ -40,6 +42,7 @@ final class AdminRoutes
         $manage = AdminAccess::permission(Permission::StaffManage);
         $catalogueView = AdminAccess::permission(Permission::CatalogueView);
         $catalogueManage = AdminAccess::permission(Permission::CatalogueManage);
+        $auditView = AdminAccess::permission(Permission::AuditView);
 
         return [
             // Each step proves itself: a password, the sign-in ticket cookie, a passkey assertion, or an invitation token (§6.20).
@@ -72,6 +75,9 @@ final class AdminRoutes
             // Domain costs: internal prices for Catalogue and Finance; "Sync now" queues work for the provider worker (DR-12, DR-13).
             new AdminRoute('GET', '/admin-api/v1/domain-costs', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainCosts()->overview($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/domain-costs/sync', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainCosts()->sync($r, $c)),
+
+            // Audit log: read-only; full IPs only for staff managers; every look is itself audited (§6.24).
+            new AdminRoute('GET', '/admin-api/v1/audit-events', $auditView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $auditLog()->list($r, $c)),
         ];
     }
 

@@ -702,7 +702,7 @@ describe('Admin navigation', () => {
     render(<AdminApp path="/" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     const menu = await screen.findByRole('navigation', { name: 'Main' });
-    expect(Array.from(menu.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Overview', 'Your sign-in', 'Staff']);
+    expect(Array.from(menu.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Overview', 'Your sign-in', 'Staff', 'Audit log']);
     expect(screen.getByText('Staff console', { selector: '.pc-topbar__env' })).toBeInTheDocument();
 
     await user.click(within(menu).getByRole('button', { name: 'Staff' }));
@@ -766,5 +766,126 @@ describe('Domain cost pages', () => {
     await user.type(screen.getByLabelText('Find an extension'), '2');
     expect(screen.getByText(/Showing 1–10 of 10\./)).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Domain cost pages' })).toBeNull();
+  });
+});
+
+describe('Audit log (identity threat model §6.24)', () => {
+  const security = { ...manager, staff: { ...manager.staff, permissions: ['staff.manage', 'audit.view'] } };
+  const finance = { ...manager, staff: { ...manager.staff, roles: ['finance'], permissions: ['catalogue.view', 'audit.view'] } };
+  const HEAD = { seq: 120, hash: 'f'.repeat(64) };
+  const event = (seq: number, overrides: Record<string, unknown> = {}) => ({
+    seq,
+    occurred_at: '2026-10-24T09:12:00+00:00',
+    type: 'auth.sign_in.failed',
+    outcome: 'failure',
+    identity_id: 'c'.repeat(32),
+    account_id: null,
+    details: { reason: 'wrong_password' },
+    ip: '203.0.113.45',
+    ip_network: '203.0.113.0/24',
+    country: 'NG',
+    region: 'Lagos',
+    city: 'Ikeja',
+    user_agent: 'Mozilla/5.0 <script>alert(1)</script>',
+    device: { browser: 'Chrome', browser_version: '146', os: 'Windows', os_version: '10', device_type: 'desktop' },
+    ...overrides,
+  });
+  const page = (events: unknown[], extra: Record<string, unknown> = {}) => ({ head: HEAD, full_context: true, groups: ['auth', 'staff'], next_before: null, events, ...extra });
+
+  it('lists events newest first with plain words, the raw type, who, where and the device, as text', async () => {
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: security },
+      'GET /admin-api/v1/audit-events': {
+        status: 200,
+        body: page([
+          event(120, { type: 'staff.signed_in', outcome: 'success', identity_id: null, details: { subject: 'a'.repeat(32), method: 'password_codes' } }),
+          event(119, { type: '<img src=x onerror=alert(1)>' }),
+          event(118, { ip: null, ip_network: null, country: null, region: null, city: null, user_agent: null, device: null }),
+        ]),
+      },
+    });
+    render(<AdminApp path="/audit-log" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Audit log' })).toBeInTheDocument();
+    const rows = within(await screen.findByRole('table')).getAllByRole('row').slice(1);
+    expect(rows).toHaveLength(3);
+    const [first, second, third] = rows as [HTMLElement, HTMLElement, HTMLElement];
+    expect(within(first).getByTitle('Staff ' + 'a'.repeat(32))).toHaveTextContent('staff aaaaaaaa…');
+    expect(within(first).getByText('method: password_codes')).toBeInTheDocument();
+    expect(within(second).getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
+    expect(document.querySelector('img')).toBeNull();
+    expect(within(second).getByText('Failed')).toBeInTheDocument();
+    expect(within(second).getByText('203.0.113.45')).toBeInTheDocument();
+    expect(within(second).getByText('Ikeja, Lagos, Nigeria')).toBeInTheDocument();
+    expect(within(second).getByText('Chrome 146 on Windows (desktop)')).toBeInTheDocument();
+    expect(within(third).getByText('Sign-in failed')).toBeInTheDocument();
+    expect(within(third).getByText('auth.sign_in.failed')).toBeInTheDocument();
+    expect(within(third).getByText('not kept')).toBeInTheDocument();
+    expect(screen.getByText(/Chain head #120/)).toBeInTheDocument();
+  });
+
+  it('shows the network, not the full address, to staff without staff.manage', async () => {
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: finance },
+      'GET /admin-api/v1/audit-events': { status: 200, body: page([event(5, { ip: null, user_agent: null })], { full_context: false }) },
+    });
+    render(<AdminApp path="/audit-log" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText('203.0.113.0/24')).toBeInTheDocument();
+    expect(screen.getByText(/Full IP addresses are shown to security administrators only/)).toBeInTheDocument();
+  });
+
+  it('sends the chosen filters, pages older and newer by cursor, and explains a bad ID', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: security },
+      'GET /admin-api/v1/audit-events': { status: 200, body: page([event(120)]) },
+      [`GET /admin-api/v1/audit-events?outcome=failure&group=staff&subject=${'a'.repeat(32)}`]: { status: 200, body: page([event(90)], { next_before: 90 }) },
+      [`GET /admin-api/v1/audit-events?outcome=failure&group=staff&subject=${'a'.repeat(32)}&before=90`]: { status: 200, body: page([event(40)]) },
+      'GET /admin-api/v1/audit-events?subject=nope': { status: 422, body: { type: 'invalid_filter' } },
+    });
+    render(<AdminApp path="/audit-log" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await screen.findByText(/Chain head/);
+
+    await user.selectOptions(screen.getByLabelText('Area'), 'staff');
+    await user.selectOptions(screen.getByLabelText('Outcome'), 'failure');
+    await user.type(screen.getByLabelText('Customer, account or staff ID'), 'A'.repeat(32));
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByRole('cell', { name: '90' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Older' }));
+    expect(await screen.findByRole('cell', { name: '40' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Older' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Newer' }));
+    expect(await screen.findByRole('cell', { name: '90' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Newer' })).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText('Area'), '');
+    await user.selectOptions(screen.getByLabelText('Outcome'), '');
+    await user.clear(screen.getByLabelText('Customer, account or staff ID'));
+    await user.type(screen.getByLabelText('Customer, account or staff ID'), 'nope');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText(/That ID is not valid/)).toBeInTheDocument();
+  });
+
+  it('"Only this" shows every event about that customer or staff member', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: security },
+      'GET /admin-api/v1/audit-events': { status: 200, body: page([event(120)]) },
+      [`GET /admin-api/v1/audit-events?subject=${'c'.repeat(32)}`]: { status: 200, body: page([event(77)]) },
+    });
+    render(<AdminApp path="/audit-log" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByRole('button', { name: `Only events about customer ${'c'.repeat(32)}` }));
+    expect(await screen.findByRole('cell', { name: '77' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Customer, account or staff ID')).toHaveValue('c'.repeat(32));
+  });
+
+  it('is not in the menu without audit.view', async () => {
+    expect(adminPagesFor(['catalogue.view']).map((p) => p.id)).not.toContain('audit-log');
+    expect(adminPagesFor(['audit.view']).map((p) => p.id)).toContain('audit-log');
+    expect(adminPageForPath('/audit-log', ['catalogue.view'])).toBe('overview');
   });
 });
