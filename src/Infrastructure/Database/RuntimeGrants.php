@@ -43,6 +43,10 @@ final readonly class RuntimeGrants
         // Exchange rates (CD-16): a held set is never edited; confirmations are new sets.
         'fx_rate_sets' => ['SELECT', 'INSERT'],
         'fx_rate_values' => ['SELECT', 'INSERT'],
+        // Domain cost snapshots and sync runs (CD-13, DR-8): written once, never edited.
+        'domain_cost_snapshots' => ['SELECT', 'INSERT'],
+        'domain_cost_items' => ['SELECT', 'INSERT'],
+        'provider_sync_runs' => ['SELECT', 'INSERT'],
         'email_verification_tokens' => self::CRUD,
         'identities' => self::CRUD,
         'identity_devices' => self::CRUD,

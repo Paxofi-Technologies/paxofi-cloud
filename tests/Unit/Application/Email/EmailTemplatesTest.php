@@ -200,4 +200,22 @@ final class EmailTemplatesTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::STAFF_SIGN_IN_CODE, ['name' => 'Ada', 'code' => '12345<'], 'k5');
     }
+
+    /** DR-8 / DR-9: price sync alerts name the provider, a fixed problem and the time, and link only to the admin console. */
+    public function testPriceSyncProblemAlert(): void
+    {
+        $templates = new EmailTemplates('https://cloud.paxofi.com', 'PaxofiCloud', 'https://admin.paxofi.com');
+
+        $message = $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::PRICE_SYNC_PROBLEM, [
+            'name' => 'Ada', 'provider' => 'domainnameapi', 'problem' => 'credential_refused', 'time' => '2026-10-24T01:30:00Z',
+        ], 'k3');
+
+        self::assertSame('Price sync needs attention: DomainNameAPI (domain registrar)', $message->subject);
+        self::assertStringContainsString('refused our API credential', $message->textBody);
+        self::assertStringContainsString('24 Oct 2026, 02:30 WAT', $message->textBody);
+        self::assertStringContainsString('https://admin.paxofi.com/providers', $message->textBody);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $templates->render(new EmailAddress('ada@example.ng'), EmailTemplates::PRICE_SYNC_PROBLEM, ['provider' => 'domainnameapi', 'problem' => '<script>'], 'k4');
+    }
 }

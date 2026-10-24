@@ -35,6 +35,14 @@ final readonly class EmailTemplates
     public const string STAFF_ACTIVATED = 'staff-activated';
     public const string STAFF_SIGN_IN_CODE = 'staff-sign-in-code';
     public const string PROVIDER_CREDENTIAL_CHANGED = 'provider-credential-changed';
+    public const string PRICE_SYNC_PROBLEM = 'price-sync-problem';
+
+    /** Problems the price-sync alert can report (DR-8, DR-9), with how they read. */
+    public const array PRICE_SYNC_PROBLEMS = [
+        'credential_refused' => 'The provider refused our API credential, so prices cannot be updated until it is replaced.',
+        'repeated_failures' => 'The price sync has failed three times in a row. The last good prices are still in use.',
+        'quarantined' => 'The new price list looked wrong (many extensions missing or large cost changes), so it was held for review. Nothing was changed.',
+    ];
 
     /** Changes the security-change email can report, with how they read. */
     public const array SECURITY_CHANGES = [
@@ -61,7 +69,7 @@ final readonly class EmailTemplates
     /** @return list<string> */
     public static function names(): array
     {
-        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED];
+        return [self::VERIFY_EMAIL, self::ACCOUNT_EXISTS, self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE, self::STAFF_INVITATION, self::STAFF_ACTIVATED, self::STAFF_SIGN_IN_CODE, self::PROVIDER_CREDENTIAL_CHANGED, self::PRICE_SYNC_PROBLEM];
     }
 
     /** @param array<string, string> $parameters */
@@ -76,6 +84,7 @@ final readonly class EmailTemplates
             self::STAFF_ACTIVATED => $this->staffActivated($to, $name, self::personName($parameters['staff_name'] ?? ''), $idempotencyKey),
             self::STAFF_SIGN_IN_CODE => $this->staffSignInCode($to, $name, $parameters, $idempotencyKey),
             self::PROVIDER_CREDENTIAL_CHANGED => $this->providerCredentialChanged($to, $name, $parameters, $idempotencyKey),
+            self::PRICE_SYNC_PROBLEM => $this->priceSyncProblem($to, $name, $parameters, $idempotencyKey),
             self::SIGN_IN_ALERT, self::NEW_DEVICE_ALERT, self::SIGN_IN_ATTEMPTS_ALERT, self::SECURITY_CHANGE => $this->securityAlert($to, $template, $name, $parameters, $idempotencyKey),
             default => throw new \InvalidArgumentException(sprintf('Unknown email template "%s".', $template)),
         };
@@ -168,6 +177,43 @@ final readonly class EmailTemplates
             $link,
             'If you did not expect this, check the provider connections page now and re-enter the correct credential.',
         ), self::PROVIDER_CREDENTIAL_CHANGED, $key);
+    }
+
+    /**
+     * Tells staff managers that a provider price sync needs attention. Names
+     * the provider, the problem (a fixed code) and the time; nothing else.
+     *
+     * @param array<string, string> $parameters
+     */
+    private function priceSyncProblem(EmailAddress $to, string $name, array $parameters, string $key): EmailMessage
+    {
+        if ($this->adminUrl === null) {
+            throw new \InvalidArgumentException('ADMIN_URL is not configured, so staff alerts cannot be sent.');
+        }
+        $provider = ProviderConnection::tryFrom($parameters['provider'] ?? '')?->label() ?? 'A provider';
+        $problem = self::PRICE_SYNC_PROBLEMS[$parameters['problem'] ?? ''] ?? throw new \InvalidArgumentException('Unknown price sync problem.');
+        $time = self::time($parameters['time'] ?? '');
+        $link = $this->adminUrl . '/providers';
+        $text = <<<TXT
+            Hi {$name},
+
+            Price sync for {$provider} needs attention ({$time}):
+
+            {$problem}
+
+            {$link}
+
+            {$this->productName}
+            TXT;
+
+        return new EmailMessage($to, 'Price sync needs attention: ' . $provider, $text, $this->html(
+            'Price sync needs attention',
+            sprintf('Hi %s,', self::e($name)),
+            sprintf('Price sync for %s needs attention (%s). %s', self::e($provider), self::e($time), self::e($problem)),
+            'Review provider connections',
+            $link,
+            'Customers keep seeing the last good prices until this is resolved.',
+        ), self::PRICE_SYNC_PROBLEM, $key);
     }
 
     /** §6.18: tells the other staff managers that someone finished enrolment, so a stolen invitation is noticed. */
