@@ -28,3 +28,15 @@ export const SearchIcon = () => (
 export const CheckIcon = () => (
   <svg {...base} aria-hidden="true" focusable="false"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
 );
+export const UsersIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6" /></svg>
+);
+export const KeyIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9M16 7l3 3M14 9l2 2" /></svg>
+);
+export const TagIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" /><path d="M7.5 7.5h.01" /></svg>
+);
+export const UserIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+);
