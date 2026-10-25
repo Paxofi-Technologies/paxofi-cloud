@@ -67,6 +67,13 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         self::assertDenied($app, 'DROP TABLE identities');
         self::assertSame('test.event', self::scalar(self::pdo(), 'SELECT event_type FROM audit_events WHERE seq = 1'), 'the event is unchanged');
 
+        // Spaceship price checks are append-only too (SP-7).
+        $app->exec("INSERT INTO spaceship_price_checks (id, trigger_kind, checked_at, outcome, reason, names_asked, names_answered, names_priced)
+                    VALUES (REPEAT('c', 32), 'cli', NOW(6), 'done', NULL, 20, 0, 0)");
+        self::assertDenied($app, "UPDATE spaceship_price_checks SET names_priced = 1 WHERE id = REPEAT('c', 32)");
+        self::assertDenied($app, "DELETE FROM spaceship_price_checks WHERE id = REPEAT('c', 32)");
+        self::assertDenied($app, "DELETE FROM spaceship_price_check_items WHERE check_id = REPEAT('c', 32)");
+
         // Ordinary tables keep full row access.
         self::scalar($app, 'SELECT COUNT(*) FROM identities');
         $app->exec("DELETE FROM email_outbox WHERE id = 'none'");

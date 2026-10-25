@@ -658,12 +658,114 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ provider: 'namecheap' });
   });
 
-  it('shows no registrar tabs while there is only one registrar', async () => {
+  it('always offers the Spaceship tab beside the registrars with a price list', async () => {
     const fetchImpl = adminApi({ 'GET /admin-api/v1/auth/session': { status: 200, body: catalogue }, 'GET /admin-api/v1/domain-costs': { status: 200, body: costs() } });
     render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByText(/costs us at DomainNameAPI/)).toBeInTheDocument();
-    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['DomainNameAPI', 'Spaceship']);
+    expect(screen.getByRole('tab', { name: 'Spaceship' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  const probeTlds = ['com', 'net', 'org', 'info', 'biz', 'co', 'io', 'me', 'xyz', 'site', 'online', 'store', 'tech', 'app', 'dev', 'us', 'uk', 'co.uk', 'africa', 'com.ng'];
+  const check = (overrides: Record<string, unknown> = {}) => ({
+    connected: true,
+    can_run: true,
+    pending_since: null,
+    next_request_at: null,
+    probe_tlds: probeTlds,
+    latest: null,
+    ...overrides,
+  });
+
+  it('runs a Spaceship price check with the CSRF token and shows the answer per extension, as text', async () => {
+    const user = userEvent.setup();
+    const done = {
+      checked_at: '2026-10-25T08:30:00+00:00',
+      trigger: 'manual',
+      outcome: 'done',
+      reason: null,
+      asked: 20,
+      answered: 2,
+      priced: 1,
+      items: [
+        { tld: 'com.ng', result: 'missing', register: null, currency: null, other_priced: [] },
+        { tld: 'com', result: 'available', register: 998, currency: 'USD', other_priced: ['renew'] },
+        { tld: 'net', result: '<img src=x>', register: null, currency: null, other_priced: [] },
+      ],
+    };
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': { status: 200, body: costs() },
+      'GET /admin-api/v1/spaceship-price-check': [{ status: 200, body: check() }, { status: 200, body: check({ latest: done, next_request_at: '2026-10-25T08:40:00+00:00' }) }],
+      'POST /admin-api/v1/spaceship-price-check/run': { status: 202, body: { status: 'queued' } },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByRole('tab', { name: 'Spaceship' }));
+    expect(await screen.findByText('No check has run yet.')).toBeInTheDocument();
+    expect(screen.getByText(/one made-up, unregistered name in each of 20 common/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Run price check' }));
+    expect(await screen.findByText(/Price check requested\./)).toBeInTheDocument();
+    const [init] = calls(fetchImpl, 'POST /admin-api/v1/spaceship-price-check/run');
+    expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe(manager.csrf_token);
+    expect(JSON.parse(String(init?.body))).toEqual({});
+
+    expect(await screen.findByText(/Spaceship answered 2 of 20 names and showed a one-year price for 1\. Its prices can be fetched automatically/)).toBeInTheDocument();
+    const table = screen.getByRole('table', { name: 'Spaceship price check' });
+    const rows = within(table).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell').map((cell) => cell.textContent));
+    expect(rows).toEqual([
+      ['.com', 'Available', 'USD 9.98', 'renew'],
+      ['.net', '<img src=x>', '—', '—'],
+      ['.com.ng', 'No answer', '—', '—'],
+    ]);
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run price check' })).toBeDisabled();
+  });
+
+  it('asks to connect Spaceship first, and explains a check that found no ordinary prices or failed', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': { status: 200, body: costs() },
+      'GET /admin-api/v1/spaceship-price-check': [
+        { status: 200, body: check({ connected: false }) },
+        { status: 200, body: check({ latest: { checked_at: '2026-10-25T08:30:00+00:00', trigger: 'manual', outcome: 'done', reason: null, asked: 20, answered: 20, priced: 0, items: [] } }) },
+        { status: 200, body: check({ latest: { checked_at: '2026-10-25T08:50:00+00:00', trigger: 'manual', outcome: 'failed', reason: 'unauthorised', asked: 20, answered: 0, priced: 0, items: [] } }) },
+      ],
+    });
+    const { unmount } = render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.click(await screen.findByRole('tab', { name: 'Spaceship' }));
+    expect(await screen.findByText(/Spaceship is not connected yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run price check' })).toBeDisabled();
+    unmount();
+
+    const second = render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.click(await screen.findByRole('tab', { name: 'Spaceship' }));
+    expect(await screen.findByText(/It does not show ordinary prices, so Spaceship costs would have to be entered by hand/)).toBeInTheDocument();
+    second.unmount();
+
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.click(await screen.findByRole('tab', { name: 'Spaceship' }));
+    expect(await screen.findByText(/The check failed: the registrar refused the API key/)).toBeInTheDocument();
+    expect(screen.getByText(/Check that the Spaceship key has the domains:read scope\./)).toBeInTheDocument();
+  });
+
+  it('lets Finance read the Spaceship check but not run one', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: finance },
+      'GET /admin-api/v1/domain-costs': { status: 200, body: costs({ can_sync: false }) },
+      'GET /admin-api/v1/spaceship-price-check': { status: 200, body: check({ can_run: false }) },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+    await user.click(await screen.findByRole('tab', { name: 'Spaceship' }));
+    expect(await screen.findByText('No check has run yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run price check' })).toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: 'DomainNameAPI' }));
+    expect(await screen.findByText(/costs us at DomainNameAPI/)).toBeInTheDocument();
   });
 
   it('groups the extensions the last sync skipped by reason, as text', async () => {

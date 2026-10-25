@@ -22,6 +22,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\StaffSessionCookie;
 use PaxofiCloud\Tests\Support\AuditFixtures;
@@ -78,6 +79,8 @@ final class AdminRouteCoverageTest extends TestCase
         'POST /admin-api/v1/provider-connections' => 'provider_credentials.manage',
         'GET /admin-api/v1/domain-costs' => 'catalogue.view',
         'POST /admin-api/v1/domain-costs/sync' => 'catalogue.manage',
+        'GET /admin-api/v1/spaceship-price-check' => 'catalogue.view',
+        'POST /admin-api/v1/spaceship-price-check/run' => 'catalogue.manage',
         'GET /admin-api/v1/audit-events' => 'audit.view',
     ];
 
@@ -221,6 +224,7 @@ final class AdminRouteCoverageTest extends TestCase
             static fn (): AdminDomainCostsController => throw new ReachedController(),
             static fn (): AdminAuditLogController => throw new ReachedController(),
             static fn (): AdminSessionsController => throw new ReachedController(),
+            static fn (): AdminSpaceshipPriceCheckController => throw new ReachedController(),
         );
     }
 }

@@ -38,6 +38,10 @@ use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiEnvironment;
 use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
 use PaxofiCloud\Integration\Registrar\Dynadot\DynadotEnvironment;
 use PaxofiCloud\Integration\Registrar\Dynadot\DynadotSignature;
+use PaxofiCloud\Integration\Registrar\Spaceship\SpaceshipClient;
+use PaxofiCloud\Application\Registrar\SpaceshipPriceCheck;
+use PaxofiCloud\Infrastructure\Registrar\MysqlPriceCheckStore;
+use PaxofiCloud\Cli\PricesProbeSpaceshipCommand;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapEnvironment;
 use PaxofiCloud\Application\Audit\AuditTrail;
@@ -206,7 +210,35 @@ final readonly class CliProvider implements Provider
 
                 return $syncs;
             };
+            // Spaceship price check (SP-3, SP-7): built only in the provider worker, which can open the key.
+            $spaceshipCheck = static function () use ($c, $appEnv): SpaceshipPriceCheck {
+                $audit = Resolve::get($c, AuditTrail::class);
+                $connection = Resolve::get($c, Connection::class);
+                $repository = Resolve::get($c, Repository::class);
+
+                return new SpaceshipPriceCheck(
+                    new SpaceshipClient(
+                        new ProviderHttpClient([SpaceshipClient::endpoint()], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: SpaceshipClient::MAX_RESPONSE_BYTES),
+                        new MysqlProviderCredentialStore($connection, $repository, new SecretCipher(KeyRing::fromProcessEnvironment())),
+                        ProviderConnection::Spaceship->credentialId(ProviderConnection::environmentFor($appEnv)),
+                        new RegistrarWriteGuard(RegistrarWriteGuard::writesEnabled((string) getenv('REGISTRAR_WRITES'), $appEnv), $audit),
+                    ),
+                    new MysqlPriceCheckStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
+                    new MysqlProviderSyncRequests($connection, $repository),
+                    $audit,
+                    new SystemClock(),
+                    Resolve::get($c, Logger::class),
+                    static fn (): string => bin2hex(random_bytes(8)),
+                );
+            };
+            // The worker runs checks only once a Spaceship connection has been entered.
+            $activeSpaceshipCheck = static function () use ($c, $appEnv, $spaceshipCheck): ?SpaceshipPriceCheck {
+                $configured = (new MysqlProviderCredentialStatus(Resolve::get($c, Repository::class)))->configured();
+
+                return isset($configured[ProviderConnection::Spaceship->credentialId(ProviderConnection::environmentFor($appEnv))]) ? $spaceshipCheck() : null;
+            };
             $registry->register(new PricesSyncCommand($syncFor, $console));
+            $registry->register(new PricesProbeSpaceshipCommand($spaceshipCheck, $console));
             $registry->register(new PricesStatusCommand($costStore, $console, [
                 DomainNameApiClient::PROVIDER => getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
                 NamecheapClient::PROVIDER => getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
@@ -234,7 +266,7 @@ final readonly class CliProvider implements Provider
                     new SystemClock(),
                     Resolve::get($c, Logger::class),
                 );
-            }, $console, null, $activeSyncs));
+            }, $console, null, $activeSyncs, $activeSpaceshipCheck));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

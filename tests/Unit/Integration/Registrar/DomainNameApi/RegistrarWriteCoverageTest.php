@@ -13,6 +13,8 @@ use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiOperation;
 use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
 use PaxofiCloud\Integration\Registrar\Dynadot\DynadotEnvironment;
 use PaxofiCloud\Integration\Registrar\Dynadot\DynadotOperation;
+use PaxofiCloud\Integration\Registrar\Spaceship\SpaceshipClient;
+use PaxofiCloud\Integration\Registrar\Spaceship\SpaceshipOperation;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapEnvironment;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapOperation;
@@ -99,6 +101,19 @@ final class RegistrarWriteCoverageTest extends TestCase
         $client = new DynadotClient($transport, $credentials, 'dynadot-staging', DynadotEnvironment::Live, $guard, static function (int $ms): void {
         }, static fn (): string => '00000000-0000-4000-8000-000000000000');
         $client->send(DynadotOperation::TldPrice, ['currency' => 'usd']);
+
+        self::assertSame(1, $credentials->loads);
+    }
+
+    public function testSpaceshipOperationsAreAllReadsAndAskTheGuardFirst(): void
+    {
+        foreach (SpaceshipOperation::cases() as $operation) {
+            self::assertFalse($operation->spec()[2]->isWrite(), $operation->value . ': add a write test when Spaceship writes arrive');
+        }
+        $transport = (new FakeProviderTransport())->expect('POST', '/domains/available', 200, ['domains' => []]);
+        $credentials = new StaticCredentialSource(['spaceship-staging' => '{"api_key":"abcdefgh12","api_secret":"secret-1234"}']);
+        $guard = new RegistrarWriteGuard(false, new AuditTrail(new InMemoryAuditLog(), new FixedClock(new \DateTimeImmutable('2026-10-25T06:00:00Z')), new RecordingLogger()));
+        (new SpaceshipClient($transport, $credentials, 'spaceship-staging', $guard))->check(['a-test.com']);
 
         self::assertSame(1, $credentials->loads);
     }

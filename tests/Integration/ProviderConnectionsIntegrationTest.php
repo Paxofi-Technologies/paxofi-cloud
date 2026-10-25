@@ -93,8 +93,8 @@ final class ProviderConnectionsIntegrationTest extends IntegrationTestCase
 
     public function testTheDatabaseRefusesMalformedIntakeRows(): void
     {
-        // Migrations 0017 and 0018: Namecheap and Dynadot submissions are accepted alongside the original providers.
-        foreach (['namecheap-dev' => 'namecheap', 'dynadot-dev' => 'dynadot'] as $credentialId => $provider) {
+        // Migrations 0017, 0018 and 0019: Namecheap, Dynadot and Spaceship submissions are accepted alongside the original providers.
+        foreach (['namecheap-dev' => 'namecheap', 'dynadot-dev' => 'dynadot', 'spaceship-dev' => 'spaceship'] as $credentialId => $provider) {
             self::pdo()->prepare('INSERT INTO provider_credential_intake (credential_id, provider, sealed, submitted_by, submitted_at) VALUES (?, ?, ?, ?, NOW(6))')
                 ->execute([$credentialId, $provider, str_repeat('A', 80), self::STAFF]);
         }

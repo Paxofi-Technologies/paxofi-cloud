@@ -88,6 +88,9 @@ use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
 use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
 use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
+use PaxofiCloud\Infrastructure\Registrar\MysqlPriceCheckStore;
+use PaxofiCloud\Application\Registrar\SpaceshipPriceCheckAdmin;
+use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Infrastructure\Secrets\SealedBox;
 use Paxofi\Core\Application;
 use Paxofi\Core\Contracts\Configuration;
@@ -453,6 +456,23 @@ final class IdentityProvider implements Provider
                     $audit,
                 ),
             ]);
+        });
+
+        // Spaceship price check (SP-3, SP-7): the web tier reads results and queues checks; it never calls Spaceship.
+        $container->singleton(AdminSpaceshipPriceCheckController::class, static function (Container $c): AdminSpaceshipPriceCheckController {
+            $connection = Resolve::get($c, Connection::class);
+            $repository = Resolve::get($c, Repository::class);
+            $env = Resolve::get($c, Configuration::class)->get('app.env');
+
+            return new AdminSpaceshipPriceCheckController(new SpaceshipPriceCheckAdmin(
+                ProviderConnection::Spaceship->credentialId(ProviderConnection::environmentFor(is_string($env) ? $env : '')),
+                Resolve::get($c, StaffAuthorizer::class),
+                new MysqlPriceCheckStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
+                new MysqlProviderSyncRequests($connection, $repository),
+                new MysqlProviderCredentialStatus($repository),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            ));
         });
 
         // Audit log page (§6.24): read-only search; every look is itself audited.

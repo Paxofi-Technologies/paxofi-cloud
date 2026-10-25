@@ -389,6 +389,79 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch, provider
 export const requestDomainCostSync = (csrfToken: string, fetchImpl: typeof fetch = fetch, provider?: string) =>
   postJson(`${ADMIN_API}/domain-costs/sync`, provider ? { provider } : {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
 
+/** One extension in a Spaceship price check (SP-7): its test name's answer, never the name itself. */
+export interface PriceCheckItem {
+  tld: string;
+  result: string;
+  register: number | null;
+  currency: string | null;
+  otherPriced: string[];
+}
+
+export interface PriceCheck {
+  checkedAt: string;
+  trigger: string;
+  outcome: string;
+  reason: string | null;
+  asked: number;
+  answered: number;
+  priced: number;
+  items: PriceCheckItem[];
+}
+
+export interface SpaceshipCheckState {
+  connected: boolean;
+  canRun: boolean;
+  pendingSince: string | null;
+  nextRequestAt: string | null;
+  probeTlds: string[];
+  latest: PriceCheck | null;
+}
+
+export type SpaceshipCheckResult = { kind: 'ok'; state: SpaceshipCheckState } | { kind: 'failed' };
+
+function priceCheck(value: unknown): PriceCheck | null {
+  const c = obj(value);
+  if (!c || typeof c.checked_at !== 'string' || typeof c.trigger !== 'string' || typeof c.outcome !== 'string' || !Array.isArray(c.items)) return null;
+  const items: PriceCheckItem[] = [];
+  for (const raw of c.items) {
+    const i = obj(raw);
+    if (!i || typeof i.tld !== 'string' || typeof i.result !== 'string') continue;
+    items.push({ tld: i.tld, result: i.result, register: minor(i.register), currency: nullableString(i.currency), otherPriced: strings(i.other_priced) });
+  }
+  return {
+    checkedAt: c.checked_at,
+    trigger: c.trigger,
+    outcome: c.outcome,
+    reason: nullableString(c.reason),
+    asked: minor(c.asked) ?? 0,
+    answered: minor(c.answered) ?? 0,
+    priced: minor(c.priced) ?? 0,
+    items,
+  };
+}
+
+/** The Spaceship price check (SP-3, SP-7): the newest result and whether a new one may be asked for. */
+export async function fetchSpaceshipCheck(fetchImpl: typeof fetch = fetch): Promise<SpaceshipCheckResult> {
+  const result = await getJson(`${ADMIN_API}/spaceship-price-check`, fetchImpl);
+  const body = obj(result?.data);
+  if (result === null || result.status !== 200 || !body) return { kind: 'failed' };
+  return {
+    kind: 'ok',
+    state: {
+      connected: body.connected === true,
+      canRun: body.can_run === true,
+      pendingSince: nullableString(body.pending_since),
+      nextRequestAt: nullableString(body.next_request_at),
+      probeTlds: strings(body.probe_tlds),
+      latest: priceCheck(body.latest),
+    },
+  };
+}
+
+export const requestSpaceshipCheck = (csrfToken: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/spaceship-price-check/run`, {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
 /** Formats integer minor units without floating point, e.g. 123456 USD → "USD 1,234.56". */
 export function formatMinor(amount: number, currency: string): string {
   const whole = Math.trunc(amount / 100).toLocaleString('en-NG');

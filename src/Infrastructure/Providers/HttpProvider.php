@@ -37,6 +37,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminAuditLogController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\Middleware\AdminApiGuardMiddleware;
 use PaxofiCloud\Http\Middleware\ApiWriteGuardMiddleware;
@@ -123,6 +124,7 @@ final class HttpProvider implements Provider
             static fn (): AdminDomainCostsController => Resolve::get($c, AdminDomainCostsController::class),
             static fn (): AdminAuditLogController => Resolve::get($c, AdminAuditLogController::class),
             static fn (): AdminSessionsController => Resolve::get($c, AdminSessionsController::class),
+            static fn (): AdminSpaceshipPriceCheckController => Resolve::get($c, AdminSpaceshipPriceCheckController::class),
         );
     }
 

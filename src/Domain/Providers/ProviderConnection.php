@@ -14,6 +14,7 @@ enum ProviderConnection: string
     case DomainNameApi = 'domainnameapi';
     case Namecheap = 'namecheap';
     case Dynadot = 'dynadot';
+    case Spaceship = 'spaceship';
     case Hetzner = 'hetzner';
     case Vultr = 'vultr';
 
@@ -27,6 +28,7 @@ enum ProviderConnection: string
             self::DomainNameApi => 'DomainNameAPI (domain registrar)',
             self::Namecheap => 'Namecheap (domain registrar)',
             self::Dynadot => 'Dynadot (domain registrar)',
+            self::Spaceship => 'Spaceship (domain registrar)',
             self::Hetzner => 'Hetzner Cloud (servers)',
             self::Vultr => 'Vultr (servers)',
         };
@@ -36,7 +38,7 @@ enum ProviderConnection: string
     public function category(): string
     {
         return match ($this) {
-            self::DomainNameApi, self::Namecheap, self::Dynadot => 'domains',
+            self::DomainNameApi, self::Namecheap, self::Dynadot, self::Spaceship => 'domains',
             self::Hetzner, self::Vultr => 'servers',
         };
     }
@@ -60,6 +62,11 @@ enum ProviderConnection: string
             self::Dynadot => [
                 new ConnectionField('api_key', 'API key', true, 256, '/^[\x21-\x7E]{8,256}$/', 'Dynadot: Tools → API. Use the production API key (not the sandbox key).'),
                 new ConnectionField('api_secret', 'API secret', true, 256, '/^[\x21-\x7E]{8,256}$/', 'Same page: the API secret shown with the key. PaxofiCloud uses it only to sign requests.'),
+            ],
+            // SP-1, SP-2: a key with only the domains:read scope until registration through Spaceship goes live.
+            self::Spaceship => [
+                new ConnectionField('api_key', 'API key', true, 256, '/^[\x21-\x7E]{8,256}$/', 'Spaceship: API Manager → New API key. Give it only the domains:read scope (no write, billing or contacts access).'),
+                new ConnectionField('api_secret', 'API secret', true, 256, '/^[\x21-\x7E]{8,256}$/', 'Shown once, when the key is created. Spaceship: copy it then.'),
             ],
             self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256, null, 'Hetzner Cloud Console: your project → Security → API tokens → Generate (Read & Write).')],
             self::Vultr => [new ConnectionField('api_key', 'API key', true, 256, null, 'Vultr: Account → API. Use a sub-user key with only the access PaxofiCloud needs.')],
