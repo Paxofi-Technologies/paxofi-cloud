@@ -132,12 +132,31 @@
 .pc-nav__item--active { background: var(--pc-semantic-nav-active); color: var(--pc-semantic-nav-textActive); }
 .pc-nav__item[aria-disabled] { cursor: default; color: var(--pc-semantic-nav-textMuted); }
 .pc-nav__icon { display: inline-flex; }
-.pc-nav__chevron { margin-left: auto; display: inline-flex; transition: transform 150ms ease; }
+.pc-nav__item { transition: background-color 150ms ease, color 150ms ease; }
+.pc-nav__chevron { margin-left: auto; display: inline-flex; transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .pc-nav__group[aria-expanded="true"] .pc-nav__chevron { transform: rotate(180deg); }
 .pc-nav__item--within { color: var(--pc-semantic-nav-textActive); }
-@media (prefers-reduced-motion: reduce) { .pc-nav__chevron { transition: none; } }
-.pc-nav--sub { padding-left: var(--pc-space-6); margin-top: var(--pc-space-1); }
-.pc-nav--sub[hidden] { display: none; }
+/* Accordion panel: animates its height from 0 to the content's own height (grid
+   0fr -> 1fr), the pages fade and slide in, and once closed it leaves the
+   accessibility tree (visibility switches only after the slide finishes). */
+.pc-nav__panel {
+  display: grid; grid-template-rows: 0fr; visibility: hidden;
+  transition: grid-template-rows 280ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 280ms;
+}
+.pc-nav__panel[data-open="true"] {
+  grid-template-rows: 1fr; visibility: visible;
+  transition: grid-template-rows 280ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s;
+}
+.pc-nav--sub {
+  min-height: 0; overflow: hidden; padding-left: var(--pc-space-6);
+  opacity: 0; transform: translateY(-6px);
+  transition: opacity 200ms ease, transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pc-nav__panel[data-open="true"] > .pc-nav--sub { opacity: 1; transform: none; transition-delay: 60ms; }
+.pc-nav--sub > li:first-child { margin-top: var(--pc-space-1); }
+@media (prefers-reduced-motion: reduce) {
+  .pc-nav__item, .pc-nav__chevron, .pc-nav__panel, .pc-nav__panel[data-open="true"], .pc-nav--sub, .pc-nav__panel[data-open="true"] > .pc-nav--sub { transition: none; }
+}
 .pc-nav__soon { margin-left: auto; font-size: var(--pc-font-size-xs); color: var(--pc-semantic-nav-textMuted); }
 .pc-shell__main { display: flex; flex-direction: column; min-width: 0; }
 .pc-topbar {

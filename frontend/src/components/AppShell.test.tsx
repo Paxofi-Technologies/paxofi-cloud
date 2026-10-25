@@ -115,7 +115,7 @@ describe('AppShell menu groups (dropdowns)', () => {
     expect(screen.queryByRole('button', { name: 'Server providers' })).toBeNull();
   });
 
-  it('starts open on one of its pages, stays open when leaving, and opens by itself when navigation lands inside it', async () => {
+  it('starts open on one of its pages, closes when navigation leaves it, and opens by itself when navigation lands inside it', async () => {
     const user = userEvent.setup();
     const { view } = render2('registrars');
     const at = (current: string) =>
@@ -129,8 +129,11 @@ describe('AppShell menu groups (dropdowns)', () => {
     expect(screen.getByRole('button', { name: 'Domain registrars' })).toHaveAttribute('aria-current', 'page');
 
     at('home');
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Domain registrars' })).toBeNull();
 
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     at('servers');
@@ -145,5 +148,29 @@ describe('AppShell menu groups (dropdowns)', () => {
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveClass('pc-nav__item--within');
+  });
+
+  it('keeps one group open at a time, and a closed group cannot be reached by keyboard', async () => {
+    const user = userEvent.setup();
+    const twoGroups = [
+      ...grouped,
+      { id: 'cat', label: 'Catalogue', icon: <span />, children: [{ id: 'costs', label: 'Domain costs', icon: <span /> }] },
+    ];
+    render(
+      <AppShell nav={twoGroups} current="home" onNavigate={vi.fn()} userName="Ada" onSignOut={vi.fn()}>
+        <p>Page</p>
+      </AppShell>,
+    );
+    const api = screen.getByRole('button', { name: 'API providers' });
+    const cat = screen.getByRole('button', { name: 'Catalogue' });
+    await user.click(api);
+    expect(api).toHaveAttribute('aria-expanded', 'true');
+    await user.click(cat);
+    expect(cat).toHaveAttribute('aria-expanded', 'true');
+    expect(api).toHaveAttribute('aria-expanded', 'false');
+    const closedPanel = document.getElementById('pc-nav-group-api-pages')?.parentElement;
+    expect(closedPanel).toHaveAttribute('inert');
+    expect(closedPanel).toHaveAttribute('data-open', 'false');
+    expect(document.getElementById('pc-nav-group-cat-pages')?.parentElement).not.toHaveAttribute('inert');
   });
 });

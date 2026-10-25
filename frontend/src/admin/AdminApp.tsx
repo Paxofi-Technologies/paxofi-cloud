@@ -1359,7 +1359,7 @@ function CredentialForm({
 }
 
 const SYNC_REASONS: Record<string, string> = {
-  unauthorised: 'the registrar refused the API key (for Namecheap, also check that the server IP address is whitelisted). Fix it under API providers → Domain registrars',
+  unauthorised: 'the registrar refused the API key. Fix it under API providers → Domain registrars',
   credential_missing: 'no API key is stored. Set it under API providers → Domain registrars',
   credential_invalid: 'the stored API key could not be used. Set it again under API providers → Domain registrars',
   rate_limited: 'the registrar asked us to slow down',
@@ -1371,6 +1371,19 @@ const SYNC_REASONS: Record<string, string> = {
   items_disappeared: 'more than 20% of extensions disappeared',
   costs_jumped: 'more than 20% of costs changed by over 50%',
 };
+
+/** Registrar-specific hints added to a refused key, so each tab only names its own fix. */
+const UNAUTHORISED_HINTS: Record<string, string> = {
+  namecheap: ' Also check that the server IP address is whitelisted in Namecheap.',
+  dynadot: ' Use the production key and secret, not the sandbox ones.',
+};
+
+/** Plain words for a sync failure or hold-back reason on one registrar's tab. */
+function syncReason(reason: string, provider: string): string | undefined {
+  const text = SYNC_REASONS[reason];
+  if (text === undefined) return undefined;
+  return reason === 'unauthorised' ? `${text}.${UNAUTHORISED_HINTS[provider] ?? ''}`.replace(/\.$/, '') : text;
+}
 
 const TRIGGERS: Record<string, string> = { schedule: 'Daily', manual: 'Sync now', cli: 'Operator' };
 
@@ -1502,13 +1515,13 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
       {message && <Alert tone={message.tone}>{message.text}</Alert>}
       {costs.quarantined && (
         <Alert tone="warning">
-          The list fetched {formatWhen(costs.quarantined.fetchedAt)} was held back because {SYNC_REASONS[costs.quarantined.reason ?? ''] ?? 'it looked wrong'}. The
+          The list fetched {formatWhen(costs.quarantined.fetchedAt)} was held back because {syncReason(costs.quarantined.reason ?? '', costs.provider) ?? 'it looked wrong'}. The
           prices below are still the last good ones.
         </Alert>
       )}
       {lastRun && lastRun.outcome === 'failed' && (
         <Alert tone="danger">
-          The last sync ({formatWhen(lastRun.startedAt)}) failed: {SYNC_REASONS[lastRun.reason ?? ''] ?? 'unknown problem'}.
+          The last sync ({formatWhen(lastRun.startedAt)}) failed: {syncReason(lastRun.reason ?? '', costs.provider) ?? 'unknown problem'}.
         </Alert>
       )}
       <div className="pc-admin__row">
@@ -1587,7 +1600,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
               <li key={`${run.startedAt}-${run.trigger}`}>
                 {formatWhen(run.startedAt)} · {TRIGGERS[run.trigger] ?? run.trigger} ·{' '}
                 <Badge tone={run.outcome === 'accepted' ? 'success' : run.outcome === 'quarantined' ? 'warning' : 'danger'}>{run.outcome}</Badge>
-                {run.reason ? ` ${SYNC_REASONS[run.reason] ?? run.reason}` : ''}
+                {run.reason ? ` ${syncReason(run.reason, costs.provider) ?? run.reason}` : ''}
                 {run.attempts > 1 ? ` (${run.attempts} attempts)` : ''}
               </li>
             ))}
@@ -1770,6 +1783,16 @@ function skipDetail(detail: string | null): string {
 }
 
 /**
+ * The heading for a group of skipped extensions. A negative registration price
+ * is how a registrar marks an extension it lists but does not sell (Dynadot
+ * does this for some second-level names), so it reads as "not offered".
+ */
+function skipLabel(reason: string, detail: string): string {
+  if (reason === 'bad_price' && detail === skipDetail('reg:negative')) return 'Not offered by this registrar (registration price is negative)';
+  return `${SKIP_REASONS[reason] ?? reason}${detail ? ` (${detail})` : ''}`;
+}
+
+/**
  * DR-14: extensions the registrar lists but the last accepted sync could not
  * use, grouped by reason, so staff can see what is not on sale and why.
  * Names and details are server-validated and rendered as text only.
@@ -1794,8 +1817,7 @@ function SkippedExtensions({ skipped }: { skipped: SkippedExtension[] }) {
         {sorted.map((group) => (
           <li key={`${group.reason}|${group.detail}`}>
             <strong>
-              {SKIP_REASONS[group.reason] ?? group.reason}
-              {group.detail ? ` (${group.detail})` : ''}: {group.names.length + group.unnamed}
+              {skipLabel(group.reason, group.detail)}: {group.names.length + group.unnamed}
             </strong>
             <p className="pc-muted">
               {group.names.join(', ')}
