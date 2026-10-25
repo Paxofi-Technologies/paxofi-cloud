@@ -1,7 +1,8 @@
-import { useRef, useState, type FormEvent } from 'react';
-import { Badge, Button, Card, TextField } from '../components';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Alert, Badge, Button, Card, TextField } from '../components';
 import { CheckIcon, SearchIcon } from '../components/icons';
 import { describeWait, postJson } from '../lib/api';
+import { addDomainToCart, fetchCart, removeFromCart, type Cart, type CartResult } from '../lib/cart';
 import { formatMoney } from '../lib/money';
 import { DomainPriceListView } from './DomainPriceList';
 
@@ -144,14 +145,31 @@ export function mergeAnswers(results: readonly SearchResult[], answers: readonly
  * featured extensions, with live availability (a pre-check; the registrar
  * confirms at checkout) and our prices in naira and US dollars.
  */
-export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
+export function DomainSearchScreen({ csrfToken, fetchImpl }: { csrfToken?: string | undefined; fetchImpl?: typeof fetch | undefined }) {
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [results, setResults] = useState<readonly SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [picked, setPicked] = useState<ReadonlyMap<string, SearchResult>>(new Map());
+  const [cart, setCart] = useState<Cart | null>(null);
+  const [cartError, setCartError] = useState<string | undefined>();
+  const [busy, setBusy] = useState<string | null>(null);
   const top = useRef<HTMLDivElement>(null);
+
+  // The cart lives on the server (CD-20), so choices survive a refresh.
+  useEffect(() => {
+    let active = true;
+    void fetchCart(fetchImpl).then((r) => {
+      if (!active) return;
+      if (r.kind === 'ok') setCart(r.cart);
+      else setCartError(r.message);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchImpl]);
+
+  const inCart = new Map((cart?.lines ?? []).map((l) => [l.domain, l]));
 
   /** A card or price-list row puts that extension into the search box. */
   function pick(tld: string) {
@@ -188,16 +206,18 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
     }
   }
 
-  function toggle(result: SearchResult) {
-    setPicked((current) => {
-      const next = new Map(current);
-      if (next.has(result.domain)) next.delete(result.domain);
-      else next.set(result.domain, result);
-      return next;
-    });
+  async function toggle(result: SearchResult) {
+    if (!csrfToken || busy) return;
+    setBusy(result.domain);
+    setCartError(undefined);
+    const line = inCart.get(result.domain);
+    const outcome: CartResult = line ? await removeFromCart(line.id, csrfToken, fetchImpl) : await addDomainToCart(result.domain, csrfToken, fetchImpl);
+    setBusy(null);
+    if (outcome.kind === 'ok') setCart(outcome.cart);
+    else setCartError(outcome.message);
   }
 
-  const totalNgn = [...picked.values()].reduce((sum, r) => sum + r.register.ngn, 0);
+  const lines = cart?.lines ?? [];
 
   return (
     <div className="pc-stack" ref={top}>
@@ -234,7 +254,7 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
             ) : (
               <ul className="pc-results">
                 {results.map((r, i) => {
-                  const chosen = picked.has(r.domain);
+                  const chosen = inCart.has(r.domain);
                   return (
                     <li key={r.domain} className={`pc-result${i === 0 ? ' pc-result--exact' : ''}`}>
                       <div className="pc-result__name">
@@ -265,7 +285,9 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
                             variant={chosen ? 'secondary' : 'primary'}
                             aria-pressed={chosen}
                             aria-label={`${chosen ? 'Remove' : 'Choose'} ${r.domain}`}
-                            onClick={() => toggle(r)}
+                            loading={busy === r.domain}
+                            disabled={!csrfToken || (busy !== null && busy !== r.domain)}
+                            onClick={() => void toggle(r)}
                           >
                             {chosen ? (
                               <>
@@ -298,10 +320,17 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
           </Card>
         )}
 
-        {picked.size > 0 && (
+        {cartError && <Alert tone="danger">{cartError}</Alert>}
+        {lines.length > 0 && (
           <div className="pc-cartbar" role="status">
             <span>
-              <strong>{picked.size}</strong> {picked.size === 1 ? 'domain' : 'domains'} chosen · <strong>{formatMoney({ minor: totalNgn, currency: 'NGN' })}</strong> before VAT
+              <strong>{lines.length}</strong> {lines.length === 1 ? 'domain' : 'domains'} in your cart ·{' '}
+              <strong>
+                {cart?.total.ngn !== null && cart?.total.ngn !== undefined
+                  ? formatMoney({ minor: cart.total.ngn, currency: 'NGN' })
+                  : formatMoney({ minor: cart?.total.usd ?? 0, currency: 'USD' })}
+              </strong>{' '}
+              before VAT
             </span>
             <span className="pc-small pc-muted">Checkout opens soon.</span>
           </div>
