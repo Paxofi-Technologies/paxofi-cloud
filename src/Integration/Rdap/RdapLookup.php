@@ -14,6 +14,10 @@ use PaxofiCloud\Integration\Provider\ProviderCredential;
 /**
  * One RDAP domain lookup (THREAT-MODEL-DOMAIN-SEARCH.md DS-3): only the HTTP
  * status is used, 200 taken and 404 available; the body is never parsed.
+ * It asks with HEAD first (RFC 7480 §4.1), so no body is read at all: some
+ * registries (Verisign for .com) answer "not found" with an empty body and no
+ * length, which a body read can wait on until the timeout. Servers that refuse
+ * HEAD (400, 403, 405, 501) are asked once more with GET.
  * Each call allow-lists exactly the one server for the extension, through
  * ProviderHttpClient (own DNS, public-IP pinning, verified TLS, no redirects).
  * Anything else, or any failure, is `unknown`.
@@ -21,6 +25,7 @@ use PaxofiCloud\Integration\Provider\ProviderCredential;
 final readonly class RdapLookup implements DomainLookup
 {
     public const int MAX_BYTES = 65_536;
+    private const array HEAD_REFUSED = [400, 403, 405, 501];
 
     /** @param \Closure(ProviderEndpoint): ProviderTransport|null $transportFor builds the transport for one server; tests inject a fake */
     public function __construct(private ?\Closure $transportFor = null)
@@ -34,7 +39,11 @@ final readonly class RdapLookup implements DomainLookup
             $transport = $this->transportFor !== null
                 ? ($this->transportFor)($endpoint)
                 : new ProviderHttpClient([$endpoint], connectTimeoutMs: 2_000, totalTimeoutMs: 4_000, maxResponseBytes: self::MAX_BYTES);
-            $response = $transport->send($server, ProviderRequest::get('/domain/' . $domain), new ProviderCredential('rdap-client-tag', 'paxoficloud'));
+            $credential = new ProviderCredential('rdap-client-tag', 'paxoficloud');
+            $response = $transport->send($server, ProviderRequest::head('/domain/' . $domain), $credential);
+            if (in_array($response->status, self::HEAD_REFUSED, true)) {
+                $response = $transport->send($server, ProviderRequest::get('/domain/' . $domain), $credential);
+            }
         } catch (\Throwable) {
             return 'unknown';
         }

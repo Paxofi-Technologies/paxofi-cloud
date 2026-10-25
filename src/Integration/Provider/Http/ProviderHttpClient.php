@@ -159,6 +159,10 @@ final class ProviderHttpClient implements ProviderTransport
             CURLOPT_ENCODING => '',
         ];
 
+        if ($request->method === 'HEAD') {
+            // Without NOBODY curl would wait for a body a HEAD response never sends.
+            $options[CURLOPT_NOBODY] = true;
+        }
         if ($request->json !== null) {
             $headers[] = 'Content-Type: application/json';
             $options[CURLOPT_POSTFIELDS] = json_encode($request->json, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
