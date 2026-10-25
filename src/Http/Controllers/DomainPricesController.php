@@ -16,8 +16,9 @@ use PaxofiCloud\Http\RequestId;
 
 /**
  * GET /api/v1/domains/prices?q=&page=&category= — the public domain price list
- * (THREAT-MODEL-DOMAIN-SEARCH.md DS-11). Public, read-only, cacheable for
- * five minutes. Only selling prices, featured flags and labels come out.
+ * (THREAT-MODEL-DOMAIN-SEARCH.md DS-11). Public and read-only; browsers
+ * revalidate on every load (ETag), so staff changes show at once. Only
+ * selling prices, featured flags and labels come out.
  */
 final readonly class DomainPricesController implements Controller
 {
@@ -42,10 +43,29 @@ final readonly class DomainPricesController implements Controller
                 : ProblemDetails::response(422, $e->reason, RequestId::of($request));
         }
 
-        return new Response(
-            200,
-            ['content-type' => 'application/json', 'cache-control' => 'public, max-age=300'],
-            json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-        );
+        $body = json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        // Staff changes (featured, labels, prices) must show on the next load, so
+        // browsers revalidate every time; an unchanged list costs only a 304.
+        $etag = '"' . substr(hash('sha256', $body), 0, 32) . '"';
+        $headers = ['cache-control' => 'no-cache', 'etag' => $etag];
+        if (self::matches($request->header('if-none-match'), $etag)) {
+            return new Response(304, $headers, '');
+        }
+
+        return new Response(200, ['content-type' => 'application/json', ...$headers], $body);
+    }
+
+    private static function matches(?string $ifNoneMatch, string $etag): bool
+    {
+        if ($ifNoneMatch === null || strlen($ifNoneMatch) > 512) {
+            return false;
+        }
+        foreach (explode(',', $ifNoneMatch) as $candidate) {
+            if (hash_equals($etag, preg_replace('/^W\//', '', trim($candidate)) ?? '')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

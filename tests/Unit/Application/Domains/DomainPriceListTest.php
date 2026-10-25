@@ -22,6 +22,8 @@ use PaxofiCloud\Tests\Support\InMemoryFxRateStore;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\ScriptedPriceFeed;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
+use Paxofi\Core\Http\Request;
+use PaxofiCloud\Http\Controllers\DomainPricesController;
 use PHPUnit\Framework\TestCase;
 
 /** THREAT-MODEL-DOMAIN-SEARCH.md DS-11: public price list, selling prices only. Test numbers only. */
@@ -107,5 +109,29 @@ final class DomainPriceListTest extends TestCase
         }
         $this->expectExceptionObject(new DomainSearchRefused(DomainSearchRefused::TOO_MANY, 60));
         $list->view('203.0.113.9', '', 1);
+    }
+
+    public function testBrowsersRevalidateSoAStaffChangeShowsOnTheNextLoad(): void
+    {
+        $controller = new DomainPricesController($this->list());
+        $first = $controller(new Request('GET', '/api/v1/domains/prices', [], ''));
+        self::assertSame(200, $first->status());
+        self::assertSame('no-cache', $first->header('cache-control'), 'never served from a browser cache without asking');
+        $etag = (string) $first->header('etag');
+        self::assertMatchesRegularExpression('/^"[0-9a-f]{32}"$/', $etag);
+
+        $same = $controller(new Request('GET', '/api/v1/domains/prices', ['If-None-Match' => 'W/' . $etag], ''));
+        self::assertSame(304, $same->status());
+        self::assertSame('', $same->body());
+
+        // Staff feature .xyz at 2 instead of .com: the next load gets the new list.
+        $this->settings->save(new ExtensionSettings(new TldName('com')), 'x', new \DateTimeImmutable());
+        $this->settings->save(new ExtensionSettings(new TldName('xyz'), featuredOrder: 2), 'x', new \DateTimeImmutable());
+        // A new request builds a new quote engine, which reads the settings again.
+        $changed = (new DomainPricesController($this->list()))(new Request('GET', '/api/v1/domains/prices', ['If-None-Match' => $etag], ''));
+        self::assertSame(200, $changed->status());
+        $body = json_decode($changed->body(), true);
+        self::assertIsArray($body);
+        self::assertSame(['ng', 'xyz'], array_column(is_array($body['featured'] ?? null) ? $body['featured'] : [], 'tld'));
     }
 }
