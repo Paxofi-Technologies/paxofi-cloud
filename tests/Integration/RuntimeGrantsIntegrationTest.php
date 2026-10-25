@@ -74,6 +74,27 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         self::assertDenied($app, "DELETE FROM spaceship_price_checks WHERE id = REPEAT('c', 32)");
         self::assertDenied($app, "DELETE FROM spaceship_price_check_items WHERE check_id = REPEAT('c', 32)");
 
+        // Orders and invoices (CD-24, C-44): status may move; totals and lines never change.
+        $app->exec("INSERT INTO accounts (id, type, name) VALUES (REPEAT('d', 32), 'personal', 'T')");
+        $app->exec("INSERT INTO identities (id, email, email_lookup, full_name, phone_e164, password_hash, status, terms_version, terms_accepted_at, verified_at)
+                    VALUES (REPEAT('e', 32), 'g@example.test', REPEAT('9', 64), 'G', '+2348000000000', '\$argon2id\$x', 'active', 'v1', NOW(6), NOW(6))");
+        $app->exec("INSERT INTO orders (id, number, account_id, placed_by, status, currency, subtotal_minor, tax_minor, total_minor, tax_country, tax_name, tax_rate_bp,
+                        billing_country, visitor_country, flagged_for_review, terms_version, idempotency_key, request_hash, placed_at, expires_at, status_changed_at)
+                    VALUES (REPEAT('o', 32), 'PXO-2026-000001', REPEAT('d', 32), REPEAT('e', 32), 'pending_payment', 'NGN', 100, 0, 100, 'NG', 'VAT', 750,
+                        'NG', NULL, 0, 'v1', 'key-0000000000000001', REPEAT('h', 64), NOW(6), NOW(6), NOW(6))");
+        $app->exec("INSERT INTO order_lines (order_id, line_no, kind, domain, years, price_minor, tax_minor, total_minor, renewal_price_minor, registrar, cost_minor, cost_currency, fx_set_id)
+                    VALUES (REPEAT('o', 32), 1, 'domain_register', 'grants-test.com', 1, 100, 0, 100, 100, 'domainnameapi', 50, 'USD', REPEAT('f', 32))");
+        $app->exec("UPDATE orders SET status = 'cancelled', status_changed_at = NOW(6) WHERE id = REPEAT('o', 32)");
+        self::assertDenied($app, "UPDATE orders SET total_minor = 1, subtotal_minor = 1 WHERE id = REPEAT('o', 32)");
+        self::assertDenied($app, "UPDATE orders SET account_id = REPEAT('d', 32) WHERE id = REPEAT('o', 32)");
+        self::assertDenied($app, "DELETE FROM orders WHERE id = REPEAT('o', 32)");
+        self::assertDenied($app, "UPDATE order_lines SET price_minor = 1 WHERE order_id = REPEAT('o', 32)");
+        self::assertDenied($app, "DELETE FROM order_lines WHERE order_id = REPEAT('o', 32)");
+        self::assertDenied($app, 'UPDATE invoices SET total_minor = 1');
+        self::assertDenied($app, 'DELETE FROM invoice_lines');
+        self::assertDenied($app, "UPDATE tax_rates SET rate_bp = 0 WHERE country = 'NG'");
+        self::assertDenied($app, "INSERT INTO tax_rates (country, tax_name, rate_bp, effective_from, created_by) VALUES ('NG', 'VAT', 0, NOW(6), 'x')");
+
         // Ordinary tables keep full row access.
         self::scalar($app, 'SELECT COUNT(*) FROM identities');
         $app->exec("DELETE FROM email_outbox WHERE id = 'none'");
@@ -112,7 +133,7 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
             self::fail('Runtime user was allowed: ' . $sql);
         } catch (PDOException $e) {
             $code = $e->errorInfo[1] ?? null;
-            self::assertContains(is_int($code) ? $code : 0, [1142, 1044], $sql . ' → ' . $e->getMessage());
+            self::assertContains(is_int($code) ? $code : 0, [1142, 1143, 1044], $sql . ' → ' . $e->getMessage());
         }
     }
 

@@ -20,6 +20,8 @@ export interface AppShellProps {
   onSignOut: () => void;
   /** Label at the top of the page; the customer portal still shows sample data in places. */
   envLabel?: string;
+  /** Extra controls in the top bar before the user's name, e.g. the cart. */
+  topbarActions?: ReactNode;
   children: ReactNode;
 }
 
@@ -35,7 +37,7 @@ export interface AppShellProps {
  * slide and fade; a closed group is inert, so its pages cannot be reached by
  * keyboard or screen reader while hidden.
  */
-export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLabel = 'Prototype · sample data', children }: AppShellProps) {
+export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLabel = 'Prototype · sample data', topbarActions, children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set(groupsHolding(nav, current)));
   const [shownPage, setShownPage] = useState(current);
@@ -151,6 +153,7 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
             <span className="pc-topbar__env">{envLabel}</span>
           </div>
           <div className="pc-topbar__user">
+            {topbarActions}
             <span className="pc-avatar" aria-hidden="true">
               {userName.slice(0, 1).toUpperCase()}
             </span>

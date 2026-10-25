@@ -138,3 +138,11 @@
 .pc-pricelist__tab:focus-visible { outline: none; box-shadow: var(--pc-shadow-focus); }
 .pc-pricelist__count { opacity: 0.8; }
 .pc-form-actions { margin-top: var(--pc-space-5); }
+/* Checkout totals (CMP-010): figures right-aligned, the total emphasised. */
+.pc-num { text-align: right; }
+.pc-totals { margin: var(--pc-space-5) 0 var(--pc-space-3) auto; max-width: 22rem; display: grid; gap: var(--pc-space-2); }
+.pc-totals > div { display: flex; justify-content: space-between; gap: var(--pc-space-4); }
+.pc-totals dt { color: var(--pc-semantic-text-secondary); }
+.pc-totals dd { margin: 0; font-variant-numeric: tabular-nums; }
+.pc-totals__total { border-top: 1px solid var(--pc-semantic-border-default); padding-top: var(--pc-space-2); font-weight: var(--pc-font-weight-semibold); }
+.pc-totals__total dt { color: var(--pc-semantic-text-primary); }

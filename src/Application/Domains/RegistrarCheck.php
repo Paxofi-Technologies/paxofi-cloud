@@ -82,6 +82,31 @@ final readonly class RegistrarCheck
     }
 
     /**
+     * Queues names that checkout already validated from the cart (CD-23), in
+     * jobs of at most MAX_DOMAINS. Checkout limits per account, so no IP limit here.
+     *
+     * @param list<string> $domains
+     * @return list<string> job IDs
+     * @throws DomainSearchRefused when the shared queue is full
+     */
+    public function queueForCheckout(array $domains): array
+    {
+        if ($this->redis->length(self::QUEUE) >= self::MAX_QUEUE) {
+            throw new DomainSearchRefused(DomainSearchRefused::TOO_MANY, 30);
+        }
+        $ids = [];
+        foreach (array_chunk(array_values(array_unique($domains)), self::MAX_DOMAINS) as $chunk) {
+            $id = bin2hex(random_bytes(16));
+            $this->redis->setEx(self::jobKey($id), self::TTL_SECONDS, json_encode($chunk, JSON_THROW_ON_ERROR));
+            $this->redis->setEx(self::resultKey($id), self::TTL_SECONDS, 'pending');
+            $this->redis->pushLeft(self::QUEUE, $id);
+            $ids[] = $id;
+        }
+
+        return $ids;
+    }
+
+    /**
      * @phpstan-impure reads the current answer from Redis
      * @return array{status: 'pending'|'done'|'expired', results: list<array{domain: string, status: string, premium: bool, register: ?array{usd: int, ngn: ?int}}>}
      * @throws DomainSearchRefused

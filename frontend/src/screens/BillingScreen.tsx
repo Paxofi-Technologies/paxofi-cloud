@@ -1,5 +1,7 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Card, TextField } from '../components';
+import { fetchOrders, ORDER_STATUS_LABELS, type Order } from '../lib/checkout';
+import { formatMoney } from '../lib/money';
 import { BILLING_FIELDS, EMPTY_DETAILS, fetchBilling, formatRate, saveBilling, type BillingDetails, type BillingField, type BillingState } from '../lib/billing';
 
 export interface BillingScreenProps {
@@ -106,6 +108,8 @@ export function BillingScreen({ csrfToken, fetchImpl }: BillingScreenProps) {
         </Card>
       )}
 
+      <OrdersCard fetchImpl={fetchImpl} />
+
       <Card title="Billing details">
         {billing === null && message === null ? (
           <p className="pc-muted" role="status">
@@ -153,6 +157,70 @@ export function BillingScreen({ csrfToken, fetchImpl }: BillingScreenProps) {
         )}
       </Card>
     </div>
+  );
+}
+
+/** The account's orders (ORD-004): snapshot totals, newest first. */
+function OrdersCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
+  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetchOrders(1, fetchImpl).then((r) => {
+      if (!active) return;
+      if (r.kind === 'ok') setOrders(r.orders);
+      else setError(r.message);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchImpl]);
+
+  return (
+    <Card title="Orders">
+      {error && <Alert tone="danger">{error}</Alert>}
+      {orders === null && !error && (
+        <p className="pc-muted" role="status">
+          Loading…
+        </p>
+      )}
+      {orders?.length === 0 && <p className="pc-muted">No orders yet.</p>}
+      {orders && orders.length > 0 && (
+        <div className="pc-table-scroll">
+          <table className="pc-table">
+            <thead>
+              <tr>
+                <th scope="col">Order</th>
+                <th scope="col">Placed</th>
+                <th scope="col">Items</th>
+                <th scope="col">Status</th>
+                <th scope="col">Invoice</th>
+                <th scope="col" className="pc-num">
+                  Total
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr key={o.id}>
+                  <td>
+                    <strong>{o.number}</strong>
+                  </td>
+                  <td>{new Date(o.placedAt).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' })}</td>
+                  <td>{o.lines.map((l) => l.domain).join(', ')}</td>
+                  <td>
+                    <Badge tone={o.status === 'pending_payment' ? 'warning' : o.status === 'fulfilled' ? 'success' : 'neutral'}>{ORDER_STATUS_LABELS[o.status] ?? o.status}</Badge>
+                  </td>
+                  <td>{o.invoiceNumber}</td>
+                  <td className="pc-num">{formatMoney({ minor: o.total, currency: o.currency })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
