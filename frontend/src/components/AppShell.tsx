@@ -28,20 +28,23 @@ export interface AppShellProps {
  * a drawer opened by the menu button in the top bar; it closes on choosing a
  * page, on the close button, on tapping outside it, and on Escape.
  *
- * A menu heading with child pages is a collapsible group: clicking it opens
- * or closes its pages. It starts open when one of its pages is the current
- * page, and opens by itself when navigation lands on one of them.
+ * A menu heading with child pages is a collapsible group (an accordion):
+ * clicking it opens or closes its pages, and opening one group closes any
+ * other. The open group follows navigation: landing on a page inside a group
+ * opens it, and choosing a page outside it closes it. Opening and closing
+ * slide and fade; a closed group is inert, so its pages cannot be reached by
+ * keyboard or screen reader while hidden.
  */
 export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLabel = 'Prototype · sample data', children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set(groupsHolding(nav, current)));
   const [shownPage, setShownPage] = useState(current);
-  // Landing on a page inside a closed group (back button, a link) opens that group.
-  // Adjusted while rendering, not in an effect, so the menu never draws closed first.
+  // On navigation (a menu choice, the back button, a link) only the group holding the
+  // new page stays open. Adjusted while rendering, not in an effect, so the menu never
+  // draws a stale state first.
   if (shownPage !== current) {
     setShownPage(current);
-    const holding = groupsHolding(nav, current);
-    if (!holding.every((id) => openGroups.has(id))) setOpenGroups(new Set([...openGroups, ...holding]));
+    setOpenGroups(new Set(groupsHolding(nav, current)));
   }
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -60,12 +63,7 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
   }, [menuOpen]);
 
   function toggleGroup(id: string) {
-    setOpenGroups((open) => {
-      const next = new Set(open);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setOpenGroups((open) => (open.has(id) ? new Set() : new Set([id])));
   }
 
   function choose(id: string) {
@@ -115,16 +113,18 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
                       <ChevronDownIcon />
                     </span>
                   </button>
-                  <ul
-                    id={`pc-nav-group-${item.id}-pages`}
-                    className="pc-nav pc-nav--sub"
-                    aria-labelledby={`pc-nav-group-${item.id}`}
-                    hidden={!openGroups.has(item.id)}
-                  >
-                    {item.children.map((child) => (
-                      <NavEntry key={child.id} item={child} current={current} onChoose={choose} />
-                    ))}
-                  </ul>
+                  <div className="pc-nav__panel" data-open={openGroups.has(item.id)} inert={!openGroups.has(item.id)}>
+                    <ul
+                      id={`pc-nav-group-${item.id}-pages`}
+                      className="pc-nav pc-nav--sub"
+                      aria-labelledby={`pc-nav-group-${item.id}`}
+                      aria-hidden={!openGroups.has(item.id) || undefined}
+                    >
+                      {item.children.map((child) => (
+                        <NavEntry key={child.id} item={child} current={current} onChoose={choose} />
+                      ))}
+                    </ul>
+                  </div>
                 </li>
               ) : (
                 <NavEntry key={item.id} item={item} current={current} onChoose={choose} />

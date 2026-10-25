@@ -683,13 +683,15 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
             { name: 'au', reason: 'bad_price', detail: 'renew:format' },
             { name: 'eco', reason: 'unsupported_currency', detail: 'currency:missing' },
             { name: 'moscow', reason: 'bad_period', detail: 'min:1_max:0' },
+            { name: 'aaa.pro', reason: 'bad_price', detail: 'reg:negative' },
           ],
         }),
       },
     });
     render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
-    await user.click(await screen.findByText('Not on sale yet (9)'));
+    await user.click(await screen.findByText('Not on sale yet (10)'));
+    expect(screen.getByText('Not offered by this registrar (registration price is negative): 1')).toBeInTheDocument();
     expect(screen.getByText('A price we could not read (registration price is 0): 1')).toBeInTheDocument();
     expect(screen.getByText('A price we could not read (renewal price is not a plain number): 1')).toBeInTheDocument();
     expect(screen.getByText('Priced in a currency we do not accept yet (no currency given): 1')).toBeInTheDocument();
@@ -747,6 +749,23 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
 
     expect(await screen.findByText(/was held back because more than 20% of costs changed by over 50%/)).toBeInTheDocument();
     expect(screen.getByText(/failed: the registrar refused the API key/)).toBeInTheDocument();
+    expect(screen.queryByText(/whitelisted/)).toBeNull();
+  });
+
+  it('names a refused key fix only on its own registrar tab', async () => {
+    const failed = { trigger: 'manual', outcome: 'failed', reason: 'unauthorised', attempts: 1, started_at: '2026-10-24T03:00:00+00:00', finished_at: '2026-10-24T03:00:01+00:00' };
+    const at = (provider: string) =>
+      adminApi({
+        'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+        'GET /admin-api/v1/domain-costs': { status: 200, body: costs({ provider, runs: [failed] }) },
+      });
+    const namecheap = render(<AdminApp path="/domain-costs" fetchImpl={at('namecheap')} credentials={authenticator()} />);
+    expect(await screen.findByText(/failed: the registrar refused the API key\. Fix it under API providers → Domain registrars\. Also check that the server IP address is whitelisted in Namecheap\./)).toBeInTheDocument();
+    namecheap.unmount();
+
+    render(<AdminApp path="/domain-costs" fetchImpl={at('dynadot')} credentials={authenticator()} />);
+    expect(await screen.findByText(/failed: the registrar refused the API key\. Fix it under API providers → Domain registrars\. Use the production key and secret, not the sandbox ones\./)).toBeInTheDocument();
+    expect(screen.queryByText(/whitelisted/)).toBeNull();
   });
 
   it('lets Finance read but not sync, and hides the card from staff without catalogue.view', async () => {
