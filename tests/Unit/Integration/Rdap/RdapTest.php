@@ -50,7 +50,7 @@ final class RdapTest extends TestCase
     {
         $cases = [[200, 'taken'], [404, 'available'], [429, 'unknown'], [500, 'unknown'], [301, 'unknown']];
         foreach ($cases as [$status, $expected]) {
-            $transport = (new FakeProviderTransport())->expectRaw('GET', '/domain/example.com', $status, '{"huge":"ignored"}');
+            $transport = (new FakeProviderTransport())->expectRaw('HEAD', '/domain/example.com', $status, '');
             $lookup = new RdapLookup(static function (ProviderEndpoint $endpoint) use ($transport): FakeProviderTransport {
                 self::assertSame('rdap.verisign.com', $endpoint->host, 'one server allow-listed per call');
 
@@ -59,8 +59,21 @@ final class RdapTest extends TestCase
             self::assertSame($expected, $lookup->check('example.com', 'https://rdap.verisign.com/com/v1'), (string) $status);
         }
 
-        $failing = (new FakeProviderTransport())->expectFailure('GET', '/domain/example.com');
+        $failing = (new FakeProviderTransport())->expectFailure('HEAD', '/domain/example.com');
         self::assertSame('unknown', (new RdapLookup(static fn (): FakeProviderTransport => $failing))->check('example.com', 'https://rdap.verisign.com/com/v1'));
         self::assertSame('unknown', (new RdapLookup())->check('example.com', 'http://not-https.example'), 'a bad server is never called');
+    }
+
+    public function testAsksWithHeadAndFallsBackToGetOnlyWhenHeadIsRefused(): void
+    {
+        $refusing = (new FakeProviderTransport())
+            ->expectRaw('HEAD', '/domain/example.site', 405, '')
+            ->expectRaw('GET', '/domain/example.site', 404, '{"errorCode":404}');
+        self::assertSame('available', (new RdapLookup(static fn (): FakeProviderTransport => $refusing))->check('example.site', 'https://rdap.centralnic.com/site'));
+        self::assertSame(['HEAD', 'GET'], array_map(static fn (array $s): string => $s['request']->method, $refusing->sent));
+
+        $verisign = (new FakeProviderTransport())->expectRaw('HEAD', '/domain/example.com', 404, '');
+        self::assertSame('available', (new RdapLookup(static fn (): FakeProviderTransport => $verisign))->check('example.com', 'https://rdap.verisign.com/com/v1'));
+        self::assertCount(1, $verisign->sent, 'no GET when HEAD answered');
     }
 }
