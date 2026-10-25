@@ -9,6 +9,7 @@ export interface PriceRow {
   tld: string;
   featured: boolean;
   label: string;
+  category: string;
   register: Pair;
   transfer: Pair;
   renew: Pair;
@@ -16,6 +17,8 @@ export interface PriceRow {
 
 export interface PriceList {
   featured: PriceRow[];
+  /** Extensions on sale per category (for the tab counts). */
+  categories: Record<string, number>;
   total: number;
   page: number;
   pageSize: number;
@@ -23,6 +26,23 @@ export interface PriceList {
 }
 
 const LABELS: Record<string, string> = { hot: 'HOT', new: 'NEW', sale: 'SALE' };
+/** Tab names for the categories the server knows (DS-12). */
+export const CATEGORY_NAMES: Record<string, string> = {
+  business: 'Business',
+  technology: 'Technology',
+  geographic: 'Geographic',
+  arts: 'Arts and entertainment',
+  sports: 'Sports',
+  services: 'Services',
+  finance: 'Money and finance',
+  education: 'Education',
+  food: 'Food and drink',
+  leisure: 'Leisure and recreation',
+  shopping: 'Shopping',
+  real_estate: 'Real estate',
+  novelty: 'Novelty',
+  other: 'Other',
+};
 const isMinor = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
 function pair(value: unknown): Pair {
@@ -37,22 +57,35 @@ function rows(value: unknown): PriceRow[] {
     if (typeof r.tld !== 'string' || !/^[a-z0-9.-]{1,63}$/.test(r.tld)) continue;
     const register = pair(r.register);
     if (!register) continue;
-    out.push({ tld: r.tld, featured: r.featured === true, label: typeof r.label === 'string' ? r.label : 'none', register, transfer: pair(r.transfer), renew: pair(r.renew) });
+    out.push({
+      tld: r.tld,
+      featured: r.featured === true,
+      label: typeof r.label === 'string' ? r.label : 'none',
+      category: typeof r.category === 'string' && Object.hasOwn(CATEGORY_NAMES, r.category) ? r.category : 'other',
+      register, transfer: pair(r.transfer), renew: pair(r.renew) });
   }
   return out;
 }
 
 /** Fetches the public price list and keeps only well-formed rows; values are rendered as text. */
-export async function fetchPriceList(query: { q: string; page: number }, fetchImpl: typeof fetch = fetch): Promise<PriceList | null> {
+export async function fetchPriceList(query: { q: string; page: number; category?: string }, fetchImpl: typeof fetch = fetch): Promise<PriceList | null> {
   const params = new URLSearchParams();
   if (query.q) params.set('q', query.q);
+  if (query.category) params.set('category', query.category);
   if (query.page > 1) params.set('page', String(query.page));
   try {
     const response = await fetchImpl(`/api/v1/domains/prices${params.size ? `?${params.toString()}` : ''}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
     if (!response.ok) return null;
     const body = (await response.json()) as Record<string, unknown>;
+    const counts: Record<string, number> = {};
+    const rawCounts = (body.categories ?? {}) as Record<string, unknown>;
+    for (const key of Object.keys(CATEGORY_NAMES)) {
+      const n = rawCounts[key];
+      if (isMinor(n) && n > 0) counts[key] = n;
+    }
     return {
       featured: rows(body.featured),
+      categories: counts,
       total: isMinor(body.total) ? body.total : 0,
       page: isMinor(body.page) ? body.page : 1,
       pageSize: isMinor(body.page_size) && body.page_size > 0 ? body.page_size : 25,
@@ -81,12 +114,13 @@ function Price({ value }: { value: Pair }) {
 export function DomainPriceListView({ fetchImpl, onPick }: { fetchImpl?: typeof fetch | undefined; onPick: (tld: string) => void }) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [category, setCategory] = useState('');
   const [list, setList] = useState<PriceList | null | 'loading'>('loading');
 
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
-      void fetchPriceList({ q: query.trim().toLowerCase().replace(/^\./, ''), page }, fetchImpl).then((next) => {
+      void fetchPriceList({ q: query.trim().toLowerCase().replace(/^\./, ''), page, category }, fetchImpl).then((next) => {
         if (active) setList(next);
       });
     }, 200);
@@ -94,7 +128,7 @@ export function DomainPriceListView({ fetchImpl, onPick }: { fetchImpl?: typeof 
       active = false;
       window.clearTimeout(timer);
     };
-  }, [fetchImpl, query, page]);
+  }, [fetchImpl, query, page, category]);
 
   if (list === 'loading') return <p className="pc-muted">Loading prices…</p>;
   if (list === null) return null;
@@ -118,6 +152,24 @@ export function DomainPriceListView({ fetchImpl, onPick }: { fetchImpl?: typeof 
         </section>
       )}
       <Card title="Domain prices">
+        <div className="pc-pricelist__tabs" role="tablist" aria-label="Extension categories">
+          {[['', 'All'] as const, ...Object.keys(list.categories).map((c) => [c, CATEGORY_NAMES[c] ?? c] as const)].map(([key, name]) => (
+            <button
+              key={key || 'all'}
+              type="button"
+              role="tab"
+              aria-selected={category === key}
+              className="pc-pricelist__tab"
+              onClick={() => {
+                setCategory(key);
+                setPage(1);
+              }}
+            >
+              {name}
+              {key !== '' && <span className="pc-pricelist__count"> ({list.categories[key]})</span>}
+            </button>
+          ))}
+        </div>
         <div className="pc-pricelist__filter">
           <TextField
             label="Find an extension"

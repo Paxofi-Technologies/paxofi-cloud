@@ -127,3 +127,13 @@
 .pc-pricelist__tld:hover { text-decoration: underline; }
 .pc-pricelist__amount { display: block; font-weight: var(--pc-font-weight-semibold); font-variant-numeric: tabular-nums; }
 .pc-pricelist__sub { display: block; font-size: var(--pc-font-size-xs); color: var(--pc-semantic-text-secondary); }
+.pc-pricelist__tabs { display: flex; flex-wrap: wrap; gap: var(--pc-space-2); margin-bottom: var(--pc-space-4); }
+.pc-pricelist__tab {
+  border: 1px solid var(--pc-semantic-border-default); background: var(--pc-semantic-surface-subtle); color: var(--pc-semantic-text-primary);
+  border-radius: var(--pc-radius-md); padding: var(--pc-space-2) var(--pc-space-3); font: inherit; font-size: var(--pc-font-size-sm); cursor: pointer;
+  transition: background-color var(--pc-motion-fast), color var(--pc-motion-fast), border-color var(--pc-motion-fast), transform 120ms ease;
+}
+.pc-pricelist__tab:hover { border-color: var(--pc-semantic-border-strong); transform: translateY(-1px); }
+.pc-pricelist__tab[aria-selected='true'] { background: var(--pc-semantic-action-primary); border-color: var(--pc-semantic-action-primary); color: var(--pc-semantic-action-onPrimary); }
+.pc-pricelist__tab:focus-visible { outline: none; box-shadow: var(--pc-shadow-focus); }
+.pc-pricelist__count { opacity: 0.8; }

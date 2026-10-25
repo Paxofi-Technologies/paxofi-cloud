@@ -8,12 +8,31 @@ import {
   saveDomainPricing,
   saveExtensionSettings,
   type DomainExtensions,
+  type ExtensionPriceInput,
   type ExtensionRow,
   type StaffSession,
 } from './adminApi';
 
 const REGISTRARS: Record<string, string> = { domainnameapi: 'DomainNameAPI', namecheap: 'Namecheap', dynadot: 'Dynadot', spaceship: 'Spaceship' };
 const LABELS: Record<string, string> = { none: 'No label', hot: 'HOT', new: 'NEW', sale: 'SALE' };
+export const CATEGORY_NAMES: Record<string, string> = {
+  business: 'Business',
+  technology: 'Technology',
+  geographic: 'Geographic',
+  arts: 'Arts and entertainment',
+  sports: 'Sports',
+  services: 'Services',
+  finance: 'Money and finance',
+  education: 'Education',
+  food: 'Food and drink',
+  leisure: 'Leisure and recreation',
+  shopping: 'Shopping',
+  real_estate: 'Real estate',
+  novelty: 'Novelty',
+  other: 'Other',
+};
+const PRICE_ACTIONS = ['register', 'renew', 'transfer'] as const;
+const ACTION_NAMES: Record<string, string> = { register: 'Register', renew: 'Renew', transfer: 'Transfer' };
 
 /** "25" or "25.5" (per cent) → basis points, without floating point. */
 export function percentToBp(text: string): number | null {
@@ -36,6 +55,8 @@ function failure(result: ApiResult, fallback: string): string {
   if (result.kind === 'throttled') return `Too many attempts. Try again ${describeWait(result.retryAfterSeconds)}.`;
   if (result.kind === 'rejected' && result.code === 'step_up_failed') return 'That authenticator code is not right. Use the newest code from your app.';
   if (result.kind === 'rejected' && result.code === 'invalid') return 'Some values are out of range. Check them and try again.';
+  if (result.kind === 'rejected' && result.code === 'below_floor')
+    return 'One of your prices is below the registrar cost plus your minimum margin, or that action is not sold for this extension. Raise it or leave it empty.';
   return fallback;
 }
 
@@ -176,6 +197,9 @@ function amounts(usd: number | null, ngn: number | null) {
   );
 }
 
+const hasOverride = (row: ExtensionRow): boolean =>
+  PRICE_ACTIONS.some((a) => (row.overrides.usd[a] ?? null) !== null || (row.overrides.ngn[a] ?? null) !== null);
+
 function ExtensionRowView({ row, canManage, priced, onEdit }: { row: ExtensionRow; canManage: boolean; priced: boolean; onEdit: () => void }) {
   const cell = (action: string) => {
     const usd = row.usd?.[action] ?? null;
@@ -197,7 +221,10 @@ function ExtensionRowView({ row, canManage, priced, onEdit }: { row: ExtensionRo
       <td>
         <span className="pc-ext__name">.{row.tld}</span>{' '}
         {row.featuredOrder !== null && <Badge tone="info">Featured {row.featuredOrder}</Badge>}{' '}
-        {row.label !== 'none' && <Badge tone="warning">{LABELS[row.label] ?? row.label}</Badge>}
+        {row.label !== 'none' && <Badge tone="warning">{LABELS[row.label] ?? row.label}</Badge>}{' '}
+        {hasOverride(row) && <Badge tone={row.overridesIgnored.length > 0 ? 'danger' : 'success'}>{row.overridesIgnored.length > 0 ? 'Custom price paused' : 'Custom price'}</Badge>}
+        <br />
+        <small className="pc-muted">{CATEGORY_NAMES[row.categoryShown] ?? row.categoryShown}</small>
       </td>
       <td>
         {row.chosenRegistrar ? (REGISTRARS[row.chosenRegistrar] ?? row.chosenRegistrar) : <span className="pc-muted">No fresh price</span>}
@@ -276,11 +303,31 @@ function ExtensionForm({
   const [graceFee, setGraceFee] = useState(minorToAmount(row.graceFee));
   const [redemptionDays, setRedemptionDays] = useState(String(row.redemptionDays));
   const [redemptionFee, setRedemptionFee] = useState(row.redemptionFee === null ? '' : minorToAmount(row.redemptionFee));
+  const [category, setCategory] = useState(row.category ?? '');
+  const [prices, setPrices] = useState<Record<'usd' | 'ngn', Record<string, string>>>(() => {
+    const text = (v: number | null | undefined) => (v === null || v === undefined ? '' : minorToAmount(v));
+    return {
+      usd: Object.fromEntries(PRICE_ACTIONS.map((a) => [a, text(row.overrides.usd[a])])),
+      ngn: Object.fromEntries(PRICE_ACTIONS.map((a) => [a, text(row.overrides.ngn[a])])),
+    };
+  });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const priceInput: ExtensionPriceInput = { usd: {}, ngn: {} };
+    for (const currency of ['usd', 'ngn'] as const) {
+      for (const action of PRICE_ACTIONS) {
+        const text = (prices[currency][action] ?? '').trim();
+        const value = text === '' ? null : amountToMinor(text);
+        if (text !== '' && (value === null || value === 0)) {
+          setError('Enter prices like 12 or 12.99, or leave them empty to use your markup.');
+          return;
+        }
+        priceInput[currency][action] = value;
+      }
+    }
     const whole = (text: string, max: number): number | null | undefined => {
       if (text.trim() === '') return null;
       return /^\d{1,3}$/.test(text.trim()) && Number(text) <= max ? Number(text) : undefined;
@@ -307,6 +354,8 @@ function ExtensionForm({
         grace_fee: graceFeeMinor,
         redemption_days: redemption,
         redemption_fee: redemptionFeeMinor,
+        category: category === '' ? null : category,
+        prices: priceInput,
       },
       fetchImpl,
     );
@@ -376,6 +425,41 @@ function ExtensionForm({
               ))}
             </select>
           </div>
+          <div className="pc-field pc-form-grid__wide">
+            <label className="pc-field__label" htmlFor={`category-${row.tld}`}>
+              Category on the price list
+            </label>
+            <select id={`category-${row.tld}`} className="pc-input" value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="">Automatic ({CATEGORY_NAMES[row.categoryShown] ?? row.categoryShown})</option>
+              {data.categories.map((c) => (
+                <option key={c} value={c}>
+                  {CATEGORY_NAMES[c] ?? c}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset className="pc-form-section">
+        <legend>Your prices (one year)</legend>
+        <p className="pc-muted pc-small">
+          Leave a box empty to use your markup price (shown in grey). A price below the registrar cost plus your minimum margin is refused, and if the cost later rises
+          above it, the markup price is charged until you change it.
+        </p>
+        {row.overridesIgnored.length > 0 && (
+          <Alert tone="danger">
+            Not charged right now: {row.overridesIgnored.map((k) => `${ACTION_NAMES[k.split('.')[1] ?? ''] ?? k} (${k.split('.')[0]?.toUpperCase()})`).join(', ')}. The cost has risen
+            above it, so the markup price is used.
+          </Alert>
+        )}
+        <div className="pc-price-grid" role="group" aria-label={`Prices for .${row.tld}`}>
+          <span />
+          <span className="pc-price-grid__head">USD</span>
+          <span className="pc-price-grid__head">NGN</span>
+          {PRICE_ACTIONS.map((action) => (
+            <PriceRow key={action} action={action} row={row} prices={prices} setPrices={setPrices} />
+          ))}
         </div>
       </fieldset>
 
@@ -399,6 +483,42 @@ function ExtensionForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function PriceRow({
+  action,
+  row,
+  prices,
+  setPrices,
+}: {
+  action: string;
+  row: ExtensionRow;
+  prices: Record<'usd' | 'ngn', Record<string, string>>;
+  setPrices: (update: (p: Record<'usd' | 'ngn', Record<string, string>>) => Record<'usd' | 'ngn', Record<string, string>>) => void;
+}) {
+  const auto = (currency: 'usd' | 'ngn') => {
+    const v = (currency === 'usd' ? row.usd : row.ngn)?.[action] ?? null;
+    return v === null ? 'Markup price' : `Auto ${minorToAmount(v)}`;
+  };
+  return (
+    <>
+      <span className="pc-price-grid__action">{ACTION_NAMES[action]}</span>
+      {(['usd', 'ngn'] as const).map((currency) => (
+        <input
+          key={currency}
+          className="pc-input"
+          inputMode="decimal"
+          aria-label={`${ACTION_NAMES[action]} price in ${currency.toUpperCase()}`}
+          placeholder={auto(currency)}
+          value={prices[currency][action] ?? ''}
+          onChange={(e) => {
+            const value = e.target.value;
+            setPrices((p) => ({ ...p, [currency]: { ...p[currency], [action]: value } }));
+          }}
+        />
+      ))}
+    </>
   );
 }
 

@@ -479,12 +479,20 @@ export interface ExtensionRow {
   graceFee: number;
   redemptionDays: number;
   redemptionFee: number | null;
+  /** Staff-chosen category, or null for the automatic one in categoryShown. */
+  category: string | null;
+  categoryShown: string;
+  /** Staff prices per action in minor units (DX-14); null = markup price. */
+  overrides: { usd: Record<string, number | null>; ngn: Record<string, number | null> };
+  /** Staff prices not charged right now, e.g. "usd.renew" (below today's floor or not sold). */
+  overridesIgnored: string[];
 }
 
 export interface DomainExtensions {
   canManage: boolean;
   registrars: string[];
   labels: string[];
+  categories: string[];
   pricing: { markupBp: number; minMarginBp: number; usdStep: number; ngnStep: number } | null;
   fx: { fetchedAt: string; source: string } | null;
   total: number;
@@ -498,6 +506,13 @@ function priceMap(value: unknown): Record<string, number | null> | null {
   if (!m) return null;
   const out: Record<string, number | null> = {};
   for (const action of ['register', 'renew', 'transfer', 'restore']) out[action] = minor(m[action]);
+  return out;
+}
+
+function overrideMap(value: unknown): Record<string, number | null> {
+  const m = obj(value);
+  const out: Record<string, number | null> = {};
+  for (const action of ['register', 'renew', 'transfer']) out[action] = minor(m?.[action]);
   return out;
 }
 
@@ -539,6 +554,10 @@ export async function fetchDomainExtensions(
       graceFee: minor(r.grace_fee) ?? 0,
       redemptionDays: minor(r.redemption_days) ?? 30,
       redemptionFee: minor(r.redemption_fee),
+      category: nullableString(r.category),
+      categoryShown: typeof r.category_shown === 'string' ? r.category_shown : 'other',
+      overrides: { usd: overrideMap(obj(r.overrides)?.usd), ngn: overrideMap(obj(r.overrides)?.ngn) },
+      overridesIgnored: strings(r.overrides_ignored),
     });
   }
   const p = obj(body.pricing);
@@ -549,6 +568,7 @@ export async function fetchDomainExtensions(
       canManage: body.can_manage === true,
       registrars: strings(body.registrars),
       labels: strings(body.labels),
+      categories: strings(body.categories),
       pricing:
         p && minor(p.markup_bp) !== null
           ? { markupBp: minor(p.markup_bp) ?? 0, minMarginBp: minor(p.min_margin_bp) ?? 0, usdStep: minor(p.usd_step) ?? 1, ngnStep: minor(p.ngn_step) ?? 1 }
@@ -562,7 +582,9 @@ export async function fetchDomainExtensions(
   };
 }
 
-export const saveExtensionSettings = (csrfToken: string, body: Record<string, string | number | null>, fetchImpl: typeof fetch = fetch) =>
+export type ExtensionPriceInput = { usd: Record<string, number | null>; ngn: Record<string, number | null> };
+
+export const saveExtensionSettings = (csrfToken: string, body: Record<string, string | number | null | ExtensionPriceInput>, fetchImpl: typeof fetch = fetch) =>
   postJson(`${ADMIN_API}/domain-extensions/settings`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
 
 export const saveDomainPricing = (csrfToken: string, body: Record<string, string | number>, fetchImpl: typeof fetch = fetch) =>

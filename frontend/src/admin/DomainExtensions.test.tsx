@@ -40,6 +40,7 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   can_manage: true,
   registrars: ['domainnameapi', 'namecheap', 'dynadot'],
   labels: ['none', 'hot', 'new', 'sale'],
+  categories: ['business', 'technology', 'geographic', 'other'],
   pricing: { markup_bp: 2500, min_margin_bp: 1000, usd_step: 1, ngn_step: 5000 },
   fx: { fetched_at: '2026-10-25T01:00:00+00:00', source: 'exchangerate-api' },
   total: 1,
@@ -109,7 +110,43 @@ describe('DomainExtensionsPage', () => {
       grace_fee: 0,
       redemption_days: 30,
       redemption_fee: 8050,
+      category: null,
+      prices: { usd: { register: null, renew: null, transfer: null }, ngn: { register: null, renew: null, transfer: null } },
     });
+  });
+
+  it('sets a category and own prices, and explains a price below the floor', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = api({
+      'GET /admin-api/v1/domain-extensions': { status: 200, body: page() },
+      'POST /admin-api/v1/domain-extensions/settings': { status: 422, body: { code: 'below_floor' } },
+    });
+    render(<DomainExtensionsPage session={session} fetchImpl={fetchImpl} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit .com' });
+    expect(within(dialog).getByLabelText('Register price in USD')).toHaveAttribute('placeholder', 'Auto 12.50');
+    await user.selectOptions(within(dialog).getByLabelText('Category on the price list'), 'technology');
+    await user.type(within(dialog).getByLabelText('Register price in USD'), '11.99');
+    await user.type(within(dialog).getByLabelText('Register price in NGN'), '15000');
+    await user.click(within(dialog).getByRole('button', { name: 'Save .com' }));
+
+    expect(await within(dialog).findByText(/One of your prices is below/)).toBeInTheDocument();
+    const call = fetchImpl.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'POST') as [string, RequestInit];
+    const body = JSON.parse(String(call[1].body)) as Record<string, unknown>;
+    expect(body.category).toBe('technology');
+    expect(body.prices).toEqual({ usd: { register: 1199, renew: null, transfer: null }, ngn: { register: 1500000, renew: null, transfer: null } });
+  });
+
+  it('flags a custom price that is paused because the cost rose', async () => {
+    const fetchImpl = api({
+      'GET /admin-api/v1/domain-extensions': {
+        status: 200,
+        body: page({ rows: [row({ overrides: { usd: { register: null, renew: 1100, transfer: null }, ngn: {} }, overrides_ignored: ['usd.renew'] })] }),
+      },
+    });
+    render(<DomainExtensionsPage session={session} fetchImpl={fetchImpl} />);
+    expect(await screen.findByText('Custom price paused')).toBeInTheDocument();
   });
 
   it('asks for an authenticator code before saving pricing settings and explains a wrong one', async () => {
