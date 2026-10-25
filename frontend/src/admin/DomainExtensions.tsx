@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Card, TextField } from '../components';
+import { Alert, Badge, Button, Card, Modal, TextField } from '../components';
 import { describeWait, type ApiResult } from '../lib/api';
 import { formatWhen } from '../lib/activity';
 import {
@@ -113,7 +113,10 @@ export function DomainExtensionsPage({ session, fetchImpl }: { session: StaffSes
         </div>
         <div className="pc-table-scroll">
           <table className="pc-table" aria-label="Domain extensions">
-            <caption className="pc-muted">One-year prices. {data.total === 0 ? 'No extension matches.' : `${data.total} extensions.`}</caption>
+            <caption className="pc-muted">
+              One-year prices. {data.total === 0 ? 'No extension matches.' : `${data.total} extensions.`}
+              {data.pricing === null && ' Grey amounts are the registrar cost; selling prices appear once pricing settings are saved.'}
+            </caption>
             <thead>
               <tr>
                 <th scope="col">Extension</th>
@@ -128,20 +131,19 @@ export function DomainExtensionsPage({ session, fetchImpl }: { session: StaffSes
             </thead>
             <tbody>
               {data.rows.map((row) => (
-                <ExtensionRowView
-                  key={row.tld}
-                  row={row}
-                  data={data}
-                  editing={editing === row.tld}
-                  onEdit={() => setEditing(editing === row.tld ? null : row.tld)}
-                  session={session}
-                  fetchImpl={fetchImpl}
-                  onSaved={() => reload(`.${row.tld} saved.`)}
-                />
+                <ExtensionRowView key={row.tld} row={row} canManage={data.canManage} priced={data.pricing !== null} onEdit={() => setEditing(row.tld)} />
               ))}
             </tbody>
           </table>
         </div>
+        <ExtensionEditor
+          row={data.rows.find((r) => r.tld === editing) ?? null}
+          data={data}
+          session={session}
+          fetchImpl={fetchImpl}
+          onClose={() => setEditing(null)}
+          onSaved={(tld) => reload(`.${tld} saved.`)}
+        />
         {pageCount > 1 && (
           <nav className="pc-admin__row" aria-label="Extension pages">
             <Button variant="secondary" onClick={() => setPage(data.page - 1)} disabled={data.page <= 1}>
@@ -160,88 +162,111 @@ export function DomainExtensionsPage({ session, fetchImpl }: { session: StaffSes
   );
 }
 
-function price(prices: Record<string, number | null> | null, action: string, currency: string): string {
-  const value = prices?.[action] ?? null;
-  return value === null ? '—' : formatMinor(value, currency);
-}
-
-function ExtensionRowView({
-  row,
-  data,
-  editing,
-  onEdit,
-  session,
-  fetchImpl,
-  onSaved,
-}: {
-  row: ExtensionRow;
-  data: DomainExtensions;
-  editing: boolean;
-  onEdit: () => void;
-  session: StaffSession;
-  fetchImpl?: typeof fetch | undefined;
-  onSaved: () => void;
-}) {
-  const cell = (action: string) =>
-    (row.usd?.[action] ?? null) !== null ? (
-      <>
-        {price(row.usd, action, 'USD')}
-        <br />
-        <span className="pc-muted">{price(row.ngn, action, 'NGN')}</span>
-      </>
-    ) : (
-      '—'
-    );
+function amounts(usd: number | null, ngn: number | null) {
   return (
     <>
-      <tr>
-        <td>
-          .{row.tld}{' '}
-          {row.featuredOrder !== null && <Badge tone="info">Featured {row.featuredOrder}</Badge>}{' '}
-          {row.label !== 'none' && <Badge tone="warning">{LABELS[row.label] ?? row.label}</Badge>}
-        </td>
-        <td>
-          {row.chosenRegistrar ? (REGISTRARS[row.chosenRegistrar] ?? row.chosenRegistrar) : <span className="pc-muted">No fresh price</span>}
-          {row.pinnedRegistrar && !row.pinUnavailable && <span className="pc-muted"> (pinned)</span>}
-          {row.pinUnavailable && <Badge tone="danger">Pin unavailable</Badge>}
-        </td>
-        <td>{cell('register')}</td>
-        <td>{cell('renew')}</td>
-        <td>{cell('transfer')}</td>
-        <td>{cell('restore')}</td>
-        <td>
-          {row.graceDays} / {row.redemptionDays} days
-        </td>
-        {data.canManage && (
-          <td>
-            <Button variant="secondary" onClick={onEdit} aria-expanded={editing}>
-              {editing ? 'Close' : 'Edit'}
-            </Button>
-          </td>
-        )}
-      </tr>
-      {editing && (
-        <tr>
-          <td colSpan={8}>
-            <ExtensionEditor row={row} data={data} session={session} fetchImpl={fetchImpl} onSaved={onSaved} />
-          </td>
-        </tr>
+      {formatMinor(usd ?? 0, 'USD')}
+      {ngn !== null && (
+        <>
+          <br />
+          <span className="pc-muted">{formatMinor(ngn, 'NGN')}</span>
+        </>
       )}
     </>
   );
 }
 
+function ExtensionRowView({ row, canManage, priced, onEdit }: { row: ExtensionRow; canManage: boolean; priced: boolean; onEdit: () => void }) {
+  const cell = (action: string) => {
+    const usd = row.usd?.[action] ?? null;
+    if (usd !== null) return amounts(usd, row.ngn?.[action] ?? null);
+    const cost = row.cost?.[action] ?? null;
+    if (!priced && cost !== null) {
+      return (
+        <span className="pc-ext__cost" title="Registrar cost, before your markup">
+          {formatMinor(cost, 'USD')}
+          <br />
+          <small>cost</small>
+        </span>
+      );
+    }
+    return <span className="pc-muted">—</span>;
+  };
+  return (
+    <tr>
+      <td>
+        <span className="pc-ext__name">.{row.tld}</span>{' '}
+        {row.featuredOrder !== null && <Badge tone="info">Featured {row.featuredOrder}</Badge>}{' '}
+        {row.label !== 'none' && <Badge tone="warning">{LABELS[row.label] ?? row.label}</Badge>}
+      </td>
+      <td>
+        {row.chosenRegistrar ? (REGISTRARS[row.chosenRegistrar] ?? row.chosenRegistrar) : <span className="pc-muted">No fresh price</span>}
+        {row.pinnedRegistrar && !row.pinUnavailable && <span className="pc-muted"> (pinned)</span>}
+        {row.pinUnavailable && <Badge tone="danger">Pin unavailable</Badge>}
+      </td>
+      <td>{cell('register')}</td>
+      <td>{cell('renew')}</td>
+      <td>{cell('transfer')}</td>
+      <td>{cell('restore')}</td>
+      <td>
+        {row.graceDays} / {row.redemptionDays} days
+      </td>
+      {canManage && (
+        <td>
+          <Button variant="secondary" onClick={onEdit} aria-haspopup="dialog">
+            Edit
+          </Button>
+        </td>
+      )}
+    </tr>
+  );
+}
+
+/** Edit one extension in a dialog: who registers it, how it is shown, and its lifecycle. */
 function ExtensionEditor({
   row,
   data,
   session,
   fetchImpl,
+  onClose,
+  onSaved,
+}: {
+  row: ExtensionRow | null;
+  data: DomainExtensions;
+  session: StaffSession;
+  fetchImpl?: typeof fetch | undefined;
+  onClose: () => void;
+  onSaved: (tld: string) => void;
+}) {
+  // Keep the last row while the dialog animates closed.
+  const [shown, setShown] = useState<ExtensionRow | null>(row);
+  if (row && row !== shown) setShown(row);
+  return (
+    <Modal
+      open={row !== null}
+      title={shown ? `Edit .${shown.tld}` : 'Edit extension'}
+      description="Changes apply to new orders only. Existing domains keep their registrar and price."
+      onClose={onClose}
+      size="lg"
+    >
+      {shown && <ExtensionForm key={shown.tld} row={shown} data={data} session={session} fetchImpl={fetchImpl} onCancel={onClose} onSaved={() => onSaved(shown.tld)} />}
+    </Modal>
+  );
+}
+
+function ExtensionForm({
+  row,
+  data,
+  session,
+  fetchImpl,
+  onCancel,
   onSaved,
 }: {
   row: ExtensionRow;
   data: DomainExtensions;
   session: StaffSession;
   fetchImpl?: typeof fetch | undefined;
+  onCancel: () => void;
   onSaved: () => void;
 }) {
   const [pin, setPin] = useState(row.pinnedRegistrar ?? '');
@@ -291,55 +316,99 @@ function ExtensionEditor({
   }
 
   return (
-    <form className="pc-admin__form" onSubmit={(e) => void submit(e)} aria-label={`Edit .${row.tld}`}>
-      <p className="pc-muted">
-        Offers now:{' '}
-        {row.offers.length === 0
-          ? 'none with a fresh price list.'
-          : row.offers.map((o) => `${REGISTRARS[o.registrar] ?? o.registrar} ${formatMinor(o.register, o.currency)}`).join(' · ')}
-      </p>
-      <div className="pc-field">
-        <label className="pc-field__label" htmlFor={`pin-${row.tld}`}>
-          Registrar for new registrations
-        </label>
-        <select id={`pin-${row.tld}`} className="pc-input" value={pin} onChange={(e) => setPin(e.target.value)}>
-          <option value="">Cheapest automatically</option>
-          {data.registrars.map((r) => (
-            <option key={r} value={r}>
-              Always {REGISTRARS[r] ?? r}
-            </option>
-          ))}
-        </select>
-      </div>
-      <TextField label="Featured position" hint="1 shows first. Empty means not featured." inputMode="numeric" value={order} onChange={(e) => setOrder(e.target.value)} />
-      <div className="pc-field">
-        <label className="pc-field__label" htmlFor={`label-${row.tld}`}>
-          Label
-        </label>
-        <select id={`label-${row.tld}`} className="pc-input" value={label} onChange={(e) => setLabel(e.target.value)}>
-          {data.labels.map((l) => (
-            <option key={l} value={l}>
-              {LABELS[l] ?? l}
-            </option>
-          ))}
-        </select>
-      </div>
-      <TextField label="Grace period (days)" inputMode="numeric" value={graceDays} onChange={(e) => setGraceDays(e.target.value)} />
-      <TextField label="Grace fee (USD, added to renewal)" inputMode="decimal" value={graceFee} onChange={(e) => setGraceFee(e.target.value)} />
-      <TextField label="Redemption period (days)" inputMode="numeric" value={redemptionDays} onChange={(e) => setRedemptionDays(e.target.value)} />
-      <TextField
-        label="Redemption fee (USD)"
-        hint="Empty uses the registrar's restore price."
-        inputMode="decimal"
-        value={redemptionFee}
-        onChange={(e) => setRedemptionFee(e.target.value)}
-      />
+    <form onSubmit={(e) => void submit(e)} aria-label={`Edit .${row.tld}`}>
+      <fieldset className="pc-form-section">
+        <legend>Registrar</legend>
+        <div className="pc-form-grid">
+          <div className="pc-field pc-form-grid__wide">
+            <label className="pc-field__label" htmlFor={`pin-${row.tld}`}>
+              Registrar for new registrations
+            </label>
+            <select id={`pin-${row.tld}`} className="pc-input" value={pin} onChange={(e) => setPin(e.target.value)}>
+              <option value="">Cheapest automatically</option>
+              {data.registrars.map((r) => (
+                <option key={r} value={r}>
+                  Always {REGISTRARS[r] ?? r}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {row.offers.length === 0 ? (
+          <p className="pc-muted">No registrar has a fresh price list for this extension.</p>
+        ) : (
+          <table className="pc-table pc-ext__offers" aria-label={`Registrar costs for .${row.tld}`}>
+            <thead>
+              <tr>
+                <th scope="col">Registrar</th>
+                <th scope="col">Register cost</th>
+                <th scope="col">Renew cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {row.offers.map((o) => (
+                <tr key={o.registrar}>
+                  <td>
+                    {REGISTRARS[o.registrar] ?? o.registrar} {o.registrar === row.chosenRegistrar && <Badge tone="success">Chosen</Badge>}
+                  </td>
+                  <td>{formatMinor(o.register, o.currency)}</td>
+                  <td>{formatMinor(o.renew, o.currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </fieldset>
+
+      <fieldset className="pc-form-section">
+        <legend>How it is shown</legend>
+        <div className="pc-form-grid">
+          <TextField label="Featured position" hint="1 shows first. Leave empty to not feature it." inputMode="numeric" value={order} onChange={(e) => setOrder(e.target.value)} />
+          <div className="pc-field">
+            <label className="pc-field__label" htmlFor={`label-${row.tld}`}>
+              Label
+            </label>
+            <select id={`label-${row.tld}`} className="pc-input" value={label} onChange={(e) => setLabel(e.target.value)}>
+              {data.labels.map((l) => (
+                <option key={l} value={l}>
+                  {LABELS[l] ?? l}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset className="pc-form-section">
+        <legend>After expiry</legend>
+        <div className="pc-form-grid">
+          <TextField label="Grace period (days)" hint="The customer can still renew normally." inputMode="numeric" value={graceDays} onChange={(e) => setGraceDays(e.target.value)} />
+          <TextField label="Grace fee (USD)" hint="Added to a renewal made during grace." inputMode="decimal" value={graceFee} onChange={(e) => setGraceFee(e.target.value)} />
+          <TextField label="Redemption period (days)" hint="Only a paid restore can recover the domain." inputMode="numeric" value={redemptionDays} onChange={(e) => setRedemptionDays(e.target.value)} />
+          <TextField label="Redemption fee (USD)" hint="Leave empty to use the registrar's restore price." inputMode="decimal" value={redemptionFee} onChange={(e) => setRedemptionFee(e.target.value)} />
+        </div>
+      </fieldset>
+
       {error && <Alert tone="danger">{error}</Alert>}
-      <Button type="submit" loading={saving}>
-        Save .{row.tld}
-      </Button>
+      <div className="pc-modal__actions">
+        <Button variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={saving}>
+          Save .{row.tld}
+        </Button>
+      </div>
     </form>
   );
+}
+
+/** What the settings do to a sample USD 10.00 cost, so the numbers are easy to check before saving. */
+export function pricingExample(markupBp: number, floorBp: number, usdStep: number): { price: number; floor: number } {
+  const cost = 1000;
+  const raw = Math.ceil((cost * (10000 + markupBp)) / 10000);
+  const price = Math.ceil(raw / usdStep) * usdStep;
+  const floor = Math.ceil((cost * (10000 + floorBp)) / 10000);
+  return { price: Math.max(price, floor), floor };
 }
 
 function PricingSettingsCard({ data, session, fetchImpl, onSaved }: { data: DomainExtensions; session: StaffSession; fetchImpl?: typeof fetch | undefined; onSaved: () => void }) {
@@ -353,13 +422,15 @@ function PricingSettingsCard({ data, session, fetchImpl, onSaved }: { data: Doma
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const markupBp = percentToBp(markup);
+  const floorBp = percentToBp(floor);
+  const usdMinor = amountToMinor(usdStep);
+  const example = markupBp !== null && floorBp !== null && usdMinor !== null && usdMinor > 0 ? pricingExample(markupBp, floorBp, usdMinor) : null;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const markupBp = percentToBp(markup);
-    const floorBp = percentToBp(floor);
-    const usd = amountToMinor(usdStep);
     const ngn = amountToMinor(ngnStep);
-    if (markupBp === null || floorBp === null || usd === null || ngn === null || usd < 1 || ngn < 1) {
+    if (markupBp === null || floorBp === null || usdMinor === null || ngn === null || usdMinor < 1 || ngn < 1) {
       setError('Use percentages like 25 or 12.5, and rounding steps like 0.01 or 50.');
       return;
     }
@@ -373,7 +444,7 @@ function PricingSettingsCard({ data, session, fetchImpl, onSaved }: { data: Doma
     }
     setSaving(true);
     setError(null);
-    const result = await saveDomainPricing(session.csrfToken, { markup_bp: markupBp, min_margin_bp: floorBp, usd_step: usd, ngn_step: ngn, code }, fetchImpl);
+    const result = await saveDomainPricing(session.csrfToken, { markup_bp: markupBp, min_margin_bp: floorBp, usd_step: usdMinor, ngn_step: ngn, code }, fetchImpl);
     setSaving(false);
     setCode('');
     if (result.kind === 'ok') {
@@ -395,29 +466,64 @@ function PricingSettingsCard({ data, session, fetchImpl, onSaved }: { data: Doma
       <p className="pc-muted">
         {data.fx ? `Naira prices use the exchange rate from ${data.fx.source}, ${formatWhen(data.fx.fetchedAt)}.` : 'Waiting for the first exchange rate; it is fetched automatically.'}
       </p>
-      {data.canManage && !open && (
-        <Button variant="secondary" onClick={() => setOpen(true)}>
+      {data.canManage && (
+        <Button variant="secondary" onClick={() => setOpen(true)} aria-haspopup="dialog">
           {p ? 'Change pricing settings' : 'Set pricing settings'}
         </Button>
       )}
-      {open && (
-        <form className="pc-admin__form" onSubmit={(e) => void submit(e)} aria-label="Pricing settings">
-          <TextField label="Markup (%)" hint="Added to the registrar cost." inputMode="decimal" value={markup} onChange={(e) => setMarkup(e.target.value)} />
-          <TextField label="Minimum margin (%)" hint="No price may fall below cost plus this; such an action stops being sold." inputMode="decimal" value={floor} onChange={(e) => setFloor(e.target.value)} />
-          <TextField label="Round USD prices up to (USD)" inputMode="decimal" value={usdStep} onChange={(e) => setUsdStep(e.target.value)} />
-          <TextField label="Round naira prices up to (NGN)" inputMode="decimal" value={ngnStep} onChange={(e) => setNgnStep(e.target.value)} />
-          <TextField label="Authenticator code" autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
+      <Modal
+        open={open}
+        title="Pricing settings"
+        description="These rules turn each registrar's cost into the price customers pay, for every extension at once."
+        onClose={() => setOpen(false)}
+      >
+        <form onSubmit={(e) => void submit(e)} aria-label="Pricing settings">
+          <fieldset className="pc-form-section">
+            <legend>Your margin</legend>
+            <div className="pc-form-grid">
+              <TextField
+                label="Markup (%)"
+                hint="What you add on top of the registrar cost. 20 means a USD 10.00 cost sells for USD 12.00."
+                inputMode="decimal"
+                value={markup}
+                onChange={(e) => setMarkup(e.target.value)}
+              />
+              <TextField
+                label="Minimum margin (%)"
+                hint="Safety floor. If any price would fall below cost plus this, that action is not sold. Keep it at or below the markup, for example 10."
+                inputMode="decimal"
+                value={floor}
+                onChange={(e) => setFloor(e.target.value)}
+              />
+            </div>
+          </fieldset>
+          <fieldset className="pc-form-section">
+            <legend>Rounding</legend>
+            <div className="pc-form-grid">
+              <TextField label="Round USD prices up to (USD)" hint="0.01 keeps cents; 1 gives whole dollars like 13.00." inputMode="decimal" value={usdStep} onChange={(e) => setUsdStep(e.target.value)} />
+              <TextField label="Round naira prices up to (NGN)" hint="50 gives prices like ₦17,550; 100 gives ₦17,600." inputMode="decimal" value={ngnStep} onChange={(e) => setNgnStep(e.target.value)} />
+            </div>
+          </fieldset>
+          {example && (
+            <p className="pc-ext__example" aria-live="polite">
+              Example: a registrar cost of USD 10.00 sells for <strong>{formatMinor(example.price, 'USD')}</strong>. Nothing is sold below {formatMinor(example.floor, 'USD')}.
+            </p>
+          )}
+          <fieldset className="pc-form-section">
+            <legend>Confirm</legend>
+            <TextField label="Authenticator code" hint="From your authenticator app." autoComplete="one-time-code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
+          </fieldset>
           {error && <Alert tone="danger">{error}</Alert>}
-          <div className="pc-admin__row">
-            <Button type="submit" loading={saving}>
-              Save pricing settings
-            </Button>
+          <div className="pc-modal__actions">
             <Button variant="secondary" onClick={() => setOpen(false)}>
               Cancel
             </Button>
+            <Button type="submit" loading={saving}>
+              Save pricing settings
+            </Button>
           </div>
         </form>
-      )}
+      </Modal>
     </Card>
   );
 }

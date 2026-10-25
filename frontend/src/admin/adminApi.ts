@@ -471,6 +471,8 @@ export interface ExtensionRow {
   pinUnavailable: boolean;
   chosenRegistrar: string | null;
   offers: { registrar: string; register: number; renew: number; currency: string }[];
+  /** The chosen registrar's one-year cost in USD cents, shown before pricing settings exist. Admin only. */
+  cost: Record<string, number | null> | null;
   usd: Record<string, number | null> | null;
   ngn: Record<string, number | null> | null;
   graceDays: number;
@@ -530,6 +532,7 @@ export async function fetchDomainExtensions(
       pinUnavailable: r.pin_unavailable === true,
       chosenRegistrar: nullableString(r.chosen_registrar),
       offers,
+      cost: priceMap(r.cost),
       usd: priceMap(r.usd),
       ngn: priceMap(r.ngn),
       graceDays: minor(r.grace_days) ?? 30,

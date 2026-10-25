@@ -109,6 +109,10 @@ final class ExtensionsAdminTest extends TestCase
         self::assertSame(['com'], array_column($view['rows'], 'tld'));
         self::assertNull($view['rows'][0]['usd']);
         self::assertSame('namecheap', $view['rows'][0]['chosen_registrar']);
+        // Staff still see the chosen registrar's cost before any pricing exists.
+        $cost = $view['rows'][0]['cost'] ?? [];
+        self::assertIsInt($cost['register'] ?? null);
+        self::assertSame(['register', 'renew', 'transfer', 'restore'], array_keys($cost));
     }
 
     public function testFinanceReadsSupportIsDeniedAndOnlyCatalogueChanges(): void

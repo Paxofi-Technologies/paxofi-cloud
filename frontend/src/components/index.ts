@@ -6,6 +6,7 @@ export { Button } from './Button';
 export { Card } from './Card';
 export { Checkbox } from './Checkbox';
 export { Logo } from './Logo';
+export { Modal } from './Modal';
 export { TextField } from './TextField';
 export { RecentActivity } from './RecentActivity';
 export { RecoveryCodesView } from './RecoveryCodesView';

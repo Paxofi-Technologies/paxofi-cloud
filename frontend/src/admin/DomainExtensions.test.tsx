@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { amountToMinor, DomainExtensionsPage, percentToBp } from './DomainExtensions';
+import { amountToMinor, DomainExtensionsPage, percentToBp, pricingExample } from './DomainExtensions';
 import type { StaffSession } from './adminApi';
 
 const session = { csrfToken: 'c'.repeat(43) } as StaffSession;
@@ -146,5 +146,41 @@ describe('DomainExtensionsPage', () => {
     await screen.findByRole('table', { name: 'Domain extensions' });
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('button', { name: /pricing settings/ })).toBeNull();
+  });
+
+  it('shows the registrar cost in grey before pricing settings exist', async () => {
+    const fetchImpl = api({
+      'GET /admin-api/v1/domain-extensions': {
+        status: 200,
+        body: page({ pricing: null, rows: [row({ usd: null, ngn: null, cost: { register: 1000, renew: 1100, transfer: 1050, restore: null } })] }),
+      },
+    });
+    render(<DomainExtensionsPage session={session} fetchImpl={fetchImpl} />);
+    const table = await screen.findByRole('table', { name: 'Domain extensions' });
+    expect(within(table).getByText(/Grey amounts are the registrar cost/)).toBeInTheDocument();
+    expect(within(table).getAllByTitle('Registrar cost, before your markup')).toHaveLength(3);
+    expect(within(table).getByText(/USD 10\.00/)).toBeInTheDocument();
+  });
+
+  it('edits an extension in a dialog that closes with Escape and returns focus', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = api({ 'GET /admin-api/v1/domain-extensions': { status: 200, body: page() } });
+    render(<DomainExtensionsPage session={session} fetchImpl={fetchImpl} />);
+    const edit = await screen.findByRole('button', { name: 'Edit' });
+    await user.click(edit);
+    const dialog = await screen.findByRole('dialog', { name: 'Edit .com' });
+    expect(within(dialog).getByRole('table', { name: 'Registrar costs for .com' })).toBeInTheDocument();
+    expect(within(dialog).getByText('Chosen')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(edit).toHaveFocus();
+  });
+});
+
+describe('pricingExample', () => {
+  it('applies the markup, rounding and floor to a USD 10.00 cost', () => {
+    expect(pricingExample(1000, 1000, 1)).toEqual({ price: 1100, floor: 1100 });
+    expect(pricingExample(2000, 1000, 100)).toEqual({ price: 1200, floor: 1100 });
+    expect(pricingExample(1250, 1000, 100)).toEqual({ price: 1200, floor: 1100 });
   });
 });

@@ -16,6 +16,7 @@ use Paxofi\Core\Http\Router;
 use PaxofiCloud\Http\Controllers\AccountActivityController;
 use PaxofiCloud\Http\Controllers\AccountSessionsController;
 use PaxofiCloud\Http\Controllers\CatalogueController;
+use PaxofiCloud\Http\Controllers\DomainPricesController;
 use PaxofiCloud\Http\Controllers\DomainSearchController;
 use PaxofiCloud\Http\Controllers\ChallengeController;
 use PaxofiCloud\Http\Controllers\LivenessController;
@@ -83,6 +84,7 @@ final class HttpProvider implements Provider
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('GET', '/api/v1/catalogue', CatalogueController::class, $dispatcher);
             $router->controller('GET', '/api/v1/domains/search', DomainSearchController::class, $dispatcher);
+        $router->controller('GET', '/api/v1/domains/prices', DomainPricesController::class, $dispatcher);
             $router->controller('POST', '/api/v1/auth/sign-out', SignOutController::class, $dispatcher);
 
             // The admin API: built only from AdminRoutes, every route behind the gate (§6.18).
