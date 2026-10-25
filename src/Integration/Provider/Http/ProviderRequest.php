@@ -15,7 +15,7 @@ namespace PaxofiCloud\Integration\Provider\Http;
  */
 final class ProviderRequest
 {
-    private const array METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
+    private const array METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE'];
     /**
      * Extra request headers an adapter may set, each with the exact format
      * its value must have; anything else is refused. `__reseller` carries the
@@ -58,7 +58,7 @@ final class ProviderRequest
         if (preg_match('#^(/[a-z0-9_-]+(\.[a-z0-9_-]+)*)+$#', $path) !== 1) {
             throw new \InvalidArgumentException('Provider request path must be a plain relative path.');
         }
-        if (($json !== null || $form !== null) && ($method === 'GET' || $method === 'DELETE')) {
+        if (($json !== null || $form !== null) && ($method === 'GET' || $method === 'HEAD' || $method === 'DELETE')) {
             throw new \InvalidArgumentException('GET and DELETE provider requests must not carry a body.');
         }
         if ($form !== null) {
@@ -102,6 +102,12 @@ final class ProviderRequest
     public static function get(string $path, array $query = []): self
     {
         return new self('GET', $path, $query);
+    }
+
+    /** Status and headers only; the response body is never read (RDAP existence checks). */
+    public static function head(string $path): self
+    {
+        return new self('HEAD', $path);
     }
 
     /**
