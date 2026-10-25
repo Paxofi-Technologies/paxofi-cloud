@@ -111,7 +111,14 @@ final readonly class DomainNameApiClient implements DomainPriceFeed, Availabilit
         }
         $body = $this->send(DomainNameApiOperation::BulkSearch, [], array_map(static fn (string $d): array => ['domainName' => $d], $domains));
 
-        return DomainNameApiAvailabilityParser::parse($body, $domains);
+        $answers = DomainNameApiAvailabilityParser::parse($body, $domains);
+        if ($answers === []) {
+            // A reply that names none of the domains we asked about is a shape we
+            // do not understand; say so instead of answering "unknown" silently.
+            throw new RegistrarUnavailable('malformed');
+        }
+
+        return $answers;
     }
 
     /**

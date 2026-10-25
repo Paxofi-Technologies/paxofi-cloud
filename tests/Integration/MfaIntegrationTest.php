@@ -111,7 +111,10 @@ final class MfaIntegrationTest extends IntegrationTestCase
 
         // A wrong code keeps the ticket; the right code gives a session and ends it.
         self::assertSame(422, $this->mfaStep($ticket, ['code' => '000000'])->status());
-        $done = $this->mfaStep($ticket, ['code' => self::code($secret, 1)]);
+        // One code string for the whole check: recomputing it later can cross a
+        // 30-second step and yield a different (unused, valid) code.
+        $used = self::code($secret, 1);
+        $done = $this->mfaStep($ticket, ['code' => $used]);
         self::assertSame(200, $done->status());
         $doneCookies = $done->headers()['set-cookie'] ?? [];
         self::assertStringStartsWith(MfaCookie::NAME . '=; ', $doneCookies[0]);
@@ -120,11 +123,11 @@ final class MfaIntegrationTest extends IntegrationTestCase
         self::assertIsString($csrf);
         $this->csrf = $csrf;
         self::assertSame(200, $this->get('/api/v1/auth/session')->status());
-        self::assertSame(401, $this->mfaStep($ticket, ['code' => self::code($secret, 1)])->status(), 'Ticket is single use');
+        self::assertSame(401, $this->mfaStep($ticket, ['code' => $used])->status(), 'Ticket is single use');
 
         // T-13: the same code cannot sign in twice.
         $again = $this->passwordTicket($email);
-        self::assertSame(422, $this->mfaStep($again, ['code' => self::code($secret, 1)])->status());
+        self::assertSame(422, $this->mfaStep($again, ['code' => $used])->status());
 
         // A recovery code works once.
         self::assertSame(200, $this->mfaStep($again, ['recovery_code' => strtolower($recovery[0])])->status());

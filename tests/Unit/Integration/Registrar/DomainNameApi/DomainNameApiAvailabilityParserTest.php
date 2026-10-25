@@ -37,4 +37,19 @@ final class DomainNameApiAvailabilityParserTest extends TestCase
         self::assertNull($answers['a.com']->premiumCost);
         self::assertSame([], DomainNameApiAvailabilityParser::parse(['unexpected' => 'shape'], ['a.com']));
     }
+
+    public function testStatusOneOrTrueMeansAvailableAsInTheOfficialClient(): void
+    {
+        $answers = DomainNameApiAvailabilityParser::parse(['infos' => [
+            ['domainName' => 'a.ng', 'status' => '1'],
+            ['domainName' => 'b.ng', 'status' => true],
+            ['domainName' => 'c.ng', 'status' => 1],
+            ['domainName' => 'd.ng', 'status' => 0],
+        ]], ['a.ng', 'b.ng', 'c.ng', 'd.ng']);
+
+        self::assertSame('available', $answers['a.ng']->status);
+        self::assertSame('available', $answers['b.ng']->status);
+        self::assertSame('available', $answers['c.ng']->status);
+        self::assertSame('unknown', $answers['d.ng']->status, 'anything else is never available');
+    }
 }
