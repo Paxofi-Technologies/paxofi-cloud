@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Integration\Registrar\DomainNameApi;
 
+use PaxofiCloud\Application\Contracts\AvailabilityChecker;
 use PaxofiCloud\Application\Contracts\DomainPriceFeed;
 use PaxofiCloud\Application\Registrar\RegistrarUnavailable;
 use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
@@ -27,7 +28,7 @@ use PaxofiCloud\Integration\Provider\ProviderCredentialSource;
  * no write can reach the network where writes are disabled (DR-4). Responses
  * are decoded with ExactJson so prices stay decimal text (DR-5).
  */
-final readonly class DomainNameApiClient implements DomainPriceFeed
+final readonly class DomainNameApiClient implements DomainPriceFeed, AvailabilityChecker
 {
     public const string PROVIDER = 'domainnameapi';
     public const int PAGE_SIZE = 100;
@@ -95,11 +96,30 @@ final readonly class DomainNameApiClient implements DomainPriceFeed
     }
 
     /**
+     * The registrar's own availability and premium check for up to 6 names
+     * (DS-13). A read: allowed on staging by the write guard.
+     *
+     * @param list<string> $domains
+     * @return array<string, \PaxofiCloud\Domain\Registrar\AvailabilityAnswer>
+     * @throws RegistrarUnavailable
+     */
+    public function checkAvailability(array $domains): array
+    {
+        $domains = array_values(array_unique(array_map('strtolower', $domains)));
+        if ($domains === [] || count($domains) > 6) {
+            throw new \InvalidArgumentException('Ask about 1 to 6 domains at a time.');
+        }
+        $body = $this->send(DomainNameApiOperation::BulkSearch, [], array_map(static fn (string $d): array => ['domainName' => $d], $domains));
+
+        return DomainNameApiAvailabilityParser::parse($body, $domains);
+    }
+
+    /**
      * The single path to the network. The guard runs before the credential is
      * even loaded, so a refused write has no side effect at all.
      *
      * @param array<string, string|int> $query
-     * @param array<string, mixed>|null $json
+     * @param array<array-key, mixed>|null $json
      * @return array<array-key, mixed>
      * @throws RegistrarUnavailable
      */

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Cli;
 
+use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
 use Paxofi\Core\Contracts\Command;
 use PaxofiCloud\Application\Pricing\FxRateUpdater;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
@@ -37,6 +38,7 @@ final readonly class ProvidersWorkCommand implements Command
      * @param (\Closure(int): void)|null $sleep
      * @param (\Closure(): ?SpaceshipPriceCheck)|null $spaceship the price check, or null while Spaceship is not connected
      * @param (\Closure(): FxRateUpdater)|null $fx exchange rates, refreshed when the accepted set is a day old (DX-1, DX-5)
+     * @param (\Closure(): RegistrarCheckWorker)|null $registrarCheck customer availability checks (DS-13), answered every loop
      */
     public function __construct(
         private \Closure $intake,
@@ -45,6 +47,7 @@ final readonly class ProvidersWorkCommand implements Command
         private ?\Closure $prices = null,
         private ?\Closure $spaceship = null,
         private ?\Closure $fx = null,
+        private ?\Closure $registrarCheck = null,
     ) {
     }
 
@@ -79,8 +82,18 @@ final readonly class ProvidersWorkCommand implements Command
         $fxTriedAt = 0;
         $deadline = time() + $maxSeconds;
         $nextScheduleCheck = 0;
+        $checks = null;
         do {
             $handled = $intake->runOnce();
+            if ($this->registrarCheck !== null && !$once) {
+                try {
+                    $checks ??= ($this->registrarCheck)();
+                    $handled += $checks->runOnce();
+                } catch (\Throwable $e) {
+                    // Answers stay "pending" and expire; the search keeps its RDAP result. Names are never logged.
+                    $this->console->error('Registrar availability check failed: ' . $e::class);
+                }
+            }
             if ($this->prices !== null && !$once) {
                 $due = time() >= $nextScheduleCheck;
                 if ($due) {
@@ -109,7 +122,8 @@ final readonly class ProvidersWorkCommand implements Command
                 return 0;
             }
             if ($handled === 0) {
-                $sleep(3);
+                // Short idle wait while customers may be waiting on an availability answer.
+                $sleep($this->registrarCheck !== null ? 1 : 3);
             }
         } while (time() < $deadline);
 

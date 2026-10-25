@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Badge, Button, Card, TextField } from '../components';
 import { CheckIcon, SearchIcon } from '../components/icons';
-import { describeWait } from '../lib/api';
+import { describeWait, postJson } from '../lib/api';
 import { formatMoney } from '../lib/money';
 import { DomainPriceListView } from './DomainPriceList';
 
@@ -9,7 +9,10 @@ import { DomainPriceListView } from './DomainPriceList';
 export interface SearchResult {
   domain: string;
   tld: string;
-  status: 'available' | 'taken' | 'unknown';
+  status: 'available' | 'taken' | 'unknown' | 'unavailable';
+  /** True once the registrar has confirmed the status (DS-13). */
+  confirmed?: boolean;
+  premium?: boolean;
   featured: boolean;
   label: string;
   register: { usd: number; ngn: number };
@@ -78,6 +81,64 @@ export async function searchDomains(name: string, fetchImpl: typeof fetch = fetc
   return { kind: 'ok', results };
 }
 
+type RegistrarAnswer = { domain: string; status: SearchResult['status']; premium: boolean; register: { usd: number; ngn: number } | null };
+
+/**
+ * Asks the registrar itself (through the provider worker, DS-13) about the names
+ * RDAP could not rule out, and waits up to ~15 s for the answer.
+ */
+export async function confirmWithRegistrar(
+  domains: string[],
+  fetchImpl: typeof fetch = fetch,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => window.setTimeout(r, ms)),
+): Promise<RegistrarAnswer[]> {
+  if (domains.length === 0) return [];
+  const queued = await postJson('/api/v1/domains/check', { domains: domains.slice(0, 6) }, fetchImpl);
+  const id = queued.kind === 'ok' ? (queued.data as { id?: unknown } | null)?.id : undefined;
+  if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) return [];
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await wait(1000);
+    let body: { status?: unknown; results?: unknown };
+    try {
+      const response = await fetchImpl(`/api/v1/domains/check?id=${id}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      if (!response.ok) return [];
+      body = (await response.json()) as typeof body;
+    } catch {
+      return [];
+    }
+    if (body.status === 'pending') continue;
+    if (body.status !== 'done' || !Array.isArray(body.results)) return [];
+    const out: RegistrarAnswer[] = [];
+    for (const raw of body.results) {
+      const r = raw as Record<string, unknown>;
+      const register = r.register as Record<string, unknown> | null | undefined;
+      if (typeof r.domain !== 'string' || !['available', 'taken', 'unknown', 'unavailable'].includes(String(r.status))) continue;
+      out.push({
+        domain: r.domain,
+        status: r.status as SearchResult['status'],
+        premium: r.premium === true,
+        register: register && isMinor(register.usd) && isMinor(register.ngn) ? { usd: register.usd, ngn: register.ngn } : null,
+      });
+    }
+    return out;
+  }
+  return [];
+}
+
+/** The registrar's answer wins over RDAP; "unknown" from the registrar keeps the RDAP result. */
+export function mergeAnswers(results: readonly SearchResult[], answers: readonly RegistrarAnswer[]): SearchResult[] {
+  const byDomain = new Map(answers.map((a) => [a.domain, a]));
+  return results.map((r) => {
+    const a = byDomain.get(r.domain);
+    if (!a || a.status === 'unknown') return r;
+    const next: SearchResult = { ...r, status: a.status, confirmed: true, premium: a.premium };
+    if (a.premium && a.register) next.register = a.register;
+    if (a.premium && !a.register && a.status === 'available') next.status = 'unavailable';
+    if (a.premium) next.renew = null;
+    return next;
+  });
+}
+
 /**
  * Find a domain (DOM-001, DOM-003): the typed name in its extension and our
  * featured extensions, with live availability (a pre-check; the registrar
@@ -88,6 +149,7 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
   const [error, setError] = useState<string | undefined>();
   const [results, setResults] = useState<readonly SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [picked, setPicked] = useState<ReadonlyMap<string, SearchResult>>(new Map());
   const top = useRef<HTMLDivElement>(null);
 
@@ -117,6 +179,13 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
       return;
     }
     setResults(outcome.results);
+    const toConfirm = outcome.results.filter((r) => r.status !== 'taken').map((r) => r.domain);
+    if (toConfirm.length > 0) {
+      setConfirming(true);
+      const answers = await confirmWithRegistrar(toConfirm, fetchImpl);
+      setConfirming(false);
+      if (answers.length > 0) setResults((current) => (current ? mergeAnswers(current, answers) : current));
+    }
   }
 
   function toggle(result: SearchResult) {
@@ -159,7 +228,7 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
 
       <div aria-live="polite" className="pc-stack">
         {results && (
-          <Card title="Results" actions={<span className="pc-small pc-muted">Availability is confirmed when you check out.</span>}>
+          <Card title="Results" actions={<span className="pc-small pc-muted">{confirming ? 'Confirming with the registry…' : 'Checked with the registry; confirmed again at checkout.'}</span>}>
             {results.length === 0 ? (
               <p className="pc-muted">No extensions are on sale yet. Please check back soon.</p>
             ) : (
@@ -172,7 +241,9 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
                         <span className="pc-result__domain">{r.domain}</span>
                         {r.status === 'available' && <Badge tone="success">Available</Badge>}
                         {r.status === 'taken' && <Badge tone="neutral">Taken</Badge>}
-                        {r.status === 'unknown' && <Badge tone="warning">Couldn't check</Badge>}
+                        {r.status === 'unknown' && <Badge tone="warning">{confirming ? 'Checking…' : "Couldn't check"}</Badge>}
+                        {r.status === 'unavailable' && <Badge tone="neutral">Not available</Badge>}
+                        {r.premium && <Badge tone="accent">Premium</Badge>}
                         {LABELS[r.label] && <Badge tone="accent">{LABELS[r.label]}</Badge>}
                         {(r.tld === 'ng' || r.tld.endsWith('.ng')) && <Badge tone="info">Nigeria</Badge>}
                       </div>
@@ -207,7 +278,17 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
                           </Button>
                         </div>
                       ) : (
-                        <span className="pc-small pc-muted">{r.status === 'taken' ? 'Already registered' : 'Try again in a minute'}</span>
+                        <span className="pc-small pc-muted">
+                          {r.status === 'taken'
+                            ? 'Already registered'
+                            : r.status === 'unavailable'
+                              ? r.premium
+                                ? 'Premium name: contact us for the price'
+                                : 'Reserved by the registry'
+                              : confirming
+                                ? 'Asking the registry…'
+                                : 'Try again in a minute'}
+                        </span>
                       )}
                     </li>
                   );

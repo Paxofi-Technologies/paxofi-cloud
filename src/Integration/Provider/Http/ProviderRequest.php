@@ -34,7 +34,7 @@ final class ProviderRequest
 
     /**
      * @param array<string, string|int> $query
-     * @param array<string, mixed>|null $json
+     * @param array<array-key, mixed>|null $json
      * @param array<string, string> $headers
      * @param array<string, string>|null $form
      */
