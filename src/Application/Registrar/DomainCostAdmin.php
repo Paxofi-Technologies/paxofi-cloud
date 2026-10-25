@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Audit\ClientContext;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\DomainCostReport;
 use PaxofiCloud\Application\Contracts\ProviderSyncRequests;
+use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
 use PaxofiCloud\Domain\Registrar\FeedField;
 use PaxofiCloud\Domain\Registrar\SkippedTld;
@@ -38,6 +39,7 @@ final readonly class DomainCostAdmin
         private ProviderSyncRequests $requests,
         private Clock $clock,
         private AuditTrail $audit,
+        private ?RegistrarCheckHealth $availability = null,
     ) {
     }
 
@@ -49,7 +51,8 @@ final readonly class DomainCostAdmin
      *     runs: list<array<string, int|string|null>>,
      *     items: list<array{tld: string, currency: string, register: int, renew: int, transfer: ?int, restore: ?int, min_years: int, max_years: int, status: string}>,
      *     skipped: list<array{name: ?string, reason: string, detail: ?string}>,
-     *     feed_fields: list<array{path: string, items: int, kinds: list<string>, min: ?int, max: ?int}>
+     *     feed_fields: list<array{path: string, items: int, kinds: list<string>, min: ?int, max: ?int}>,
+     *     availability_check: array{outcome: string, asked: int, answered: int, at: string}|null
      * }
      * @throws \PaxofiCloud\Application\Staff\StaffPermissionDenied
      */
@@ -113,6 +116,8 @@ final readonly class DomainCostAdmin
             'items' => $items,
             'skipped' => $skipped,
             'feed_fields' => $fields,
+            // DS-13: the outcome of the latest availability check (registrar #1 only).
+            'availability_check' => $this->availability?->latest(),
         ];
     }
 

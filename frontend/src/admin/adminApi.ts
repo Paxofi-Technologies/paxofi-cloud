@@ -309,6 +309,23 @@ export interface DomainCosts {
   items: DomainCostItem[];
   skipped: SkippedExtension[];
   feedFields: FeedFieldSummary[];
+  availabilityCheck: AvailabilityCheck | null;
+}
+
+/** The latest registrar availability check (DS-13): a fixed outcome and counts, never names. */
+export interface AvailabilityCheck {
+  outcome: string;
+  asked: number;
+  answered: number;
+  at: string;
+}
+
+function availabilityCheck(value: unknown): AvailabilityCheck | null {
+  const a = obj(value);
+  const asked = minor(a?.asked);
+  const answered = minor(a?.answered);
+  if (!a || typeof a.outcome !== 'string' || typeof a.at !== 'string' || asked === null || answered === null) return null;
+  return { outcome: a.outcome, asked, answered, at: a.at };
 }
 
 export type DomainCostsResult = { kind: 'ok'; costs: DomainCosts } | { kind: 'failed' };
@@ -382,6 +399,7 @@ export async function fetchDomainCosts(fetchImpl: typeof fetch = fetch, provider
       items,
       skipped,
       feedFields,
+      availabilityCheck: availabilityCheck(body.availability_check),
     },
   };
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PaxofiCloud\Application\Domains;
 
 use Paxofi\Core\Contracts\RedisClient;
+use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\AvailabilityChecker;
 use PaxofiCloud\Application\Contracts\ExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\FxRateStore;
@@ -31,6 +32,8 @@ final readonly class RegistrarCheckWorker
         private \Closure $checker,
         private ExtensionSettingsStore $settings,
         private FxRateStore $rates,
+        private ?RegistrarCheckHealth $health = null,
+        private ?Clock $clock = null,
     ) {
     }
 
@@ -60,12 +63,21 @@ final readonly class RegistrarCheckWorker
                 $checker = ($this->checker)();
             }
             $answers = [];
+            $outcome = 'not_connected';
             if ($checker !== null) {
                 try {
                     $answers = $checker->checkAvailability($domains);
-                } catch (RegistrarUnavailable|\InvalidArgumentException) {
+                    $outcome = 'answered';
+                } catch (RegistrarUnavailable $e) {
                     $answers = [];
+                    $outcome = $e->reason;
+                } catch (\InvalidArgumentException) {
+                    $answers = [];
+                    $outcome = 'malformed';
                 }
+            }
+            if ($this->health !== null && $this->clock !== null) {
+                $this->health->record($outcome, count($domains), count(array_intersect_key($answers, array_flip($domains))), $this->clock->now());
             }
             $results = [];
             foreach ($domains as $domain) {

@@ -229,4 +229,29 @@ final class DomainNameApiClientTest extends TestCase
         $request = $this->transport->sent[0]['request'];
         self::assertSame([['domainName' => 'paxofi.ng'], ['domainName' => 'cars.com']], $request->json);
     }
+
+    public function testReadsTheInfosListTheOfficialClientReads(): void
+    {
+        $this->transport->expectRaw('POST', '/domains/bulk-search', 200, (string) json_encode(['infos' => [
+            ['domainName' => 'paxofi.ng', 'tld' => 'ng', 'status' => 'available', 'isPremium' => false],
+            ['domainName' => 'paxofi.com.ng', 'tld' => 'com.ng', 'status' => 'notavailable', 'isPremium' => false],
+        ]]));
+
+        $answers = $this->client()->checkAvailability(['paxofi.ng', 'paxofi.com.ng']);
+
+        self::assertSame('available', $answers['paxofi.ng']->status);
+        self::assertSame('taken', $answers['paxofi.com.ng']->status);
+    }
+
+    public function testAReplyNamingNoneOfTheAskedDomainsIsMalformed(): void
+    {
+        $this->transport->expectRaw('POST', '/domains/bulk-search', 200, (string) json_encode(['somethingElse' => [['domainName' => 'paxofi.ng', 'status' => 'available']]]));
+
+        try {
+            $this->client()->checkAvailability(['paxofi.ng']);
+            self::fail('expected malformed');
+        } catch (RegistrarUnavailable $e) {
+            self::assertSame('malformed', $e->reason);
+        }
+    }
 }
