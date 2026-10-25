@@ -115,7 +115,7 @@
 }
 .pc-tldcard__price small { font-weight: var(--pc-font-weight-regular); opacity: 0.9; }
 .pc-tldcard__usd { position: absolute; top: var(--pc-space-2); left: var(--pc-space-3); font-size: var(--pc-font-size-xs); color: var(--pc-semantic-text-secondary); }
-.pc-tldcard__label { position: absolute; top: var(--pc-space-2); right: var(--pc-space-2); font-size: var(--pc-font-size-xs); font-weight: 700; padding: 2px var(--pc-space-2); border-radius: var(--pc-radius-pill); background: var(--pc-color-brand-teal); color: #fff; }
+.pc-tldcard__label { position: absolute; top: var(--pc-space-2); right: var(--pc-space-2); }
 .pc-tldcard--0 .pc-tldcard__price { background: #1d6fd8; }
 .pc-tldcard--1 .pc-tldcard__price { background: #0b7f4f; }
 .pc-tldcard--2 .pc-tldcard__price { background: #0b1f3a; }

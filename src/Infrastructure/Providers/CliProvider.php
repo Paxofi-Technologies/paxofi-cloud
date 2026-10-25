@@ -7,6 +7,7 @@ namespace PaxofiCloud\Infrastructure\Providers;
 use Paxofi\Core\Contracts\RedisClient;
 use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\AvailabilityChecker;
+use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
 use Paxofi\Core\Application;
 use Paxofi\Core\CLI\CommandRegistry;
@@ -263,6 +264,8 @@ final readonly class CliProvider implements Provider
                     },
                     new MysqlExtensionSettingsStore($connection, $repository),
                     Resolve::get($c, FxRateStore::class),
+                    new RegistrarCheckHealth(Resolve::get($c, RedisClient::class)),
+                    new SystemClock(),
                 );
             };
             $registry->register(new PricesSyncCommand($syncFor, $console));

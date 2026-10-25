@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Card, TextField } from '../components';
+import { Button, Card, PromoLabel, TextField } from '../components';
 import { formatMoney } from '../lib/money';
 
 type Pair = { usd: number; ngn: number } | null;
@@ -25,7 +25,6 @@ export interface PriceList {
   rows: PriceRow[];
 }
 
-const LABELS: Record<string, string> = { hot: 'HOT', new: 'NEW', sale: 'SALE' };
 /** Tab names for the categories the server knows (DS-12). */
 export const CATEGORY_NAMES: Record<string, string> = {
   business: 'Business',
@@ -140,7 +139,7 @@ export function DomainPriceListView({ fetchImpl, onPick }: { fetchImpl?: typeof 
         <section aria-label="Featured extensions" className="pc-tldcards">
           {list.featured.map((row, i) => (
             <button key={row.tld} type="button" className={`pc-tldcard pc-tldcard--${i % 5}`} onClick={() => onPick(row.tld)} style={{ animationDelay: `${i * 60}ms` }}>
-              {LABELS[row.label] && <span className="pc-tldcard__label">{LABELS[row.label]}</span>}
+              <PromoLabel label={row.label} className="pc-tldcard__label" />
               <span className="pc-tldcard__name">.{row.tld}</span>
               <span className="pc-tldcard__price">
                 {row.register ? formatMoney({ minor: row.register.ngn, currency: 'NGN' }) : ''}
@@ -203,7 +202,7 @@ export function DomainPriceListView({ fetchImpl, onPick }: { fetchImpl?: typeof 
                       <button type="button" className="pc-pricelist__tld" onClick={() => onPick(row.tld)}>
                         .{row.tld}
                       </button>{' '}
-                      {LABELS[row.label] && <Badge tone="accent">{LABELS[row.label]}</Badge>}
+                      <PromoLabel label={row.label} />
                     </th>
                     <td>
                       <Price value={row.register} />

@@ -279,3 +279,10 @@
 .pc-price-grid { display: grid; grid-template-columns: minmax(5rem, auto) minmax(0, 1fr) minmax(0, 1fr); gap: var(--pc-space-3); align-items: center; }
 .pc-price-grid__head { font-size: var(--pc-font-size-sm); font-weight: var(--pc-font-weight-semibold); color: var(--pc-semantic-text-secondary); }
 .pc-price-grid__action { font-weight: var(--pc-font-weight-medium); }
+
+/* Extension labels (HOT, PROMO, SALE, NEW): solid pills, white text, AA contrast in tokens.test.ts. */
+.pc-promo { display: inline-flex; align-items: center; font-size: var(--pc-font-size-xs); font-weight: 700; letter-spacing: 0.02em; padding: 2px var(--pc-space-2); border-radius: var(--pc-radius-pill); color: var(--pc-semantic-promo-text); white-space: nowrap; }
+.pc-promo--hot { background: var(--pc-semantic-promo-hot); }
+.pc-promo--promo { background: var(--pc-semantic-promo-promo); }
+.pc-promo--sale { background: var(--pc-semantic-promo-sale); }
+.pc-promo--new { background: var(--pc-semantic-promo-new); }

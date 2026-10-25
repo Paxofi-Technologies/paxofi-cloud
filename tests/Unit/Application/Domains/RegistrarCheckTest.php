@@ -7,6 +7,7 @@ namespace PaxofiCloud\Tests\Unit\Application\Domains;
 use PaxofiCloud\Application\Contracts\AvailabilityChecker;
 use PaxofiCloud\Application\Domains\DomainSearchRefused;
 use PaxofiCloud\Application\Domains\RegistrarCheck;
+use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Application\Registrar\RegistrarUnavailable;
@@ -57,7 +58,7 @@ final class RegistrarCheckTest extends TestCase
     }
 
     /** @param array<string, AvailabilityAnswer>|null $answers null: registrar not connected */
-    private function worker(?array $answers, bool $fail = false): RegistrarCheckWorker
+    private function worker(?array $answers, bool $fail = false, ?RegistrarCheckHealth $health = null): RegistrarCheckWorker
     {
         $checker = $answers === null ? null : new class ($this, $answers, $fail) implements AvailabilityChecker {
             /** @param array<string, AvailabilityAnswer> $answers */
@@ -76,7 +77,7 @@ final class RegistrarCheckTest extends TestCase
             }
         };
 
-        return new RegistrarCheckWorker($this->redis, static fn (): ?AvailabilityChecker => $checker, $this->settings, $this->rates);
+        return new RegistrarCheckWorker($this->redis, static fn (): ?AvailabilityChecker => $checker, $this->settings, $this->rates, $health, new MutableClock(new \DateTimeImmutable('2026-10-25T12:00:00Z')));
     }
 
     public function testQueuedNamesAreAnsweredByTheWorkerWithPremiumSellingPrices(): void
@@ -149,5 +150,25 @@ final class RegistrarCheckTest extends TestCase
     public function testAnExpiredOrUnknownJobSaysExpired(): void
     {
         self::assertSame(['status' => 'expired', 'results' => []], $this->web()->result(str_repeat('a', 32)));
+    }
+
+    public function testTheLatestOutcomeIsRecordedForStaffWithoutNames(): void
+    {
+        $health = new RegistrarCheckHealth($this->redis);
+        $web = $this->web();
+        self::assertNull($health->latest());
+
+        $web->request('203.0.113.9', ['paxofi.ng', 'paxofi.com']);
+        $this->worker(['paxofi.ng' => new AvailabilityAnswer('available')], false, $health)->runOnce();
+        self::assertSame(['outcome' => 'answered', 'asked' => 2, 'answered' => 1, 'at' => '2026-10-25T12:00:00+00:00'], $health->latest());
+
+        $web->request('203.0.113.9', ['paxofi.ng']);
+        $this->worker([], true, $health)->runOnce();
+        self::assertSame('transport', $health->latest()['outcome'] ?? null);
+
+        $web->request('203.0.113.9', ['paxofi.ng']);
+        $this->worker(null, false, $health)->runOnce();
+        self::assertSame('not_connected', $health->latest()['outcome'] ?? null);
+        self::assertStringNotContainsString('paxofi', (string) $this->redis->get(RegistrarCheckHealth::KEY), 'no names kept');
     }
 }
