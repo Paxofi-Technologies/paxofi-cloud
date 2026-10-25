@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
-import { Badge, Button, Card, TextField } from '../components';
+import { Badge, Button, Card, PromoLabel, TextField } from '../components';
 import { CheckIcon, SearchIcon } from '../components/icons';
 import { describeWait, postJson } from '../lib/api';
 import { formatMoney } from '../lib/money';
@@ -21,7 +21,6 @@ export interface SearchResult {
 
 type SearchOutcome = { kind: 'ok'; results: SearchResult[] } | { kind: 'error'; message: string };
 
-const LABELS: Record<string, string> = { hot: 'HOT', new: 'NEW', sale: 'SALE' };
 const isMinor = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
 /** Calls the public search and keeps only well-formed results; values are rendered as text. */
@@ -244,7 +243,7 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
                         {r.status === 'unknown' && <Badge tone="warning">{confirming ? 'Checking…' : "Couldn't check"}</Badge>}
                         {r.status === 'unavailable' && <Badge tone="neutral">Not available</Badge>}
                         {r.premium && <Badge tone="accent">Premium</Badge>}
-                        {LABELS[r.label] && <Badge tone="accent">{LABELS[r.label]}</Badge>}
+                        <PromoLabel label={r.label} />
                         {(r.tld === 'ng' || r.tld.endsWith('.ng')) && <Badge tone="info">Nigeria</Badge>}
                       </div>
                       {r.status === 'available' ? (

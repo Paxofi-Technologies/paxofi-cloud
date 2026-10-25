@@ -53,8 +53,10 @@ final class ExtensionSettingsStoreIntegrationTest extends IntegrationTestCase
         $settings = new ExtensionSettings(new TldName('com'), 'dynadot', 3, 'sale', 40, 0, 30, 8000, 'business', ['usd' => ['register' => 1199], 'ngn' => ['renew' => 1_700_000]]);
         $this->store->save($settings, self::STAFF, $at);
         $this->store->save(new ExtensionSettings(new TldName('xyz'), label: 'new'), self::STAFF, $at);
+        $this->store->save(new ExtensionSettings(new TldName('online'), label: 'promo'), self::STAFF, $at);
         self::assertEquals($settings, $this->store->all()['com']);
         self::assertSame('new', $this->store->all()['xyz']->label);
+        self::assertSame('promo', $this->store->all()['online']->label, 'migration 0022 allows PROMO');
 
         $pricing = new DomainPricingSettings(new Markup(2500), new BasisPoints(1000), new RoundingStep(1), new RoundingStep(5000));
         $this->store->savePricing($pricing, self::STAFF, $at);
