@@ -21,6 +21,17 @@ use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Application\Catalogue\PublicCatalogue;
 use PaxofiCloud\Application\Contracts\CatalogueStore;
 use PaxofiCloud\Http\Controllers\CatalogueController;
+use PaxofiCloud\Http\Controllers\DomainSearchController;
+use PaxofiCloud\Application\Domains\DomainSearch;
+use PaxofiCloud\Application\Extensions\ExtensionQuotes;
+use PaxofiCloud\Infrastructure\Domains\CachedRdapDirectory;
+use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
+use PaxofiCloud\Infrastructure\Registrar\MysqlDomainCostStore;
+use PaxofiCloud\Integration\Rdap\RdapBootstrap;
+use PaxofiCloud\Integration\Rdap\RdapLookup;
+use PaxofiCloud\Integration\Registrar\DomainNameApi\DomainNameApiClient;
+use PaxofiCloud\Integration\Registrar\Namecheap\NamecheapClient;
+use PaxofiCloud\Integration\Registrar\Dynadot\DynadotClient;
 use PaxofiCloud\Infrastructure\Catalogue\MysqlCatalogueStore;
 use PaxofiCloud\Infrastructure\Container\Resolve;
 use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
@@ -38,6 +49,29 @@ final class CommerceProvider implements Provider
             Resolve::get($c, PublicCatalogue::class),
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
         ));
+        // Customer domain search (THREAT-MODEL-DOMAIN-SEARCH.md): RDAP pre-check and our selling prices; no registrar call, no key.
+        $container->singleton(DomainSearchController::class, static function (Container $c): DomainSearchController {
+            $repository = Resolve::get($c, Repository::class);
+            $redis = Resolve::get($c, RedisClient::class);
+
+            return new DomainSearchController(new DomainSearch(
+                new ExtensionQuotes(
+                    [
+                        DomainNameApiClient::PROVIDER => getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
+                        NamecheapClient::PROVIDER => getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                        DynadotClient::PROVIDER => getenv('DYNADOT_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                    ],
+                    new MysqlDomainCostStore(Resolve::get($c, Connection::class), $repository, Resolve::get($c, TransactionManager::class)),
+                    new MysqlExtensionSettingsStore(Resolve::get($c, Connection::class), $repository),
+                    Resolve::get($c, FxRateStore::class),
+                    new SystemClock(),
+                ),
+                new CachedRdapDirectory($redis, new RdapBootstrap(new ProviderHttpClient([RdapBootstrap::endpoint()], connectTimeoutMs: 3_000, totalTimeoutMs: 8_000, maxResponseBytes: RdapBootstrap::MAX_BYTES))),
+                new RdapLookup(),
+                $redis,
+                new RedisRateLimiter($redis),
+            ));
+        });
         $container->singleton(FxRateStore::class, static fn (Container $c): FxRateStore => new MysqlFxRateStore(
             Resolve::get($c, Connection::class),
             Resolve::get($c, Repository::class),
