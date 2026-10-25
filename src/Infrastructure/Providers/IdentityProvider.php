@@ -14,6 +14,7 @@ use PaxofiCloud\Application\Contracts\HumanVerification;
 use PaxofiCloud\Application\Contracts\MfaStore;
 use PaxofiCloud\Application\Contracts\SignInStore;
 use PaxofiCloud\Application\Contracts\StaffDirectory;
+use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Identity\Challenge\ChallengeGate;
 use PaxofiCloud\Application\Identity\Mfa\CompleteMfaSignIn;
 use PaxofiCloud\Application\Identity\Mfa\MfaCrypto;
@@ -440,6 +441,7 @@ final class IdentityProvider implements Provider
                     $requests,
                     new SystemClock(),
                     $audit,
+                    new RegistrarCheckHealth(Resolve::get($c, RedisClient::class)),
                 ),
                 NamecheapClient::PROVIDER => new DomainCostAdmin(
                     NamecheapClient::PROVIDER,

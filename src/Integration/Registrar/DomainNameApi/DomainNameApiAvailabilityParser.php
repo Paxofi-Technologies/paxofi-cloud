@@ -11,14 +11,14 @@ use PaxofiCloud\Domain\Registrar\CostAmount;
 /**
  * Reads a DomainNameAPI `domains/bulk-search` answer (DS-13). The field names
  * come from the official client (domainName, status, isPremium, price,
- * currency); the shape is read defensively: a bare list or a list under
- * data/items/result. Only domains we asked about are kept, a status we do not
+ * currency); the shape is read defensively: the list under `infos` (what the
+ * official client reads), a bare list, or a list under data/items/result. Only domains we asked about are kept, a status we do not
  * recognise is `unknown` (never available), and a premium price is kept only
  * in a currency we can price, as exact decimal text (no floats).
  */
 final class DomainNameApiAvailabilityParser
 {
-    private const array AVAILABLE = ['available', 'free'];
+    private const array AVAILABLE = ['available', 'free', '1', 'true'];
     private const array TAKEN = ['notavailable', 'not_available', 'unavailable', 'taken', 'registered', 'exists', 'inuse'];
     private const array RESERVED = ['reserved', 'blocked', 'restricted', 'premiumreserved', 'notallowed'];
 
@@ -30,7 +30,7 @@ final class DomainNameApiAvailabilityParser
     public static function parse(array $body, array $asked): array
     {
         $items = array_is_list($body) ? $body : null;
-        foreach (['data', 'items', 'result'] as $key) {
+        foreach (['infos', 'data', 'items', 'result'] as $key) {
             if ($items === null && is_array($body[$key] ?? null)) {
                 $items = $body[$key];
             }
@@ -58,6 +58,11 @@ final class DomainNameApiAvailabilityParser
     private static function answer(array $item): AvailabilityAnswer
     {
         $raw = $item['status'] ?? null;
+        // The official client also treats 1 / true as available.
+        $raw = match (true) {
+            $raw === true, $raw === 1 => '1',
+            default => $raw,
+        };
         $status = is_string($raw) ? str_replace([' ', '-'], '', strtolower($raw)) : '';
         $mapped = match (true) {
             in_array($status, self::AVAILABLE, true) => 'available',

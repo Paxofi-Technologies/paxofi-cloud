@@ -806,6 +806,19 @@ describe('Domain costs (THREAT-MODEL-DOMAIN-REGISTRAR.md DR-12, DR-13)', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
+  it('says how the latest availability check went, in plain words (DS-13)', async () => {
+    const fetchImpl = adminApi({
+      'GET /admin-api/v1/auth/session': { status: 200, body: catalogue },
+      'GET /admin-api/v1/domain-costs': {
+        status: 200,
+        body: costs({ availability_check: { outcome: 'malformed', asked: 3, answered: 0, at: '2026-10-25T08:40:00Z' } }),
+      },
+    });
+    render(<AdminApp path="/domain-costs" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByText(/Last availability check .*failed: the registrar sent an answer we could not read\./)).toBeInTheDocument();
+  });
+
   it('lists the fields the registrar sends, period-like ones first, as text (DR-16)', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({
