@@ -894,8 +894,11 @@ describe('Admin navigation', () => {
       '/staff',
       '/api-providers/domain-registrars',
       '/api-providers/server-providers',
+      '/domain-extensions',
       '/domain-costs',
     ]);
+    expect(adminPageForPath('/domain-extensions', ['catalogue.view'])).toBe('domain-extensions');
+    expect(adminPageForPath('/domain-extensions', ['ticket.reply'])).toBe('overview');
     expect(adminPageForPath('/provider-connections', ['provider_credentials.manage'])).toBe('providers-domains');
     expect(adminPageForPath('/provider-connections', ['catalogue.view'])).toBe('overview');
     expect(adminPageForPath('/domain-costs', ['catalogue.view'])).toBe('domain-costs');

@@ -128,3 +128,23 @@ means the key lacks the `domains:read` scope.
 | Command | What it does | Exit codes |
 |---|---|---|
 | `prices:probe-spaceship` | Runs the price check now (`trigger=cli`). Prints counts or the failure reason. | 0 done, 1 failed or not configured |
+
+## Domain extensions and selling prices (DX-2 to DX-13)
+
+The **Domain extensions** page lists every extension any registrar offers:
+
+- **Registrar for new registrations**: the cheapest one-year register cost
+  among registrars whose accepted list is under 72 hours old, ties going to
+  DomainNameAPI, Namecheap, Dynadot, Spaceship. Staff may pin a registrar per
+  extension; if the pinned one has no fresh list, the cheapest is used and the
+  row shows "Pin unavailable". Existing domains always stay with their registrar.
+- **Prices**: USD = registrar cost + markup, rounded up to the USD step, never
+  below cost + the minimum margin. NGN = the USD price at the latest accepted
+  exchange rate, rounded up to the NGN step. An action with no registrar cost,
+  or below the floor, shows "—" and is not sold online.
+- **Pricing settings** (markup, minimum margin, rounding): set on the page by
+  Catalogue staff with a fresh authenticator code. They live only in the
+  database: never put margins in the repository or in chat logs.
+- **Exchange rates**: the provider worker fetches a new set once the accepted
+  one is 20 hours old (tried at most hourly). `fx:status` shows the history.
+- Every change is audited (Audit log → group "Domain pricing").

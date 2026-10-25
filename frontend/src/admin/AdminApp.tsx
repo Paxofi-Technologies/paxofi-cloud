@@ -51,6 +51,7 @@ import {
   type StaffSessionState,
 } from './adminApi';
 import { ConfirmWithCode, StaffDevices } from './StaffDevices';
+import { DomainExtensionsPage } from './DomainExtensions';
 import { createPasskey, getPasskey, type CredentialsApi } from './webauthn';
 
 export interface AdminAppProps {
@@ -596,7 +597,7 @@ function Console({ path, fetchImpl, credentials }: { path: string; fetchImpl?: t
   return <Dashboard path={path} session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
 }
 
-type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'domain-costs' | 'audit-log';
+type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'domain-extensions' | 'domain-costs' | 'audit-log';
 
 interface AdminPageSpec {
   id: AdminPage;
@@ -643,6 +644,7 @@ const ADMIN_PAGES: readonly AdminPageSpec[] = [
     permission: 'provider_credentials.manage',
     group: 'api-providers',
   },
+  { id: 'domain-extensions', path: '/domain-extensions', label: 'Domain extensions', icon: <GlobeIcon />, permission: 'catalogue.view' },
   { id: 'domain-costs', path: '/domain-costs', label: 'Domain costs', icon: <TagIcon />, permission: 'catalogue.view' },
   { id: 'audit-log', path: '/audit-log', label: 'Audit log', icon: <ShieldIcon />, permission: 'audit.view' },
 ];
@@ -741,6 +743,7 @@ function Dashboard({
         {page === 'staff' && <StaffManagement session={session} fetchImpl={fetchImpl} />}
         {page === 'providers-domains' && <ProviderConnections category="domains" session={session} fetchImpl={fetchImpl} />}
         {page === 'providers-servers' && <ProviderConnections category="servers" session={session} fetchImpl={fetchImpl} />}
+        {page === 'domain-extensions' && <DomainExtensionsPage session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
         {page === 'audit-log' && <AuditLogCard fetchImpl={fetchImpl} />}
       </div>
@@ -1837,6 +1840,7 @@ const AUDIT_GROUPS: Record<string, string> = {
   staff: 'Staff',
   provider_credential: 'Provider credentials',
   provider_prices: 'Provider prices',
+  domain_pricing: 'Domain pricing',
   registrar: 'Registrar',
   audit: 'Audit log views',
 };

@@ -91,6 +91,10 @@ use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
 use PaxofiCloud\Infrastructure\Registrar\MysqlPriceCheckStore;
 use PaxofiCloud\Application\Registrar\SpaceshipPriceCheckAdmin;
 use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainExtensionsController;
+use PaxofiCloud\Application\Extensions\ExtensionsAdmin;
+use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
+use PaxofiCloud\Application\Contracts\FxRateStore;
 use PaxofiCloud\Infrastructure\Secrets\SealedBox;
 use Paxofi\Core\Application;
 use Paxofi\Core\Contracts\Configuration;
@@ -456,6 +460,29 @@ final class IdentityProvider implements Provider
                     $audit,
                 ),
             ]);
+        });
+
+        // Domain extensions (DX-2 to DX-13): registrar choice and selling prices from stored snapshots; never calls a registrar.
+        $container->singleton(AdminDomainExtensionsController::class, static function (Container $c): AdminDomainExtensionsController {
+            $connection = Resolve::get($c, Connection::class);
+            $repository = Resolve::get($c, Repository::class);
+            $secondFactor = self::staffSecondFactor($c);
+
+            return new AdminDomainExtensionsController(new ExtensionsAdmin(
+                [
+                    DomainNameApiClient::PROVIDER => getenv('DOMAINNAMEAPI_ENVIRONMENT') === 'ote' ? 'ote' : 'live',
+                    NamecheapClient::PROVIDER => getenv('NAMECHEAP_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                    DynadotClient::PROVIDER => getenv('DYNADOT_ENVIRONMENT') === 'sandbox' ? 'sandbox' : 'live',
+                ],
+                Resolve::get($c, StaffAuthorizer::class),
+                new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
+                new MysqlExtensionSettingsStore($connection, $repository),
+                Resolve::get($c, FxRateStore::class),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                static fn (string $staffId, string $code): bool => $secondFactor !== null && $secondFactor->verifyCode($staffId, $code),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            ));
         });
 
         // Spaceship price check (SP-3, SP-7): the web tier reads results and queues checks; it never calls Spaceship.

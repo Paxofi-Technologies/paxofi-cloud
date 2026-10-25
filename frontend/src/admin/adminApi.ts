@@ -462,6 +462,109 @@ export async function fetchSpaceshipCheck(fetchImpl: typeof fetch = fetch): Prom
 export const requestSpaceshipCheck = (csrfToken: string, fetchImpl: typeof fetch = fetch) =>
   postJson(`${ADMIN_API}/spaceship-price-check/run`, {}, fetchImpl, { 'X-CSRF-Token': csrfToken });
 
+/** One extension on the Domain extensions page (DX-2 to DX-13). Prices are minor units; null = not sold online. */
+export interface ExtensionRow {
+  tld: string;
+  featuredOrder: number | null;
+  label: string;
+  pinnedRegistrar: string | null;
+  pinUnavailable: boolean;
+  chosenRegistrar: string | null;
+  offers: { registrar: string; register: number; renew: number; currency: string }[];
+  usd: Record<string, number | null> | null;
+  ngn: Record<string, number | null> | null;
+  graceDays: number;
+  graceFee: number;
+  redemptionDays: number;
+  redemptionFee: number | null;
+}
+
+export interface DomainExtensions {
+  canManage: boolean;
+  registrars: string[];
+  labels: string[];
+  pricing: { markupBp: number; minMarginBp: number; usdStep: number; ngnStep: number } | null;
+  fx: { fetchedAt: string; source: string } | null;
+  total: number;
+  page: number;
+  pageSize: number;
+  rows: ExtensionRow[];
+}
+
+function priceMap(value: unknown): Record<string, number | null> | null {
+  const m = obj(value);
+  if (!m) return null;
+  const out: Record<string, number | null> = {};
+  for (const action of ['register', 'renew', 'transfer', 'restore']) out[action] = minor(m[action]);
+  return out;
+}
+
+export async function fetchDomainExtensions(
+  query: { q?: string; page?: number; featured?: boolean },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ kind: 'ok'; data: DomainExtensions } | { kind: 'failed' }> {
+  const params = new URLSearchParams();
+  if (query.q) params.set('q', query.q);
+  if (query.page && query.page > 1) params.set('page', String(query.page));
+  if (query.featured) params.set('featured', '1');
+  const qs = params.toString();
+  const result = await getJson(`${ADMIN_API}/domain-extensions${qs ? `?${qs}` : ''}`, fetchImpl);
+  const body = obj(result?.data);
+  if (result === null || result.status !== 200 || !body || !Array.isArray(body.rows)) return { kind: 'failed' };
+  const rows: ExtensionRow[] = [];
+  for (const raw of body.rows) {
+    const r = obj(raw);
+    if (!r || typeof r.tld !== 'string') continue;
+    const offers: ExtensionRow['offers'] = [];
+    for (const o of Array.isArray(r.offers) ? r.offers : []) {
+      const x = obj(o);
+      const register = minor(x?.register);
+      const renew = minor(x?.renew);
+      if (x && typeof x.registrar === 'string' && typeof x.currency === 'string' && register !== null && renew !== null) offers.push({ registrar: x.registrar, register, renew, currency: x.currency });
+    }
+    rows.push({
+      tld: r.tld,
+      featuredOrder: minor(r.featured_order),
+      label: typeof r.label === 'string' ? r.label : 'none',
+      pinnedRegistrar: nullableString(r.pinned_registrar),
+      pinUnavailable: r.pin_unavailable === true,
+      chosenRegistrar: nullableString(r.chosen_registrar),
+      offers,
+      usd: priceMap(r.usd),
+      ngn: priceMap(r.ngn),
+      graceDays: minor(r.grace_days) ?? 30,
+      graceFee: minor(r.grace_fee) ?? 0,
+      redemptionDays: minor(r.redemption_days) ?? 30,
+      redemptionFee: minor(r.redemption_fee),
+    });
+  }
+  const p = obj(body.pricing);
+  const fx = obj(body.fx);
+  return {
+    kind: 'ok',
+    data: {
+      canManage: body.can_manage === true,
+      registrars: strings(body.registrars),
+      labels: strings(body.labels),
+      pricing:
+        p && minor(p.markup_bp) !== null
+          ? { markupBp: minor(p.markup_bp) ?? 0, minMarginBp: minor(p.min_margin_bp) ?? 0, usdStep: minor(p.usd_step) ?? 1, ngnStep: minor(p.ngn_step) ?? 1 }
+          : null,
+      fx: fx && typeof fx.fetched_at === 'string' && typeof fx.source === 'string' ? { fetchedAt: fx.fetched_at, source: fx.source } : null,
+      total: minor(body.total) ?? rows.length,
+      page: minor(body.page) ?? 1,
+      pageSize: minor(body.page_size) ?? 25,
+      rows,
+    },
+  };
+}
+
+export const saveExtensionSettings = (csrfToken: string, body: Record<string, string | number | null>, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/domain-extensions/settings`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+export const saveDomainPricing = (csrfToken: string, body: Record<string, string | number>, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/domain-pricing-settings`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
 /** Formats integer minor units without floating point, e.g. 123456 USD → "USD 1,234.56". */
 export function formatMinor(amount: number, currency: string): string {
   const whole = Math.trunc(amount / 100).toLocaleString('en-NG');

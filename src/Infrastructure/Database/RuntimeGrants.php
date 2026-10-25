@@ -49,6 +49,9 @@ final readonly class RuntimeGrants
         'domain_cost_skipped' => ['SELECT', 'INSERT'],
         'domain_cost_feed_fields' => ['SELECT', 'INSERT'],
         'provider_sync_runs' => ['SELECT', 'INSERT'],
+        // Domain pricing settings and per-extension settings (DX-5, DX-9, DX-10): edited in place, every change audited.
+        'domain_pricing_settings' => ['SELECT', 'INSERT', 'UPDATE'],
+        'domain_extension_settings' => ['SELECT', 'INSERT', 'UPDATE'],
         // Spaceship price checks (SP-7): written once, never edited.
         'spaceship_price_checks' => ['SELECT', 'INSERT'],
         'spaceship_price_check_items' => ['SELECT', 'INSERT'],
