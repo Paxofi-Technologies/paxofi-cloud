@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Badge, Button, Card, TextField } from '../components';
 import { CheckIcon, SearchIcon } from '../components/icons';
 import { describeWait } from '../lib/api';
 import { formatMoney } from '../lib/money';
+import { DomainPriceListView } from './DomainPriceList';
 
 /** One searched name with its selling price (THREAT-MODEL-DOMAIN-SEARCH.md DS-9). Minor units only. */
 export interface SearchResult {
@@ -88,6 +89,16 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
   const [results, setResults] = useState<readonly SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [picked, setPicked] = useState<ReadonlyMap<string, SearchResult>>(new Map());
+  const top = useRef<HTMLDivElement>(null);
+
+  /** A card or price-list row puts that extension into the search box. */
+  function pick(tld: string) {
+    const name = query.trim().toLowerCase().split('.')[0] ?? '';
+    setQuery(`${name || 'yourname'}.${tld}`);
+    setError(undefined);
+    top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    top.current?.querySelector('input')?.focus();
+  }
 
   async function search(event: FormEvent) {
     event.preventDefault();
@@ -120,7 +131,7 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
   const totalNgn = [...picked.values()].reduce((sum, r) => sum + r.register.ngn, 0);
 
   return (
-    <div className="pc-stack">
+    <div className="pc-stack" ref={top}>
       <div>
         <h1>Find your domain</h1>
         <p className="pc-muted">Search .ng, .com.ng, .com and more. Prices are for the first year.</p>
@@ -215,6 +226,8 @@ export function DomainSearchScreen({ fetchImpl }: { fetchImpl?: typeof fetch | u
           </div>
         )}
       </div>
+
+      <DomainPriceListView fetchImpl={fetchImpl} onPick={pick} />
     </div>
   );
 }

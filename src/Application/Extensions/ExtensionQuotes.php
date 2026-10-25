@@ -8,6 +8,8 @@ use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\DomainCostReport;
 use PaxofiCloud\Application\Contracts\ExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\FxRateStore;
+use PaxofiCloud\Domain\Pricing\DomainPricingSettings;
+use PaxofiCloud\Domain\Pricing\ExchangeRates;
 
 /**
  * Selling prices per extension for customers (THREAT-MODEL-DOMAIN-PRICING.md
@@ -21,6 +23,9 @@ final class ExtensionQuotes
     private ?array $offers = null;
     /** @var array<string, ExtensionSettings>|null */
     private ?array $settings = null;
+    private bool $loaded = false;
+    private ?DomainPricingSettings $pricing = null;
+    private ?ExchangeRates $exchange = null;
 
     /** @param array<string, string> $registrars provider => environment */
     public function __construct(
@@ -35,18 +40,30 @@ final class ExtensionQuotes
     /** The register and renew price, or null when the extension is not sold online. */
     public function quote(string $tld): ?ExtensionPrices
     {
-        $pricing = $this->store->pricing();
-        $rates = $this->rates->latestAccepted();
-        if ($pricing === null || $rates === null) {
+        if (!$this->loaded) {
+            $this->loaded = true;
+            $this->pricing = $this->store->pricing();
+            $this->exchange = $this->rates->latestAccepted()?->rates;
+        }
+        if ($this->pricing === null || $this->exchange === null) {
             return null;
         }
         $choice = RegistrarChoice::choose($this->offers()[$tld] ?? [], ($this->settings()[$tld] ?? null)?->pinnedRegistrar, $this->clock->now());
         if ($choice->chosen === null) {
             return null;
         }
-        $prices = ExtensionPrices::for($choice->chosen->cost, $pricing, $rates->rates);
+        $prices = ExtensionPrices::for($choice->chosen->cost, $this->pricing, $this->exchange);
 
         return $prices->usd['register'] === null ? null : $prices;
+    }
+
+    /** @return list<string> every extension some registrar offers, alphabetical; quote() decides which are sold */
+    public function extensions(): array
+    {
+        $tlds = array_map('strval', array_keys($this->offers()));
+        sort($tlds);
+
+        return $tlds;
     }
 
     /** @return list<string> featured extensions in their order (CR-003, DX-10) */

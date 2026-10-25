@@ -18,6 +18,7 @@ use PaxofiCloud\Domain\Money\BasisPoints;
 use PaxofiCloud\Domain\Pricing\DomainPricingSettings;
 use PaxofiCloud\Domain\Pricing\Markup;
 use PaxofiCloud\Domain\Pricing\RoundingStep;
+use PaxofiCloud\Domain\Registrar\CostAmount;
 use PaxofiCloud\Domain\Registrar\TldName;
 use PaxofiCloud\Domain\Staff\Permission;
 
@@ -65,7 +66,7 @@ final readonly class ExtensionsAdmin
      *     rows: list<array{
      *         tld: string, featured_order: ?int, label: string, pinned_registrar: ?string, pin_unavailable: bool,
      *         chosen_registrar: ?string, offers: list<array{registrar: string, register: int, renew: int, currency: string}>,
-     *         usd: ?array<string, ?int>, ngn: ?array<string, ?int>, grace_days: int, grace_fee: int,
+     *         cost: ?array<string, ?int>, usd: ?array<string, ?int>, ngn: ?array<string, ?int>, grace_days: int, grace_fee: int,
      *         redemption_days: int, redemption_fee: ?int, lifecycle_set: bool
      *     }>
      * }
@@ -125,6 +126,7 @@ final readonly class ExtensionsAdmin
                     'renew' => $o->cost->renew->minor,
                     'currency' => $o->cost->register->currency->value,
                 ], $choice->healthy),
+                'cost' => $choice->chosen === null ? null : self::costs($choice->chosen),
                 'usd' => $prices?->usd,
                 'ngn' => $prices?->ngn,
                 'grace_days' => $own->graceDays ?? ExtensionSettings::DEFAULT_GRACE_DAYS,
@@ -224,6 +226,24 @@ final readonly class ExtensionsAdmin
             'usd_step' => $next->usdStep->minorUnits,
             'ngn_step' => $next->ngnStep->minorUnits,
         ]);
+    }
+
+    /**
+     * The chosen registrar's one-year cost per action, in USD cents, so staff
+     * see the base price before any pricing settings exist. Admin only (DX-13).
+     *
+     * @return array<string, ?int>
+     */
+    private static function costs(RegistrarOffer $offer): array
+    {
+        $usd = static fn (?CostAmount $a): ?int => $a !== null && $a->currency->value === 'USD' ? $a->minor : null;
+
+        return [
+            'register' => $usd($offer->cost->register),
+            'renew' => $usd($offer->cost->renew),
+            'transfer' => $usd($offer->cost->transfer),
+            'restore' => $usd($offer->cost->restore),
+        ];
     }
 
     private static function nullableInt(mixed $value): ?int

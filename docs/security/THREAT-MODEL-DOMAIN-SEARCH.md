@@ -34,6 +34,7 @@ only: no cart, no WHOIS details, no registrar call.
 | DS-7 | **Caching.** Each name's result is cached in Redis for 10 minutes (available or taken) and 1 minute (`unknown`), under a key that is the SHA-256 of the name, so Redis never holds searched names in clear. |
 | DS-8 | **Privacy (NDPA).** Searched names are not stored in the database, not logged and not audited; logs carry only counts and fixed codes. |
 | DS-9 | **Prices and visibility (DX-13).** Each result shows only the selling price (register, renew) in USD and NGN from the Domain extensions engine, the featured flag and label. Costs, registrar names, pins and margins never leave the admin API. An extension without a price is not offered. |
+| DS-11 | **Public price list.** `GET /api/v1/domains/prices?q=&page=` returns the featured extensions and every extension we sell (25 per page) with the one-year register, transfer and renew selling price in USD and NGN, the featured flag and the label. Same quote engine and allow-list as DS-9: no costs, registrars, pins or margins. Nothing is listed until pricing settings exist. Search text is limited to `a-z 0-9 . -`, 63 characters; 120 requests per minute per IP; `Cache-Control: public, max-age=300` (prices change at most daily). Staff see the chosen registrar's cost on the admin Domain extensions page only (`catalogue.view`). |
 | DS-10 | **Public endpoint.** `GET /api/v1/domains/search?name=&tld=` needs no sign-in (it will serve the public website), is read-only (no CSRF), returns `Cache-Control: no-store`, and is covered by the existing security headers and the API write guard (GET only). |
 
 ## 4. Threats
@@ -46,6 +47,8 @@ only: no cart, no WHOIS details, no registrar call.
 | DS-T4 | I | Searched names (possible business plans) leak through logs, DB or Redis | 2 | 2 | DS-7 hashed keys; DS-8 no storage or logging | `DomainSearchTest` (Redis keys hashed) |
 | DS-T5 | I | Costs, margins or registrar choice leak through the public search | 2 | 3 | DS-9 allow-listed response fields | `DomainSearchTest` (response keys) |
 | DS-T6 | T | A hostile RDAP response (huge, slow, malformed) exhausts the web tier | 2 | 2 | DS-3 status only, 64 KiB cap, 4 s timeout | `RdapTest` |
+| DS-T8 | I | The public price list leaks costs or margins | 2 | 3 | DS-11 allow-listed fields; costs stay behind `catalogue.view` | `DomainPriceListTest` |
+| DS-T9 | D | The price list is scraped hard enough to load the database | 3 | 1 | DS-11 per-IP limit, cacheable response, quotes computed once per request | `DomainPriceListTest` |
 | DS-T7 | S | Bootstrap fetched from a spoofed host | 1 | 3 | Fixed host, verified TLS, public-IP pinning; validation of every entry | `RdapTest` |
 
 ## 5. Residual risks
@@ -60,4 +63,5 @@ only: no cart, no WHOIS details, no registrar call.
 
 | Date | Change |
 |---|---|
+| 25 Oct 2026 | DS-11, DS-T8, DS-T9: public price list and featured cards (CEO request); admin shows registrar cost before pricing settings exist. |
 | 25 Oct 2026 | First version, before code. CEO chose customer domain search next (option A). |
