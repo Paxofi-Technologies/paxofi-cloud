@@ -20,6 +20,9 @@ use PaxofiCloud\Integration\Fx\ExchangeRateApiSource;
 use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Application\Catalogue\PublicCatalogue;
 use PaxofiCloud\Application\Contracts\CatalogueStore;
+use PaxofiCloud\Application\Cart\DomainCart;
+use PaxofiCloud\Application\Identity\Session\Sessions;
+use PaxofiCloud\Http\Controllers\CartController;
 use PaxofiCloud\Http\Controllers\CatalogueController;
 use PaxofiCloud\Http\Controllers\DomainCheckController;
 use PaxofiCloud\Http\Controllers\DomainPricesController;
@@ -86,6 +89,11 @@ final class CommerceProvider implements Provider
             Resolve::get($c, RedisClient::class),
             new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
         )));
+        // Signed-in domain cart (CD-20): lines only, re-quoted on every read.
+        $container->singleton(CartController::class, static fn (Container $c): CartController => new CartController(
+            new DomainCart(Resolve::get($c, RedisClient::class), Resolve::get($c, ExtensionQuotes::class), new RedisRateLimiter(Resolve::get($c, RedisClient::class))),
+            Resolve::get($c, Sessions::class),
+        ));
         // Public price list (DS-11): selling prices only, cacheable.
         $container->singleton(DomainPricesController::class, static fn (Container $c): DomainPricesController => new DomainPricesController(new DomainPriceList(
             Resolve::get($c, ExtensionQuotes::class),

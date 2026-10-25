@@ -144,7 +144,7 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
       {screen === 'dashboard' && (
         <DashboardScreen fullName={session.fullName} mfaEnabled={mfaEnabled ?? true} onFindDomain={() => go('domains')} onSetUpMfa={() => go('security')} />
       )}
-      {screen === 'domains' && <DomainSearchScreen fetchImpl={fetchImpl} />}
+      {screen === 'domains' && <DomainSearchScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
       {screen === 'security' && <SecurityScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} onStatusChange={(status) => setMfaEnabled(status.totpEnabled)} />}
     </AppShell>
   );

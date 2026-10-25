@@ -22,7 +22,7 @@ const result = (domain: string, status: string, overrides: Record<string, unknow
 describe('DomainSearchScreen', () => {
   it('searches the real API and shows availability and naira/dollar prices as text', async () => {
     const user = userEvent.setup();
-    const fetchImpl = api(200, {
+    const search = {
       name: 'acme',
       results: [
         result('acme.ng', 'available', { label: 'hot' }),
@@ -31,8 +31,20 @@ describe('DomainSearchScreen', () => {
         result('<img src=x>.com', 'available'),
         { domain: 'bad.com', status: 'available', register: { usd: 1.5, ngn: 1 } },
       ],
-    });
-    render(<DomainSearchScreen fetchImpl={fetchImpl} />);
+    };
+    const cartAfterAdd = { lines: [{ id: '0123456789abcdef', domain: 'acme.ng', available: true, register: { usd: 1250, ngn: 1_875_000 } }], total: { usd: 1250, ngn: 1_875_000 } };
+    const fetchImpl = vi.fn((path: string, init?: RequestInit) => {
+      const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
+      if (path === '/api/v1/cart') return json({ lines: [], total: { usd: 0, ngn: 0 } });
+      if (path === '/api/v1/cart/domains') {
+        expect(JSON.parse(String(init?.body))).toEqual({ domain: 'acme.ng' });
+        expect((init?.headers as Record<string, string>)['X-CSRF-Token']).toBe('csrf-1');
+        return json(cartAfterAdd);
+      }
+      if (path.startsWith('/api/v1/domains/check')) return json({ code: 'too_many_requests' }, 429);
+      return json(search);
+    }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+    render(<DomainSearchScreen csrfToken="csrf-1" fetchImpl={fetchImpl} />);
 
     await user.type(screen.getByLabelText('Domain name'), ' Acme ');
     await user.click(screen.getByRole('button', { name: /Search/ }));
@@ -52,8 +64,10 @@ describe('DomainSearchScreen', () => {
     expect(document.querySelector('img')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Choose acme.ng' }));
-    expect(screen.getByRole('status')).toHaveTextContent('1 domain chosen');
-    expect(screen.getByRole('status')).toHaveTextContent('Checkout opens soon.');
+    const bar = await screen.findByText(/in your cart/);
+    expect(bar.closest('[role="status"]')).toHaveTextContent('1 domain in your cart');
+    expect(bar.closest('[role="status"]')).toHaveTextContent('18,750.00');
+    expect(screen.getByRole('button', { name: 'Remove acme.ng' })).toBeInTheDocument();
   });
 
   it('explains bad names, unknown extensions and the rate limit', async () => {
@@ -79,7 +93,7 @@ describe('DomainSearchScreen', () => {
     render(<DomainSearchScreen fetchImpl={fetchImpl} />);
     await user.click(screen.getByRole('button', { name: /Search/ }));
     expect(screen.getByText('Type the name you want, like yourbusiness.')).toBeInTheDocument();
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalledWith(expect.stringContaining('/api/v1/domains/search'), expect.anything());
   });
 });
 

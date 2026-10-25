@@ -15,6 +15,7 @@ use Paxofi\Core\Http\ControllerDispatcher;
 use Paxofi\Core\Http\Router;
 use PaxofiCloud\Http\Controllers\AccountActivityController;
 use PaxofiCloud\Http\Controllers\AccountSessionsController;
+use PaxofiCloud\Http\Controllers\CartController;
 use PaxofiCloud\Http\Controllers\CatalogueController;
 use PaxofiCloud\Http\Controllers\DomainCheckController;
 use PaxofiCloud\Http\Controllers\DomainPricesController;
@@ -82,6 +83,10 @@ final class HttpProvider implements Provider
             $router->get('/api/v1/account/sessions', static fn (HttpRequest $r): HttpResponse => $accountSessions()->list($r));
             $router->post('/api/v1/account/sessions/revoke', static fn (HttpRequest $r): HttpResponse => $accountSessions()->revoke($r));
             $router->post('/api/v1/account/sessions/revoke-others', static fn (HttpRequest $r): HttpResponse => $accountSessions()->revokeOthers($r));
+            $cart = static fn (): CartController => Resolve::get($c, CartController::class);
+            $router->get('/api/v1/cart', static fn (HttpRequest $r): HttpResponse => $cart()->view($r));
+            $router->post('/api/v1/cart/domains', static fn (HttpRequest $r): HttpResponse => $cart()->addDomain($r));
+            $router->post('/api/v1/cart/remove', static fn (HttpRequest $r): HttpResponse => $cart()->remove($r));
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('GET', '/api/v1/catalogue', CatalogueController::class, $dispatcher);
             $router->controller('GET', '/api/v1/domains/search', DomainSearchController::class, $dispatcher);
