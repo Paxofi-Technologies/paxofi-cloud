@@ -2,6 +2,7 @@ export { Alert } from './Alert';
 export { AuthLayout } from './AuthLayout';
 export { AppShell, type NavItem } from './AppShell';
 export { Badge, type Tone } from './Badge';
+export { PromoLabel, PROMO_LABELS } from './PromoLabel';
 export { Button } from './Button';
 export { Card } from './Card';
 export { Checkbox } from './Checkbox';

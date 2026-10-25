@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Card, Modal, TextField } from '../components';
+import { Alert, Badge, Button, Card, Modal, PROMO_LABELS, PromoLabel, TextField } from '../components';
 import { describeWait, type ApiResult } from '../lib/api';
 import { formatWhen } from '../lib/activity';
 import {
@@ -14,7 +14,7 @@ import {
 } from './adminApi';
 
 const REGISTRARS: Record<string, string> = { domainnameapi: 'DomainNameAPI', namecheap: 'Namecheap', dynadot: 'Dynadot', spaceship: 'Spaceship' };
-const LABELS: Record<string, string> = { none: 'No label', hot: 'HOT', new: 'NEW', sale: 'SALE' };
+const LABELS: Record<string, string> = { none: 'No label', ...PROMO_LABELS };
 export const CATEGORY_NAMES: Record<string, string> = {
   business: 'Business',
   technology: 'Technology',
@@ -221,7 +221,7 @@ function ExtensionRowView({ row, canManage, priced, onEdit }: { row: ExtensionRo
       <td>
         <span className="pc-ext__name">.{row.tld}</span>{' '}
         {row.featuredOrder !== null && <Badge tone="info">Featured {row.featuredOrder}</Badge>}{' '}
-        {row.label !== 'none' && <Badge tone="warning">{LABELS[row.label] ?? row.label}</Badge>}{' '}
+        <PromoLabel label={row.label} />{' '}
         {hasOverride(row) && <Badge tone={row.overridesIgnored.length > 0 ? 'danger' : 'success'}>{row.overridesIgnored.length > 0 ? 'Custom price paused' : 'Custom price'}</Badge>}
         <br />
         <small className="pc-muted">{CATEGORY_NAMES[row.categoryShown] ?? row.categoryShown}</small>

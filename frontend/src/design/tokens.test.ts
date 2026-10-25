@@ -49,6 +49,10 @@ const TEXT_PAIRS: [string, string][] = [
   ['semantic.feedback.dangerText', 'semantic.surface.card'],
   ['semantic.feedback.infoText', 'semantic.feedback.infoSurface'],
   ['semantic.feedback.accentText', 'semantic.feedback.accentSurface'],
+  ['semantic.promo.text', 'semantic.promo.hot'],
+  ['semantic.promo.text', 'semantic.promo.promo'],
+  ['semantic.promo.text', 'semantic.promo.sale'],
+  ['semantic.promo.text', 'semantic.promo.new'],
 ];
 
 const UI_PAIRS: [string, string][] = [

@@ -26,6 +26,7 @@
   --pc-color-green-700: #1A6E3C;
   --pc-color-amber-50: #FFF6E0;
   --pc-color-amber-700: #8A5300;
+  --pc-color-orange-600: #C2410C;
   --pc-color-red-50: #FDEDEE;
   --pc-color-red-600: #C62F3E;
   --pc-color-red-700: #A32432;
@@ -69,6 +70,11 @@
   --pc-semantic-nav-hover: rgba(255, 255, 255, 0.06);
   --pc-semantic-nav-active: rgba(47, 107, 255, 0.22);
   --pc-semantic-nav-brandSuffix: #9FB4D3;
+  --pc-semantic-promo-hot: #C62F3E;
+  --pc-semantic-promo-promo: #C62F3E;
+  --pc-semantic-promo-sale: #C2410C;
+  --pc-semantic-promo-new: #1A6E3C;
+  --pc-semantic-promo-text: #FFFFFF;
   --pc-font-family-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --pc-font-family-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --pc-font-weight-regular: 400;

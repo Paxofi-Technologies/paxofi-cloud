@@ -13,7 +13,7 @@ use PaxofiCloud\Domain\Registrar\TldName;
  */
 final readonly class ExtensionSettings
 {
-    public const array LABELS = ['none', 'hot', 'new', 'sale'];
+    public const array LABELS = ['none', 'hot', 'promo', 'sale', 'new'];
     public const int DEFAULT_GRACE_DAYS = 30;
     public const int DEFAULT_REDEMPTION_DAYS = 30;
     public const int MAX_DAYS = 90;
