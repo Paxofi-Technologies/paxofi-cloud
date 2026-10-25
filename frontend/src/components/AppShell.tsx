@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CloseIcon, MenuIcon } from './icons';
+import { ChevronDownIcon, CloseIcon, MenuIcon } from './icons';
 import { Logo } from './Logo';
 
 export interface NavItem {
@@ -8,7 +8,7 @@ export interface NavItem {
   icon: ReactNode;
   /** Shown instead of navigating when the area is not built yet. */
   comingIn?: string;
-  /** Pages listed under this heading; the heading itself is not a page. */
+  /** Pages listed under this heading, shown as a collapsible group; the heading itself is not a page. */
   children?: readonly NavItem[];
 }
 
@@ -27,9 +27,22 @@ export interface AppShellProps {
  * Left sidebar on wide screens. On phones (860px and narrower) the sidebar is
  * a drawer opened by the menu button in the top bar; it closes on choosing a
  * page, on the close button, on tapping outside it, and on Escape.
+ *
+ * A menu heading with child pages is a collapsible group: clicking it opens
+ * or closes its pages. It starts open when one of its pages is the current
+ * page, and opens by itself when navigation lands on one of them.
  */
 export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLabel = 'Prototype · sample data', children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set(groupsHolding(nav, current)));
+  const [shownPage, setShownPage] = useState(current);
+  // Landing on a page inside a closed group (back button, a link) opens that group.
+  // Adjusted while rendering, not in an effect, so the menu never draws closed first.
+  if (shownPage !== current) {
+    setShownPage(current);
+    const holding = groupsHolding(nav, current);
+    if (!holding.every((id) => openGroups.has(id))) setOpenGroups(new Set([...openGroups, ...holding]));
+  }
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
 
@@ -45,6 +58,15 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen]);
+
+  function toggleGroup(id: string) {
+    setOpenGroups((open) => {
+      const next = new Set(open);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   function choose(id: string) {
     setMenuOpen(false);
@@ -77,13 +99,28 @@ export function AppShell({ nav, current, onNavigate, userName, onSignOut, envLab
             {nav.map((item) =>
               item.children ? (
                 <li key={item.id}>
-                  <span className="pc-nav__group" id={`pc-nav-group-${item.id}`}>
+                  <button
+                    type="button"
+                    id={`pc-nav-group-${item.id}`}
+                    className={`pc-nav__item pc-nav__group${!openGroups.has(item.id) && item.children.some((c) => c.id === current) ? ' pc-nav__item--within' : ''}`}
+                    aria-expanded={openGroups.has(item.id)}
+                    aria-controls={`pc-nav-group-${item.id}-pages`}
+                    onClick={() => toggleGroup(item.id)}
+                  >
                     <span className="pc-nav__icon" aria-hidden="true">
                       {item.icon}
                     </span>
                     <span>{item.label}</span>
-                  </span>
-                  <ul className="pc-nav pc-nav--sub" aria-labelledby={`pc-nav-group-${item.id}`}>
+                    <span className="pc-nav__chevron" aria-hidden="true">
+                      <ChevronDownIcon />
+                    </span>
+                  </button>
+                  <ul
+                    id={`pc-nav-group-${item.id}-pages`}
+                    className="pc-nav pc-nav--sub"
+                    aria-labelledby={`pc-nav-group-${item.id}`}
+                    hidden={!openGroups.has(item.id)}
+                  >
                     {item.children.map((child) => (
                       <NavEntry key={child.id} item={child} current={current} onChoose={choose} />
                     ))}
@@ -153,4 +190,9 @@ function NavEntry({ item, current, onChoose }: { item: NavItem; current: string;
       </button>
     </li>
   );
+}
+
+/** The menu groups whose pages include the current page. */
+function groupsHolding(nav: readonly NavItem[], current: string): string[] {
+  return nav.filter((item) => item.children?.some((child) => child.id === current)).map((item) => item.id);
 }

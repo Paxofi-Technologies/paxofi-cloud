@@ -46,3 +46,6 @@ export const MenuIcon = () => (
 export const CloseIcon = () => (
   <svg {...base} aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18" /></svg>
 );
+export const ChevronDownIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg>
+);

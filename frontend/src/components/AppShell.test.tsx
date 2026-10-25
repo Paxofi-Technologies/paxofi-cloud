@@ -71,3 +71,79 @@ describe('AppShell sidebar drawer (phones)', () => {
     expect(screen.getByText('Staff console')).toBeInTheDocument();
   });
 });
+
+describe('AppShell menu groups (dropdowns)', () => {
+  const grouped = [
+    { id: 'home', label: 'Overview', icon: <span /> },
+    {
+      id: 'api',
+      label: 'API providers',
+      icon: <span />,
+      children: [
+        { id: 'registrars', label: 'Domain registrars', icon: <span /> },
+        { id: 'servers', label: 'Server providers', icon: <span /> },
+      ],
+    },
+  ];
+
+  function render2(current: string, onNavigate = vi.fn()) {
+    const view = render(
+      <AppShell nav={grouped} current={current} onNavigate={onNavigate} userName="Ada" onSignOut={vi.fn()}>
+        <p>Page</p>
+      </AppShell>,
+    );
+    return { onNavigate, view };
+  }
+
+  it('starts closed when no page inside it is open, and opens and closes on click', async () => {
+    const user = userEvent.setup();
+    const { onNavigate } = render2('home');
+    const toggle = screen.getByRole('button', { name: 'API providers' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Domain registrars' })).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('list', { name: 'API providers' })).toBeVisible();
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Server providers' }));
+    expect(onNavigate).toHaveBeenCalledWith('servers');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Server providers' })).toBeNull();
+  });
+
+  it('starts open on one of its pages, stays open when leaving, and opens by itself when navigation lands inside it', async () => {
+    const user = userEvent.setup();
+    const { view } = render2('registrars');
+    const at = (current: string) =>
+      view.rerender(
+        <AppShell nav={grouped} current={current} onNavigate={vi.fn()} userName="Ada" onSignOut={vi.fn()}>
+          <p>Page</p>
+        </AppShell>,
+      );
+    const toggle = screen.getByRole('button', { name: 'API providers' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Domain registrars' })).toHaveAttribute('aria-current', 'page');
+
+    at('home');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    at('servers');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Server providers' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('marks a closed group that holds the current page', async () => {
+    const user = userEvent.setup();
+    render2('servers');
+    const toggle = screen.getByRole('button', { name: 'API providers' });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveClass('pc-nav__item--within');
+  });
+});
