@@ -36,7 +36,7 @@ final class AuditLogQueryTest extends TestCase
         yield 'huge cursor' => [['before' => str_repeat('9', 19)], 'before'];
         yield 'array cursor' => [['before' => ['1']], 'before'];
         yield 'unknown outcome' => [['outcome' => 'maybe'], 'outcome'];
-        yield 'unknown group' => [['group' => 'billing'], 'group'];
+        yield 'unknown group' => [['group' => 'payroll'], 'group'];
         yield 'wildcard group' => [['group' => '%'], 'group'];
         yield 'short subject' => [['subject' => 'abc'], 'subject'];
         yield 'subject with quote' => [['subject' => str_repeat('a', 31) . '"'], 'subject'];

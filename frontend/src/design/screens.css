@@ -137,3 +137,4 @@
 .pc-pricelist__tab[aria-selected='true'] { background: var(--pc-semantic-action-primary); border-color: var(--pc-semantic-action-primary); color: var(--pc-semantic-action-onPrimary); }
 .pc-pricelist__tab:focus-visible { outline: none; box-shadow: var(--pc-shadow-focus); }
 .pc-pricelist__count { opacity: 0.8; }
+.pc-form-actions { margin-top: var(--pc-space-5); }

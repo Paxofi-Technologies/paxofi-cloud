@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, AppShell, Button, type NavItem } from './components';
 import { CloudIcon, GlobeIcon, HomeIcon, LifebuoyIcon, ReceiptIcon, ServerIcon, ShieldIcon } from './components/icons';
+import { BillingScreen } from './screens/BillingScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DomainSearchScreen } from './screens/DomainSearchScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
@@ -15,15 +16,15 @@ const NAV: readonly NavItem[] = [
   { id: 'domains', label: 'Domains', icon: <GlobeIcon /> },
   { id: 'hosting', label: 'Hosting', icon: <ServerIcon />, comingIn: 'Soon' },
   { id: 'vps', label: 'Cloud servers', icon: <CloudIcon />, comingIn: 'Soon' },
-  { id: 'billing', label: 'Billing', icon: <ReceiptIcon />, comingIn: 'Soon' },
+  { id: 'billing', label: 'Billing', icon: <ReceiptIcon /> },
   { id: 'support', label: 'Support', icon: <LifebuoyIcon />, comingIn: 'Soon' },
   { id: 'security', label: 'Security', icon: <ShieldIcon /> },
 ];
 
-type Screen = 'dashboard' | 'domains' | 'security';
+type Screen = 'dashboard' | 'domains' | 'billing' | 'security';
 
 /** Each portal page has its own address, so refresh, links in emails and back/forward land on it. */
-const SCREEN_PATHS: Readonly<Record<Screen, string>> = { dashboard: '/', domains: '/domains', security: '/security' };
+const SCREEN_PATHS: Readonly<Record<Screen, string>> = { dashboard: '/', domains: '/domains', billing: '/billing', security: '/security' };
 
 export function screenForPath(path: string): Screen | null {
   const match = (Object.keys(SCREEN_PATHS) as Screen[]).find((screen) => SCREEN_PATHS[screen] === path);
@@ -135,7 +136,7 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
     <AppShell
       nav={NAV}
       current={screen}
-      onNavigate={(id) => go(id === 'domains' || id === 'security' ? id : 'dashboard')}
+      onNavigate={(id) => go(id === 'domains' || id === 'billing' || id === 'security' ? id : 'dashboard')}
       userName={session.fullName}
       onSignOut={() => {
         if (!signingOut) void handleSignOut();
@@ -145,6 +146,7 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
         <DashboardScreen fullName={session.fullName} mfaEnabled={mfaEnabled ?? true} onFindDomain={() => go('domains')} onSetUpMfa={() => go('security')} />
       )}
       {screen === 'domains' && <DomainSearchScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
+      {screen === 'billing' && <BillingScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
       {screen === 'security' && <SecurityScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} onStatusChange={(status) => setMfaEnabled(status.totpEnabled)} />}
     </AppShell>
   );

@@ -75,6 +75,7 @@ const LABELS: Record<string, string> = {
   'mfa.disabled': 'Two-step verification turned off',
   'mfa.recovery_codes_regenerated': 'New recovery codes created',
   'mfa.change_refused': 'Security change refused',
+  'billing.details_saved': 'Billing details updated',
 };
 
 const REASONS: Record<string, string> = {

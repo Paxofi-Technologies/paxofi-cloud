@@ -69,6 +69,7 @@ final class AuditEventType
     public const string STAFF_SESSIONS_REVOKED_OTHERS = 'staff.sessions.revoked_others';
     public const string STAFF_SESSIONS_ENDED = 'staff.sessions.ended';
     public const string STAFF_SESSION_CHANGE_REFUSED = 'staff.session_change.refused';
+    public const string BILLING_DETAILS_SAVED = 'billing.details_saved';
 
     private function __construct()
     {

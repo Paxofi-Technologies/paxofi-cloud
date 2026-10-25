@@ -22,6 +22,10 @@ final readonly class RuntimeGrants
     public const array POLICY = [
         'account_members' => self::CRUD,
         'accounts' => self::CRUD,
+        // Billing details (commerce CD-21): saved in place, never deleted (invoices snapshot them).
+        'account_billing_details' => ['SELECT', 'INSERT', 'UPDATE'],
+        // Tax table (CD-22): append-only and read-only for the runtime user until the Sprint 3 editor.
+        'tax_rates' => ['SELECT'],
         // Append-only: events can be written and read, never changed or removed (T-39).
         'audit_events' => ['SELECT', 'INSERT'],
         // The single head row only moves forward.

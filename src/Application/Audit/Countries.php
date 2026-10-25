@@ -267,6 +267,17 @@ final class Countries
     {
     }
 
+    public static function known(string $code): bool
+    {
+        return isset(self::NAMES[$code]);
+    }
+
+    /** @return array<string, string> code => name, in code order */
+    public static function all(): array
+    {
+        return self::NAMES;
+    }
+
     /** The name, or the code itself when unknown (e.g. Cloudflare's T1 for Tor). */
     public static function name(string $code): string
     {

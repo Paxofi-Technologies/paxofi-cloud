@@ -15,6 +15,7 @@ use Paxofi\Core\Http\ControllerDispatcher;
 use Paxofi\Core\Http\Router;
 use PaxofiCloud\Http\Controllers\AccountActivityController;
 use PaxofiCloud\Http\Controllers\AccountSessionsController;
+use PaxofiCloud\Http\Controllers\BillingDetailsController;
 use PaxofiCloud\Http\Controllers\CartController;
 use PaxofiCloud\Http\Controllers\CatalogueController;
 use PaxofiCloud\Http\Controllers\DomainCheckController;
@@ -87,6 +88,9 @@ final class HttpProvider implements Provider
             $router->get('/api/v1/cart', static fn (HttpRequest $r): HttpResponse => $cart()->view($r));
             $router->post('/api/v1/cart/domains', static fn (HttpRequest $r): HttpResponse => $cart()->addDomain($r));
             $router->post('/api/v1/cart/remove', static fn (HttpRequest $r): HttpResponse => $cart()->remove($r));
+            $billing = static fn (): BillingDetailsController => Resolve::get($c, BillingDetailsController::class);
+            $router->get('/api/v1/account/billing', static fn (HttpRequest $r): HttpResponse => $billing()->view($r));
+            $router->post('/api/v1/account/billing', static fn (HttpRequest $r): HttpResponse => $billing()->save($r));
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('GET', '/api/v1/catalogue', CatalogueController::class, $dispatcher);
             $router->controller('GET', '/api/v1/domains/search', DomainSearchController::class, $dispatcher);
