@@ -45,7 +45,11 @@ final readonly class SpaceshipPriceCheck
     ) {
     }
 
-    /** Runs once for every waiting request from the admin console, however many there are. */
+    /**
+     * Runs once for every waiting request from the admin console, however many there are.
+     *
+     * @phpstan-impure
+     */
     public function runIfRequested(): ?PriceCheckRun
     {
         if ($this->requests->claimAll($this->registrar->provider(), $this->clock->now()) === 0) {

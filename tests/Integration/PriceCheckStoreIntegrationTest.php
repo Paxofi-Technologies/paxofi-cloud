@@ -97,6 +97,8 @@ final class PriceCheckStoreIntegrationTest extends IntegrationTestCase
             }
         }
         self::pdo()->exec("INSERT INTO spaceship_price_check_items VALUES (REPEAT('d', 32), 'com', 'available', 998, 'renew,transfer')");
-        self::assertSame(1, (int) self::pdo()->query('SELECT COUNT(*) FROM spaceship_price_check_items')->fetchColumn());
+        $count = self::pdo()->query('SELECT COUNT(*) FROM spaceship_price_check_items');
+        self::assertNotFalse($count);
+        self::assertSame(1, (int) $count->fetchColumn());
     }
 }

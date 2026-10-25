@@ -84,6 +84,7 @@ final class SpaceshipPriceCheckTest extends TestCase
         self::assertCount(SpaceshipPriceCheck::PROBE_TLDS_COUNT, SpaceshipPriceCheck::PROBE_TLDS);
         self::assertCount(DomainAvailabilityCheck::MAX_NAMES, SpaceshipPriceCheck::PROBE_TLDS, 'SP-T4: one request per check');
         $this->reply = static function (array $names): array {
+            /** @var list<string> $names */
             return [
                 new AvailabilityAnswer($names[0], 'available', CostAmount::fromDecimalText(CostCurrency::USD, '9.98'), ['renew']),
                 new AvailabilityAnswer($names[19], 'available', null, []),
