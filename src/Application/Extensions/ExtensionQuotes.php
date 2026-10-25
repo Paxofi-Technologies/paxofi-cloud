@@ -52,7 +52,7 @@ final class ExtensionQuotes
         if ($choice->chosen === null) {
             return null;
         }
-        $prices = ExtensionPrices::for($choice->chosen->cost, $this->pricing, $this->exchange);
+        $prices = ExtensionPrices::for($choice->chosen->cost, $this->pricing, $this->exchange, $this->settings()[$tld] ?? null);
 
         return $prices->usd['register'] === null ? null : $prices;
     }
@@ -73,6 +73,12 @@ final class ExtensionQuotes
         uasort($featured, static fn (ExtensionSettings $a, ExtensionSettings $b): int => $a->featuredOrder <=> $b->featuredOrder);
 
         return array_values(array_map(static fn (ExtensionSettings $s): string => $s->tld->value, $featured));
+    }
+
+    /** The price-list tab for this extension (DS-12). */
+    public function category(string $tld): string
+    {
+        return ExtensionCategory::of($tld, ($this->settings()[$tld] ?? null)?->category);
     }
 
     public function label(string $tld): string

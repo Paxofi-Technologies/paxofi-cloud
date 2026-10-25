@@ -143,6 +143,39 @@ final class ExtensionsAdminTest extends TestCase
         self::assertSame([AuditEventType::DOMAIN_EXTENSION_CHANGED], $this->audit->types());
     }
 
+    public function testStaffPricesAndCategoryAreSavedAuditedAndShown(): void
+    {
+        $this->price();
+        // Cost USD 10.00 (Namecheap), floor +10%: USD 11.00 / NGN 16,500.
+        $this->admin->saveExtension(self::CATALOGUE, AuditFixtures::client(), [
+            'tld' => 'com', 'category' => 'business',
+            'prices' => ['usd' => ['register' => 1199, 'renew' => null], 'ngn' => ['register' => 1_700_000]],
+        ]);
+
+        $row = $this->admin->overview(self::CATALOGUE, AuditFixtures::client(), 'com')['rows'][0];
+        self::assertSame(1199, $row['usd']['register'] ?? null, 'staff USD price');
+        self::assertSame(1_700_000, $row['ngn']['register'] ?? null, 'staff NGN price');
+        self::assertSame(1375, $row['usd']['renew'] ?? null, 'no override: markup price');
+        self::assertSame('business', $row['category']);
+        self::assertSame(['register' => 1199, 'renew' => null, 'transfer' => null], $row['overrides']['usd']);
+        self::assertSame([], $row['overrides_ignored']);
+        self::assertSame([AuditEventType::DOMAIN_EXTENSION_CHANGED], $this->audit->types());
+    }
+
+    public function testAStaffPriceBelowCostPlusMinimumMarginIsRefused(): void
+    {
+        $this->price();
+        foreach ([['usd' => ['register' => 1099]], ['ngn' => ['register' => 1_649_999]], ['usd' => ['transfer' => 5000]]] as $prices) {
+            try {
+                $this->admin->saveExtension(self::CATALOGUE, AuditFixtures::client(), ['tld' => 'com', 'prices' => $prices]);
+                self::fail('expected below_floor');
+            } catch (ExtensionChangeRefused $e) {
+                self::assertSame(ExtensionChangeRefused::BELOW_FLOOR, $e->reason);
+            }
+        }
+        self::assertSame([], $this->settings->extensions);
+    }
+
     /** @return iterable<string, array{array<string, mixed>}> */
     public static function badExtensionInput(): iterable
     {
@@ -153,6 +186,11 @@ final class ExtensionsAdminTest extends TestCase
         yield 'text number' => [['tld' => 'com', 'grace_days' => '30']];
         yield 'bad extension' => [['tld' => '../com']];
         yield 'extra field' => [['tld' => 'com', 'cost' => 1]];
+        yield 'unknown category' => [['tld' => 'com', 'category' => 'popular']];
+        yield 'zero price' => [['tld' => 'com', 'prices' => ['usd' => ['register' => 0]]]];
+        yield 'restore price' => [['tld' => 'com', 'prices' => ['usd' => ['restore' => 9000]]]];
+        yield 'other currency' => [['tld' => 'com', 'prices' => ['eur' => ['register' => 9000]]]];
+        yield 'float price' => [['tld' => 'com', 'prices' => ['usd' => ['register' => 12.5]]]];
     }
 
     /** @param array<string, mixed> $input */

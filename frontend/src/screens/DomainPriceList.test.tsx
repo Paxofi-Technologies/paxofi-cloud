@@ -48,4 +48,15 @@ describe('DomainPriceListView', () => {
     expect(onPick).toHaveBeenCalledWith('com');
     expect(String(fetchImpl.mock.calls[0]?.[0])).toBe('/api/v1/domains/prices');
   });
+
+  it('shows a tab per category with counts and asks the server for the chosen one', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = api({ featured: [], categories: { business: 2, geographic: 1, constructor: 9 }, total: 3, page: 1, page_size: 25, rows: [row('com', { category: 'business' })] });
+    render(<DomainPriceListView fetchImpl={fetchImpl} onPick={vi.fn()} />);
+
+    const tabs = await screen.findByRole('tablist', { name: 'Extension categories' });
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['All', 'Business (2)', 'Geographic (1)']);
+    await user.click(within(tabs).getByRole('tab', { name: /Geographic/ }));
+    await vi.waitFor(() => expect(String(fetchImpl.mock.calls.at(-1)?.[0])).toBe('/api/v1/domains/prices?category=geographic'));
+  });
 });

@@ -41,6 +41,21 @@ final readonly class PriceDeriver
     }
 
     /**
+     * The lowest price allowed for this cost in the target currency: the
+     * converted cost plus the minimum margin, rounded up (DX-6). Staff price
+     * overrides below it are never charged.
+     */
+    public function minimumPrice(int $costMinor, CostCurrency $costCurrency, Currency $target, ExchangeRates $rates): int
+    {
+        if ($costMinor <= 0) {
+            throw new \InvalidArgumentException('Cost must be positive.');
+        }
+        $converted = Decimal::ceilToInt($rates->convert($costMinor, $costCurrency, $target));
+
+        return Decimal::ceilToInt(self::applyPercentage((string) $converted, $this->minimumMargin->value));
+    }
+
+    /**
      * $amount × (1 + basisPoints / 10000) as a decimal string.
      *
      * @param numeric-string $amount

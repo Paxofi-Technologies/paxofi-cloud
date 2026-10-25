@@ -15,7 +15,7 @@ use PaxofiCloud\Http\RequestClient;
 use PaxofiCloud\Http\RequestId;
 
 /**
- * GET /api/v1/domains/prices?q=&page= — the public domain price list
+ * GET /api/v1/domains/prices?q=&page=&category= — the public domain price list
  * (THREAT-MODEL-DOMAIN-SEARCH.md DS-11). Public, read-only, cacheable for
  * five minutes. Only selling prices, featured flags and labels come out.
  */
@@ -30,11 +30,12 @@ final readonly class DomainPricesController implements Controller
         $query = $request->query();
         $search = $query['q'] ?? '';
         $page = $query['page'] ?? '1';
-        if (!is_string($search) || strlen($search) > 63 || !is_string($page) || preg_match('/^[1-9]\d{0,3}$/', $page) !== 1) {
+        $category = $query['category'] ?? '';
+        if (!is_string($search) || strlen($search) > 63 || !is_string($page) || preg_match('/^[1-9]\d{0,3}$/', $page) !== 1 || !is_string($category) || strlen($category) > 16) {
             return ProblemDetails::response(400, DomainSearchRefused::INVALID_NAME, RequestId::of($request));
         }
         try {
-            $result = $this->prices->view(RequestClient::of($request)->ip, $search, (int) $page);
+            $result = $this->prices->view(RequestClient::of($request)->ip, $search, (int) $page, $category);
         } catch (DomainSearchRefused $e) {
             return $e->reason === DomainSearchRefused::TOO_MANY
                 ? ProblemDetails::response(429, $e->reason, RequestId::of($request), headers: ['retry-after' => (string) $e->retryAfter])
