@@ -1376,6 +1376,7 @@ const SYNC_REASONS: Record<string, string> = {
 const UNAUTHORISED_HINTS: Record<string, string> = {
   namecheap: ' Also check that the server IP address is whitelisted in Namecheap.',
   dynadot: ' Use the production key and secret, not the sandbox ones.',
+  spaceship: ' Check that the Spaceship key has the domains:read scope.',
 };
 
 /** Plain words for a sync failure or hold-back reason on one registrar's tab. */
@@ -1695,8 +1696,7 @@ function SpaceshipPriceCheckPanel({ session, fetchImpl }: { session: StaffSessio
       </div>
       {latest && latest.outcome === 'failed' && (
         <Alert tone="danger">
-          The check failed: {SYNC_REASONS[latest.reason ?? ''] ?? 'unknown problem'}.
-          {latest.reason === 'unauthorised' ? ' Check that the Spaceship key has the domains:read scope.' : ''}
+          The check failed: {syncReason(latest.reason ?? '', 'spaceship') ?? 'unknown problem'}.
         </Alert>
       )}
       {latest && latest.outcome === 'done' && (
