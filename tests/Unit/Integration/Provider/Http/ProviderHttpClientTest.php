@@ -118,6 +118,15 @@ final class ProviderHttpClientTest extends TestCase
         $this->client(['169.254.169.254'])->send(self::BASE, ProviderRequest::get('/servers'), $this->credential());
     }
 
+    public function testHeadRequestsNeverReadABody(): void
+    {
+        $options = $this->client(['8.8.8.8'])->curlOptions(new ProviderEndpoint(self::BASE), ProviderRequest::head('/domain/x'), $this->credential(), ['8.8.8.8']);
+
+        self::assertSame('HEAD', $options[CURLOPT_CUSTOMREQUEST]);
+        self::assertTrue($options[CURLOPT_NOBODY] ?? false);
+        self::assertArrayNotHasKey(CURLOPT_NOBODY, $this->client(['8.8.8.8'])->curlOptions(new ProviderEndpoint(self::BASE), ProviderRequest::get('/x'), $this->credential(), ['8.8.8.8']));
+    }
+
     public function testCurlOptionsEnforceTlsNoRedirectsPinningAndNoProxy(): void
     {
         $client = $this->client(['8.8.8.8']);
