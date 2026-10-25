@@ -60,14 +60,15 @@ final readonly class ExtensionsAdmin
 
     /**
      * @return array{
-     *     can_manage: bool, registrars: list<string>, labels: list<string>,
+     *     can_manage: bool, registrars: list<string>, labels: list<string>, categories: list<string>,
      *     pricing: ?array{markup_bp: int, min_margin_bp: int, usd_step: int, ngn_step: int},
      *     fx: ?array{fetched_at: string, source: string}, total: int, page: int, page_size: int,
      *     rows: list<array{
      *         tld: string, featured_order: ?int, label: string, pinned_registrar: ?string, pin_unavailable: bool,
      *         chosen_registrar: ?string, offers: list<array{registrar: string, register: int, renew: int, currency: string}>,
      *         cost: ?array<string, ?int>, usd: ?array<string, ?int>, ngn: ?array<string, ?int>, grace_days: int, grace_fee: int,
-     *         redemption_days: int, redemption_fee: ?int, lifecycle_set: bool
+     *         redemption_days: int, redemption_fee: ?int, lifecycle_set: bool, category: ?string, category_shown: string,
+     *         overrides: array{usd: array<string, ?int>, ngn: array<string, ?int>}, overrides_ignored: list<string>
      *     }>
      * }
      * @throws \PaxofiCloud\Application\Staff\StaffPermissionDenied
@@ -111,7 +112,7 @@ final readonly class ExtensionsAdmin
             $own = $settings[$tld] ?? new ExtensionSettings(new TldName($tld));
             $choice = RegistrarChoice::choose($offers[$tld] ?? [], $own->pinnedRegistrar, $now);
             $prices = $choice->chosen !== null && $pricing !== null && $rates !== null
-                ? ExtensionPrices::for($choice->chosen->cost, $pricing, $rates->rates)
+                ? ExtensionPrices::for($choice->chosen->cost, $pricing, $rates->rates, $own)
                 : null;
             $rows[] = [
                 'tld' => $tld,
@@ -134,6 +135,13 @@ final readonly class ExtensionsAdmin
                 'redemption_days' => $own->redemptionDays ?? ExtensionSettings::DEFAULT_REDEMPTION_DAYS,
                 'redemption_fee' => $own->redemptionFeeMinor,
                 'lifecycle_set' => $own->graceDays !== null || $own->redemptionDays !== null,
+                'category' => $own->category,
+                'category_shown' => ExtensionCategory::of($tld, $own->category),
+                'overrides' => [
+                    'usd' => array_map(static fn (string $a): ?int => $own->override('usd', $a), array_combine(ExtensionSettings::OVERRIDE_ACTIONS, ExtensionSettings::OVERRIDE_ACTIONS)),
+                    'ngn' => array_map(static fn (string $a): ?int => $own->override('ngn', $a), array_combine(ExtensionSettings::OVERRIDE_ACTIONS, ExtensionSettings::OVERRIDE_ACTIONS)),
+                ],
+                'overrides_ignored' => $prices === null ? [] : $prices->ignored,
             ];
         }
 
@@ -141,6 +149,7 @@ final readonly class ExtensionsAdmin
             'can_manage' => $principal->can(Permission::CatalogueManage),
             'registrars' => array_keys($this->registrars),
             'labels' => ExtensionSettings::LABELS,
+            'categories' => ExtensionCategory::ALL,
             'pricing' => $pricing === null ? null : [
                 'markup_bp' => $pricing->markup->basisPoints,
                 'min_margin_bp' => $pricing->minimumMargin->value,
@@ -162,7 +171,7 @@ final readonly class ExtensionsAdmin
     public function saveExtension(string $staffId, ClientContext $client, array $input): void
     {
         $this->authorizer->authorize($staffId, Permission::CatalogueManage, $client);
-        $allowed = ['tld', 'pinned_registrar', 'featured_order', 'label', 'grace_days', 'grace_fee', 'redemption_days', 'redemption_fee'];
+        $allowed = ['tld', 'pinned_registrar', 'featured_order', 'label', 'grace_days', 'grace_fee', 'redemption_days', 'redemption_fee', 'category', 'prices'];
         if (array_diff(array_keys($input), $allowed) !== [] || !is_string($input['tld'] ?? null)) {
             throw new ExtensionChangeRefused(ExtensionChangeRefused::INVALID);
         }
@@ -176,10 +185,13 @@ final readonly class ExtensionsAdmin
                 self::nullableInt($input['grace_fee'] ?? null),
                 self::nullableInt($input['redemption_days'] ?? null),
                 self::nullableInt($input['redemption_fee'] ?? null),
+                self::nullableString($input['category'] ?? null),
+                self::overrides($input['prices'] ?? null),
             );
         } catch (\InvalidArgumentException) {
             throw new ExtensionChangeRefused(ExtensionChangeRefused::INVALID);
         }
+        $this->refuseBelowFloor($next);
         $this->settings->save($next, $staffId, $this->clock->now());
         $this->audit->record(AuditEventType::DOMAIN_EXTENSION_CHANGED, AuditEvent::SUCCESS, $client, details: [
             'actor' => $staffId,
@@ -244,6 +256,71 @@ final readonly class ExtensionsAdmin
             'transfer' => $usd($offer->cost->transfer),
             'restore' => $usd($offer->cost->restore),
         ];
+    }
+
+    /**
+     * DX-14: a staff price must be at or above today's floor (cost plus the
+     * minimum margin) for the registrar that would take the order. Checked
+     * again at every quote, so a later cost rise never sells at a loss.
+     *
+     * @throws ExtensionChangeRefused
+     */
+    private function refuseBelowFloor(ExtensionSettings $next): void
+    {
+        $hasOverride = false;
+        foreach (['usd', 'ngn'] as $currency) {
+            foreach (ExtensionSettings::OVERRIDE_ACTIONS as $action) {
+                $hasOverride = $hasOverride || $next->override($currency, $action) !== null;
+            }
+        }
+        if (!$hasOverride) {
+            return;
+        }
+        $pricing = $this->settings->pricing();
+        $rates = $this->rates->latestAccepted();
+        $offers = [];
+        foreach ($this->registrars as $registrar => $environment) {
+            $snapshot = $this->costs->latestSnapshot($registrar, $environment, true);
+            if ($snapshot === null) {
+                continue;
+            }
+            foreach ($this->costs->items($snapshot->id) as $cost) {
+                if ($cost->tld->value === $next->tld->value) {
+                    $offers[] = new RegistrarOffer($registrar, $cost, $snapshot->fetchedAt);
+                }
+            }
+        }
+        $choice = RegistrarChoice::choose($offers, $next->pinnedRegistrar, $this->clock->now());
+        if ($pricing === null || $rates === null || $choice->chosen === null) {
+            throw new ExtensionChangeRefused(ExtensionChangeRefused::BELOW_FLOOR);
+        }
+        $prices = ExtensionPrices::for($choice->chosen->cost, $pricing, $rates->rates, $next);
+        if ($prices->ignored !== []) {
+            throw new ExtensionChangeRefused(ExtensionChangeRefused::BELOW_FLOOR);
+        }
+    }
+
+    /** @return array{usd: array<string, ?int>, ngn: array<string, ?int>} */
+    private static function overrides(mixed $value): array
+    {
+        $out = ['usd' => [], 'ngn' => []];
+        if ($value === null) {
+            return $out;
+        }
+        if (!is_array($value) || array_diff(array_keys($value), ['usd', 'ngn']) !== []) {
+            throw new \InvalidArgumentException('Prices must be {usd, ngn}.');
+        }
+        foreach (['usd', 'ngn'] as $currency) {
+            $set = $value[$currency] ?? [];
+            if (!is_array($set) || array_diff(array_keys($set), ExtensionSettings::OVERRIDE_ACTIONS) !== []) {
+                throw new \InvalidArgumentException('Unknown price action.');
+            }
+            foreach (ExtensionSettings::OVERRIDE_ACTIONS as $action) {
+                $out[$currency][$action] = self::nullableInt($set[$action] ?? null);
+            }
+        }
+
+        return $out;
     }
 
     private static function nullableInt(mixed $value): ?int

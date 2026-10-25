@@ -50,7 +50,7 @@ final class ExtensionSettingsStoreIntegrationTest extends IntegrationTestCase
     public function testSavesAndReadsBackSettingsAndPricing(): void
     {
         $at = new \DateTimeImmutable('2026-10-25T12:00:00Z');
-        $settings = new ExtensionSettings(new TldName('com'), 'dynadot', 3, 'sale', 40, 0, 30, 8000);
+        $settings = new ExtensionSettings(new TldName('com'), 'dynadot', 3, 'sale', 40, 0, 30, 8000, 'business', ['usd' => ['register' => 1199], 'ngn' => ['renew' => 1_700_000]]);
         $this->store->save($settings, self::STAFF, $at);
         $this->store->save(new ExtensionSettings(new TldName('xyz'), label: 'new'), self::STAFF, $at);
         self::assertEquals($settings, $this->store->all()['com']);
@@ -68,6 +68,9 @@ final class ExtensionSettingsStoreIntegrationTest extends IntegrationTestCase
             "UPDATE domain_extension_settings SET pinned_registrar = 'evil' WHERE tld = 'ng'",
             "UPDATE domain_extension_settings SET label = 'free' WHERE tld = 'ng'",
             "UPDATE domain_extension_settings SET grace_days = 91 WHERE tld = 'ng'",
+            "UPDATE domain_extension_settings SET category = 'popular' WHERE tld = 'ng'",
+            "UPDATE domain_extension_settings SET usd_register_minor = 0 WHERE tld = 'ng'",
+            "UPDATE domain_extension_settings SET ngn_transfer_minor = 10000000001 WHERE tld = 'ng'",
             "INSERT INTO domain_extension_settings (tld, updated_at) VALUES ('BAD..TLD', NOW(6))",
             "INSERT INTO domain_pricing_settings VALUES (1, 500, 1000, 1, 1, '" . self::STAFF . "', NOW(6))",
             "INSERT INTO domain_pricing_settings VALUES (2, 2500, 1000, 1, 1, '" . self::STAFF . "', NOW(6))",

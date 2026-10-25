@@ -58,7 +58,7 @@ final readonly class MysqlExtensionSettingsStore implements ExtensionSettingsSto
     {
         $result = [];
         foreach ($this->repository->fetchAll(
-            'SELECT tld, pinned_registrar, featured_order, label, grace_days, grace_fee_minor, redemption_days, redemption_fee_minor FROM domain_extension_settings',
+            'SELECT tld, pinned_registrar, featured_order, label, grace_days, grace_fee_minor, redemption_days, redemption_fee_minor, category, usd_register_minor, usd_renew_minor, usd_transfer_minor, ngn_register_minor, ngn_renew_minor, ngn_transfer_minor FROM domain_extension_settings',
         ) as $row) {
             $tld = Row::string($row, 'tld');
             $result[$tld] = new ExtensionSettings(
@@ -70,6 +70,8 @@ final readonly class MysqlExtensionSettingsStore implements ExtensionSettingsSto
                 self::nullableInt($row, 'grace_fee_minor'),
                 self::nullableInt($row, 'redemption_days'),
                 self::nullableInt($row, 'redemption_fee_minor'),
+                self::nullableString($row, 'category'),
+                self::overrides($row),
             );
         }
 
@@ -79,11 +81,14 @@ final readonly class MysqlExtensionSettingsStore implements ExtensionSettingsSto
     public function save(ExtensionSettings $settings, string $staffId, \DateTimeImmutable $at): void
     {
         $this->connection->execute(
-            'INSERT INTO domain_extension_settings (tld, pinned_registrar, featured_order, label, grace_days, grace_fee_minor, redemption_days, redemption_fee_minor, updated_by, updated_at)
-             VALUES (:tld, :pin, :featured, :label, :grace, :grace_fee, :redemption, :redemption_fee, :staff, :at)
+            'INSERT INTO domain_extension_settings (tld, pinned_registrar, featured_order, label, grace_days, grace_fee_minor, redemption_days, redemption_fee_minor, category, usd_register_minor, usd_renew_minor, usd_transfer_minor, ngn_register_minor, ngn_renew_minor, ngn_transfer_minor, updated_by, updated_at)
+             VALUES (:tld, :pin, :featured, :label, :grace, :grace_fee, :redemption, :redemption_fee, :category, :usd_register, :usd_renew, :usd_transfer, :ngn_register, :ngn_renew, :ngn_transfer, :staff, :at)
              ON DUPLICATE KEY UPDATE pinned_registrar = VALUES(pinned_registrar), featured_order = VALUES(featured_order), label = VALUES(label),
                  grace_days = VALUES(grace_days), grace_fee_minor = VALUES(grace_fee_minor), redemption_days = VALUES(redemption_days),
-                 redemption_fee_minor = VALUES(redemption_fee_minor), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)',
+                 redemption_fee_minor = VALUES(redemption_fee_minor), category = VALUES(category),
+                 usd_register_minor = VALUES(usd_register_minor), usd_renew_minor = VALUES(usd_renew_minor), usd_transfer_minor = VALUES(usd_transfer_minor),
+                 ngn_register_minor = VALUES(ngn_register_minor), ngn_renew_minor = VALUES(ngn_renew_minor), ngn_transfer_minor = VALUES(ngn_transfer_minor),
+                 updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)',
             [
                 'tld' => $settings->tld->value,
                 'pin' => $settings->pinnedRegistrar,
@@ -93,10 +98,33 @@ final readonly class MysqlExtensionSettingsStore implements ExtensionSettingsSto
                 'grace_fee' => $settings->graceFeeMinor,
                 'redemption' => $settings->redemptionDays,
                 'redemption_fee' => $settings->redemptionFeeMinor,
+                'category' => $settings->category,
+                'usd_register' => $settings->override('usd', 'register'),
+                'usd_renew' => $settings->override('usd', 'renew'),
+                'usd_transfer' => $settings->override('usd', 'transfer'),
+                'ngn_register' => $settings->override('ngn', 'register'),
+                'ngn_renew' => $settings->override('ngn', 'renew'),
+                'ngn_transfer' => $settings->override('ngn', 'transfer'),
                 'staff' => $staffId,
                 'at' => self::utc($at),
             ],
         );
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array{usd: array<string, ?int>, ngn: array<string, ?int>}
+     */
+    private static function overrides(array $row): array
+    {
+        $out = ['usd' => [], 'ngn' => []];
+        foreach (['usd', 'ngn'] as $currency) {
+            foreach (ExtensionSettings::OVERRIDE_ACTIONS as $action) {
+                $out[$currency][$action] = self::nullableInt($row, $currency . '_' . $action . '_minor');
+            }
+        }
+
+        return $out;
     }
 
     /** @param array<string, mixed> $row */

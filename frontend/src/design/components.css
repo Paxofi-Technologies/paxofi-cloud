@@ -276,3 +276,6 @@
   .pc-field__control > .pc-input { flex-basis: 100%; }
   .pc-field__control > .pc-button { flex: 1; }
 }
+.pc-price-grid { display: grid; grid-template-columns: minmax(5rem, auto) minmax(0, 1fr) minmax(0, 1fr); gap: var(--pc-space-3); align-items: center; }
+.pc-price-grid__head { font-size: var(--pc-font-size-sm); font-weight: var(--pc-font-weight-semibold); color: var(--pc-semantic-text-secondary); }
+.pc-price-grid__action { font-weight: var(--pc-font-weight-medium); }

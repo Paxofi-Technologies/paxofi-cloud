@@ -60,7 +60,9 @@ final class DomainPriceListTest extends TestCase
         self::assertSame(['com', 'ng', 'org', 'xyz'], array_column($view['rows'], 'tld'));
         self::assertSame(4, $view['total']);
         $com = $view['rows'][0];
-        self::assertSame(['tld', 'featured', 'label', 'register', 'transfer', 'renew'], array_keys($com));
+        self::assertSame(['tld', 'featured', 'label', 'category', 'register', 'transfer', 'renew'], array_keys($com));
+        self::assertSame('business', $com['category']);
+        self::assertSame(['business' => 2, 'geographic' => 1, 'novelty' => 1], array_filter($view['categories']));
         self::assertSame(['usd' => 1100, 'ngn' => 1_650_000], $com['register']);
         self::assertTrue($com['featured']);
         self::assertSame('sale', $com['label']);
@@ -73,6 +75,14 @@ final class DomainPriceListTest extends TestCase
 
         self::assertSame(['org'], array_column($view['rows'], 'tld'));
         self::assertSame(1, $view['page']);
+    }
+
+    public function testACategoryTabListsOnlyThatCategoryAndRefusesUnknownOnes(): void
+    {
+        $list = $this->list();
+        self::assertSame(['ng'], array_column($list->view('203.0.113.9', '', 1, 'geographic')['rows'], 'tld'));
+        $this->expectExceptionObject(new DomainSearchRefused(DomainSearchRefused::INVALID_NAME));
+        $list->view('203.0.113.9', '', 1, 'popular');
     }
 
     public function testNothingIsListedBeforePricingSettingsExist(): void

@@ -10,6 +10,7 @@ final class ExtensionChangeRefused extends \RuntimeException
     public const string INVALID = 'invalid';
     public const string STEP_UP = 'step_up_failed';
     public const string THROTTLED = 'throttled';
+    public const string BELOW_FLOOR = 'below_floor';
 
     public function __construct(public readonly string $reason, public readonly int $retryAfter = 0)
     {

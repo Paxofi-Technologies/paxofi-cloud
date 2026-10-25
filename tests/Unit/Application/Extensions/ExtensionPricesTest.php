@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Tests\Unit\Application\Extensions;
 
+use PaxofiCloud\Application\Extensions\ExtensionCategory;
 use PaxofiCloud\Application\Extensions\ExtensionPrices;
+use PaxofiCloud\Application\Extensions\ExtensionSettings;
 use PaxofiCloud\Domain\Money\BasisPoints;
 use PaxofiCloud\Domain\Pricing\CostCurrency;
 use PaxofiCloud\Domain\Pricing\DecimalRate;
@@ -57,5 +59,30 @@ final class ExtensionPricesTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         self::settings(500, 1000);
+    }
+
+    public function testAStaffPriceIsUsedOnlyWhileItIsAboveTodaysFloor(): void
+    {
+        $usd = CostCurrency::USD;
+        $cost = new TldCost(new TldName('com'), CostAmount::ofMinor($usd, 1000), CostAmount::ofMinor($usd, 1000), CostAmount::ofMinor($usd, 1000), null, 1, 10, 'active');
+        $own = new ExtensionSettings(new TldName('com'), overrides: ['usd' => ['register' => 1100, 'renew' => 1099], 'ngn' => ['transfer' => 1_500_000]]);
+
+        $prices = ExtensionPrices::for($cost, self::settings(), self::rates(), $own);
+
+        self::assertSame(1100, $prices->usd['register'], 'exactly the floor is allowed');
+        self::assertSame(1_650_000, $prices->ngn['register'], 'NGN follows the staff USD price');
+        self::assertSame(1250, $prices->usd['renew'], 'below the floor (cost rose): markup price instead');
+        self::assertSame(1_875_000, $prices->ngn['transfer'], 'NGN below the floor: converted markup price');
+        self::assertSame(['usd.renew', 'ngn.transfer'], $prices->ignored);
+    }
+
+    public function testCategoriesFollowStaffThenCountryCodesThenSuggestions(): void
+    {
+        self::assertSame('geographic', ExtensionCategory::of('com.ng', null));
+        self::assertSame('geographic', ExtensionCategory::of('ng', null));
+        self::assertSame('technology', ExtensionCategory::of('io', null), 'country codes sold as words keep their suggestion');
+        self::assertSame('business', ExtensionCategory::of('com', null));
+        self::assertSame('other', ExtensionCategory::of('abogado', null));
+        self::assertSame('sports', ExtensionCategory::of('com', 'sports'), 'staff choice wins');
     }
 }
