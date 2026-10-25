@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PaxofiCloud\Cli;
 
 use Paxofi\Core\Contracts\Command;
+use PaxofiCloud\Application\Pricing\FxRateUpdater;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
 use PaxofiCloud\Application\Registrar\PriceCheckRun;
 use PaxofiCloud\Application\Registrar\SpaceshipPriceCheck;
@@ -19,7 +20,8 @@ use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
  * once a minute checks whether each registrar's daily sync is due (02:30 WAT;
  * DR-8). The list of registrars is rebuilt at each of those checks, so a
  * registrar whose connection was just entered joins within a minute (NC-9).
- * It also runs a Spaceship price check when the admin console asks for one
+ * It refreshes exchange rates once they are 20 hours old (tried at most
+ * hourly), and runs a Spaceship price check when the admin console asks for one
  * (SP-3), once a Spaceship connection exists.
  * Runs for a bounded time and exits so the container restarts it fresh. A
  * failing price sync never stops credential intake or another registrar's.
@@ -27,12 +29,14 @@ use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
 final readonly class ProvidersWorkCommand implements Command
 {
     private const int SCHEDULE_CHECK_SECONDS = 60;
+    private const int FX_MAX_AGE_HOURS = 20;
 
     /**
      * @param \Closure(): CredentialIntakeWorker $intake built lazily so keys are read only when it runs
      * @param (\Closure(): list<DomainCostSync>)|null $prices one price sync per active registrar, also built lazily
      * @param (\Closure(int): void)|null $sleep
      * @param (\Closure(): ?SpaceshipPriceCheck)|null $spaceship the price check, or null while Spaceship is not connected
+     * @param (\Closure(): FxRateUpdater)|null $fx exchange rates, refreshed when the accepted set is a day old (DX-1, DX-5)
      */
     public function __construct(
         private \Closure $intake,
@@ -40,6 +44,7 @@ final readonly class ProvidersWorkCommand implements Command
         private ?\Closure $sleep = null,
         private ?\Closure $prices = null,
         private ?\Closure $spaceship = null,
+        private ?\Closure $fx = null,
     ) {
     }
 
@@ -71,6 +76,7 @@ final readonly class ProvidersWorkCommand implements Command
         };
         $prices = [];
         $check = null;
+        $fxTriedAt = 0;
         $deadline = time() + $maxSeconds;
         $nextScheduleCheck = 0;
         do {
@@ -81,6 +87,11 @@ final readonly class ProvidersWorkCommand implements Command
                     $nextScheduleCheck = time() + self::SCHEDULE_CHECK_SECONDS;
                     $prices = $this->pricesSyncs();
                     $check = $this->spaceshipCheck();
+                    // At most one exchange-rate attempt per hour, whether it worked or not.
+                    if ($this->fx !== null && time() - $fxTriedAt >= 3600) {
+                        $fxTriedAt = time();
+                        $this->refreshRates();
+                    }
                 }
                 if ($check !== null) {
                     $this->runCheck($check);
@@ -121,6 +132,18 @@ final readonly class ProvidersWorkCommand implements Command
             $this->console->error('Price sync could not be prepared: ' . $e::class);
 
             return [];
+        }
+    }
+
+    private function refreshRates(): void
+    {
+        try {
+            $outcome = $this->fx === null ? null : ($this->fx)()->refreshIfOlderThan(self::FX_MAX_AGE_HOURS);
+            if ($outcome !== null) {
+                $this->console->line('Exchange rates: ' . $outcome->value . '.');
+            }
+        } catch (\Throwable $e) {
+            $this->console->error('Exchange rate update error: ' . $e::class);
         }
     }
 

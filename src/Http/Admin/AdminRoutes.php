@@ -12,6 +12,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminAuditLogController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainExtensionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
@@ -36,9 +37,10 @@ final class AdminRoutes
      * @param \Closure(): AdminAuditLogController $auditLog
      * @param \Closure(): AdminSessionsController $sessions
      * @param \Closure(): AdminSpaceshipPriceCheckController $spaceship
+     * @param \Closure(): AdminDomainExtensionsController $extensions
      * @return list<AdminRoute>
      */
-    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog, \Closure $sessions, \Closure $spaceship): array
+    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog, \Closure $sessions, \Closure $spaceship, \Closure $extensions): array
     {
         $credentials = AdminAccess::permission(Permission::ProviderCredentialsManage);
         $public = AdminAccess::public();
@@ -87,6 +89,10 @@ final class AdminRoutes
             // Spaceship price check: read the newest result, or queue one for the provider worker (SP-3, SP-7).
             new AdminRoute('GET', '/admin-api/v1/spaceship-price-check', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $spaceship()->overview($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/spaceship-price-check/run', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $spaceship()->run($r, $c)),
+            // Domain extensions: registrar choice and selling prices; changes need catalogue.manage, pricing also a fresh code (DX-11).
+            new AdminRoute('GET', '/admin-api/v1/domain-extensions', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $extensions()->overview($r, $c)),
+            new AdminRoute('POST', '/admin-api/v1/domain-extensions/settings', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $extensions()->saveExtension($r, $c)),
+            new AdminRoute('POST', '/admin-api/v1/domain-pricing-settings', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $extensions()->savePricing($r, $c)),
 
             // Audit log: read-only; full IPs only for staff managers; every look is itself audited (§6.24).
             new AdminRoute('GET', '/admin-api/v1/audit-events', $auditView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $auditLog()->list($r, $c)),

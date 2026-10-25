@@ -266,7 +266,7 @@ final readonly class CliProvider implements Provider
                     new SystemClock(),
                     Resolve::get($c, Logger::class),
                 );
-            }, $console, null, $activeSyncs, $activeSpaceshipCheck));
+            }, $console, null, $activeSyncs, $activeSpaceshipCheck, static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class)));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

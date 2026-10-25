@@ -89,6 +89,10 @@
 .pc-admin__row { display: flex; align-items: center; justify-content: space-between; gap: var(--pc-space-4); flex-wrap: wrap; }
 .pc-admin__filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--pc-space-4); align-items: end; }
 .pc-admin__filters .pc-field { margin: 0; }
+.pc-admin__form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--pc-space-4); align-items: end; margin: var(--pc-space-2) 0; }
+.pc-admin__form > p, .pc-admin__form > .pc-alert, .pc-admin__form > .pc-admin__row { grid-column: 1 / -1; }
+.pc-admin__form .pc-field { margin: 0; }
+.pc-checkbox { display: inline-flex; align-items: center; gap: var(--pc-space-2); cursor: pointer; }
 .pc-audit code { font-size: 0.8125rem; word-break: break-all; }
 .pc-audit td:nth-child(5) { overflow-wrap: anywhere; min-width: 10rem; }
 .pc-table caption { text-align: left; }
