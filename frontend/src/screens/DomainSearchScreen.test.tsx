@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { DomainSearchScreen } from './DomainSearchScreen';
+import { confirmWithRegistrar, DomainSearchScreen, mergeAnswers, type SearchResult } from './DomainSearchScreen';
 
 function api(status: number, body: unknown, headers: Record<string, string> = {}) {
   return vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } }))) as unknown as typeof fetch &
@@ -80,5 +80,56 @@ describe('DomainSearchScreen', () => {
     await user.click(screen.getByRole('button', { name: /Search/ }));
     expect(screen.getByText('Type the name you want, like yourbusiness.')).toBeInTheDocument();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('registrar confirmation (DS-13)', () => {
+  const base = (domain: string, status: 'available' | 'taken' | 'unknown'): SearchResult => ({
+    domain,
+    tld: domain.split('.').slice(1).join('.'),
+    status,
+    featured: false,
+    label: 'none',
+    register: { usd: 1199, ngn: 1_800_000 },
+    renew: { usd: 1299, ngn: 1_950_000 },
+  });
+
+  it('lets the registrar answer win, shows premium prices, and keeps RDAP when the registrar is unsure', () => {
+    const merged = mergeAnswers(
+      [base('a.ng', 'unknown'), base('b.com', 'available'), base('c.com', 'unknown'), base('d.com', 'available')],
+      [
+        { domain: 'a.ng', status: 'available', premium: false, register: null },
+        { domain: 'b.com', status: 'available', premium: true, register: { usd: 300000, ngn: 450_000_000 } },
+        { domain: 'c.com', status: 'unknown', premium: false, register: null },
+        { domain: 'd.com', status: 'available', premium: true, register: null },
+      ],
+    );
+    expect(merged.map((r) => [r.domain, r.status, r.premium ?? false])).toEqual([
+      ['a.ng', 'available', false],
+      ['b.com', 'available', true],
+      ['c.com', 'unknown', false],
+      ['d.com', 'unavailable', true],
+    ]);
+    expect(merged[1]?.register).toEqual({ usd: 300000, ngn: 450_000_000 });
+    expect(merged[1]?.renew).toBeNull();
+  });
+
+  it('queues the names, polls until done and drops malformed answers', async () => {
+    const id = 'a'.repeat(32);
+    let polls = 0;
+    const fetchImpl = vi.fn((path: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toEqual({ domains: ['a.ng'] });
+        return Promise.resolve(new Response(JSON.stringify({ id }), { status: 202, headers: { 'content-type': 'application/json' } }));
+      }
+      expect(path).toBe(`/api/v1/domains/check?id=${id}`);
+      polls++;
+      const body = polls < 2 ? { status: 'pending', results: [] } : { status: 'done', results: [{ domain: 'a.ng', status: 'available', premium: false, register: null }, { domain: 1, status: 'available' }] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    }) as unknown as typeof fetch;
+
+    const answers = await confirmWithRegistrar(['a.ng'], fetchImpl, () => Promise.resolve());
+    expect(answers).toEqual([{ domain: 'a.ng', status: 'available', premium: false, register: null }]);
+    expect(polls).toBe(2);
   });
 });

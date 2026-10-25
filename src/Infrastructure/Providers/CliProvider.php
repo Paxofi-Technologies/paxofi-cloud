@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Infrastructure\Providers;
 
+use Paxofi\Core\Contracts\RedisClient;
+use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
+use PaxofiCloud\Application\Contracts\AvailabilityChecker;
+use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
 use Paxofi\Core\Application;
 use Paxofi\Core\CLI\CommandRegistry;
 use Paxofi\Core\Contracts\Connection;
@@ -134,24 +138,25 @@ final readonly class CliProvider implements Provider
             $costStore = new MysqlDomainCostStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class));
             // Domain cost sync (THREAT-MODEL-DOMAIN-REGISTRAR.md, NC-9): built only when it runs, in the
             // provider worker, because it needs the KEK to open the registrar credential.
-            $syncFor = static function (string $provider) use ($c, $appEnv, $costStore): DomainCostSync {
+            $domainNameApi = static function (MysqlProviderCredentialStore $credentials, RegistrarWriteGuard $guard) use ($appEnv): DomainNameApiClient {
+                $gateway = DomainNameApiEnvironment::fromSetting((string) getenv('DOMAINNAMEAPI_ENVIRONMENT'), $appEnv);
+
+                return new DomainNameApiClient(
+                    new ProviderHttpClient([DomainNameApiClient::endpoint($gateway)], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: 1_048_576),
+                    $credentials,
+                    ProviderConnection::DomainNameApi->credentialId(ProviderConnection::environmentFor($appEnv)),
+                    $gateway,
+                    $guard,
+                );
+            };
+            $syncFor = static function (string $provider) use ($c, $appEnv, $costStore, $domainNameApi): DomainCostSync {
                 $audit = Resolve::get($c, AuditTrail::class);
                 $logger = Resolve::get($c, Logger::class);
                 $guard = new RegistrarWriteGuard(RegistrarWriteGuard::writesEnabled((string) getenv('REGISTRAR_WRITES'), $appEnv), $audit);
                 $credentials = new MysqlProviderCredentialStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), new SecretCipher(KeyRing::fromProcessEnvironment()));
                 $environment = ProviderConnection::environmentFor($appEnv);
                 $feed = match ($provider) {
-                    DomainNameApiClient::PROVIDER => (static function () use ($appEnv, $credentials, $environment, $guard): DomainNameApiClient {
-                        $gateway = DomainNameApiEnvironment::fromSetting((string) getenv('DOMAINNAMEAPI_ENVIRONMENT'), $appEnv);
-
-                        return new DomainNameApiClient(
-                            new ProviderHttpClient([DomainNameApiClient::endpoint($gateway)], connectTimeoutMs: 5_000, totalTimeoutMs: 30_000, maxResponseBytes: 1_048_576),
-                            $credentials,
-                            ProviderConnection::DomainNameApi->credentialId($environment),
-                            $gateway,
-                            $guard,
-                        );
-                    })(),
+                    DomainNameApiClient::PROVIDER => $domainNameApi($credentials, $guard),
                     NamecheapClient::PROVIDER => (static function () use ($appEnv, $credentials, $environment, $guard): NamecheapClient {
                         $gateway = NamecheapEnvironment::fromSetting((string) getenv('NAMECHEAP_ENVIRONMENT'), $appEnv);
 
@@ -237,6 +242,29 @@ final readonly class CliProvider implements Provider
 
                 return isset($configured[ProviderConnection::Spaceship->credentialId(ProviderConnection::environmentFor($appEnv))]) ? $spaceshipCheck() : null;
             };
+            // Registrar availability check for customer search (DS-13): answered by the provider worker,
+            // which can open the DomainNameAPI key; the web tier only queues names in Redis.
+            $registrarCheck = static function () use ($c, $appEnv, $domainNameApi): RegistrarCheckWorker {
+                $connection = Resolve::get($c, Connection::class);
+                $repository = Resolve::get($c, Repository::class);
+
+                return new RegistrarCheckWorker(
+                    Resolve::get($c, RedisClient::class),
+                    static function () use ($c, $appEnv, $domainNameApi, $connection, $repository): ?AvailabilityChecker {
+                        $configured = (new MysqlProviderCredentialStatus($repository))->configured();
+                        if (!isset($configured[ProviderConnection::DomainNameApi->credentialId(ProviderConnection::environmentFor($appEnv))])) {
+                            return null;
+                        }
+
+                        return $domainNameApi(
+                            new MysqlProviderCredentialStore($connection, $repository, new SecretCipher(KeyRing::fromProcessEnvironment())),
+                            new RegistrarWriteGuard(RegistrarWriteGuard::writesEnabled((string) getenv('REGISTRAR_WRITES'), $appEnv), Resolve::get($c, AuditTrail::class)),
+                        );
+                    },
+                    new MysqlExtensionSettingsStore($connection, $repository),
+                    Resolve::get($c, FxRateStore::class),
+                );
+            };
             $registry->register(new PricesSyncCommand($syncFor, $console));
             $registry->register(new PricesProbeSpaceshipCommand($spaceshipCheck, $console));
             $registry->register(new PricesStatusCommand($costStore, $console, [
@@ -266,7 +294,7 @@ final readonly class CliProvider implements Provider
                     new SystemClock(),
                     Resolve::get($c, Logger::class),
                 );
-            }, $console, null, $activeSyncs, $activeSpaceshipCheck, static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class)));
+            }, $console, null, $activeSyncs, $activeSpaceshipCheck, static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class), $registrarCheck));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

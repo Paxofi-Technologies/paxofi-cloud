@@ -21,9 +21,11 @@ use PaxofiCloud\Integration\Provider\Http\ProviderHttpClient;
 use PaxofiCloud\Application\Catalogue\PublicCatalogue;
 use PaxofiCloud\Application\Contracts\CatalogueStore;
 use PaxofiCloud\Http\Controllers\CatalogueController;
+use PaxofiCloud\Http\Controllers\DomainCheckController;
 use PaxofiCloud\Http\Controllers\DomainPricesController;
 use PaxofiCloud\Http\Controllers\DomainSearchController;
 use PaxofiCloud\Application\Domains\DomainPriceList;
+use PaxofiCloud\Application\Domains\RegistrarCheck;
 use PaxofiCloud\Application\Domains\DomainSearch;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Infrastructure\Domains\CachedRdapDirectory;
@@ -78,6 +80,12 @@ final class CommerceProvider implements Provider
                 new RedisRateLimiter($redis),
             ));
         });
+        // Registrar availability check (DS-13): the web tier only queues names; the provider worker answers.
+        $container->singleton(DomainCheckController::class, static fn (Container $c): DomainCheckController => new DomainCheckController(new RegistrarCheck(
+            Resolve::get($c, ExtensionQuotes::class),
+            Resolve::get($c, RedisClient::class),
+            new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+        )));
         // Public price list (DS-11): selling prices only, cacheable.
         $container->singleton(DomainPricesController::class, static fn (Container $c): DomainPricesController => new DomainPricesController(new DomainPriceList(
             Resolve::get($c, ExtensionQuotes::class),

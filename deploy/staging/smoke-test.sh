@@ -52,7 +52,9 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 )
 
 echo "== start"
-"${compose[@]}" up -d --wait --wait-timeout 240
+# The provider worker connects as the runtime user, which has no grants until
+# db:grants below, so it starts only after them (as in the deploy agent's release).
+"${compose[@]}" up -d --wait --wait-timeout 240 mysql redis php nginx
 
 echo "== migrate and runtime grants (as the schema owner)"
 as_owner() { ( set -a; . "$env_dir/owner.env"; set +a; "${compose[@]}" run --rm -T --no-deps -e DB_USERNAME -e DB_PASSWORD php bin/paxoficloud "$@" ); }
@@ -60,6 +62,7 @@ as_owner() { ( set -a; . "$env_dir/owner.env"; set +a; "${compose[@]}" run --rm 
 as_owner migrate
 as_owner migrate:status
 as_owner db:grants paxoficloud_app
+"${compose[@]}" up -d --wait --wait-timeout 120
 
 echo "== runtime user is append-only on the audit log (§6.22)"
 php_env="$("${compose[@]}" exec -T php env)"

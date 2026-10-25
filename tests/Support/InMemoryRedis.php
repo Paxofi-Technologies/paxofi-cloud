@@ -14,6 +14,9 @@ final class InMemoryRedis implements RedisClient
     /** @var array<string, int> */
     public array $ttl = [];
 
+    /** @var array<string, list<string>> */
+    private array $lists = [];
+
     public function get(string $key): ?string
     {
         return $this->values[$key] ?? null;
@@ -57,12 +60,13 @@ final class InMemoryRedis implements RedisClient
 
     public function pushLeft(string $key, string $value): void
     {
-        throw new \LogicException('Not supported.');
+        $this->lists[$key] ??= [];
+        array_unshift($this->lists[$key], $value);
     }
 
     public function popRight(string $key): ?string
     {
-        throw new \LogicException('Not supported.');
+        return isset($this->lists[$key]) && $this->lists[$key] !== [] ? array_pop($this->lists[$key]) : null;
     }
 
     public function moveRightToLeft(string $source, string $destination): ?string
@@ -82,6 +86,6 @@ final class InMemoryRedis implements RedisClient
 
     public function length(string $key): int
     {
-        throw new \LogicException('Not supported.');
+        return count($this->lists[$key] ?? []);
     }
 }

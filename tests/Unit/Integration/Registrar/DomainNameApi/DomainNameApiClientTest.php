@@ -210,4 +210,23 @@ final class DomainNameApiClientTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         DomainNameApiEnvironment::fromSetting('https://evil.example', 'staging');
     }
+
+    public function testAvailabilityIsAReadAllowedOnStagingAndSendsOnlyTheNames(): void
+    {
+        $this->transport->expectRaw('POST', '/domains/bulk-search', 200, (string) json_encode([
+            ['domainName' => 'paxofi.ng', 'status' => 'Available', 'isPremium' => false],
+            ['domainName' => 'cars.com', 'status' => 'NotAvailable', 'isPremium' => true, 'price' => '2500.00', 'currency' => 'USD'],
+            ['domainName' => 'not-asked.com', 'status' => 'Available'],
+        ]));
+
+        $answers = $this->client()->checkAvailability(['Paxofi.ng', 'cars.com']);
+
+        self::assertSame(['paxofi.ng', 'cars.com'], array_keys($answers), 'only names we asked about');
+        self::assertSame('available', $answers['paxofi.ng']->status);
+        self::assertSame('taken', $answers['cars.com']->status);
+        self::assertTrue($answers['cars.com']->premium);
+        self::assertSame(250000, $answers['cars.com']->premiumCost?->minor);
+        $request = $this->transport->sent[0]['request'];
+        self::assertSame([['domainName' => 'paxofi.ng'], ['domainName' => 'cars.com']], $request->json);
+    }
 }
