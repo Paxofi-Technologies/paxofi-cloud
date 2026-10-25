@@ -22,6 +22,7 @@ import {
   type SpaceshipCheckResult,
   type DomainCostItem,
   type SkippedExtension,
+  type AvailabilityCheck,
   type FeedFieldSummary,
   type DomainCostsResult,
   type AuditLogEvent,
@@ -1595,6 +1596,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
         </>
       )}
       {costs.skipped.length > 0 && <SkippedExtensions skipped={costs.skipped} />}
+      {costs.availabilityCheck && <AvailabilityCheckLine check={costs.availabilityCheck} />}
       {costs.feedFields.length > 0 && <FeedFields fields={costs.feedFields} />}
       {costs.runs.length > 0 && (
         <details>
@@ -2062,6 +2064,29 @@ const LIFECYCLE_FIELD = /grace|redemption|restore|expir|period|days|hold|delete/
  * the parser relies on them. Names, counts and whole-number ranges only;
  * rendered as text.
  */
+const AVAILABILITY_OUTCOMES: Record<string, string> = {
+  answered: 'answered',
+  not_connected: 'not run: this registrar is not connected',
+  unauthorised: 'failed: the registrar refused the API key',
+  rate_limited: 'failed: the registrar asked us to slow down',
+  provider_error: 'failed: the registrar had an error',
+  malformed: 'failed: the registrar sent an answer we could not read',
+  transport: 'failed: the registrar could not be reached',
+  credential_missing: 'not run: no credential saved',
+  credential_invalid: 'not run: the saved credential is incomplete',
+};
+
+/** DS-13: why customers may see "Couldn't check", without names. */
+function AvailabilityCheckLine({ check }: { check: AvailabilityCheck }) {
+  const words = AVAILABILITY_OUTCOMES[check.outcome] ?? 'failed';
+  return (
+    <p className="pc-muted">
+      Last availability check ({formatWhen(check.at)}): {words}
+      {check.outcome === 'answered' ? ` (${check.answered} of ${check.asked} names)` : ''}.
+    </p>
+  );
+}
+
 function FeedFields({ fields }: { fields: FeedFieldSummary[] }) {
   const sorted = [...fields].sort((a, b) => Number(LIFECYCLE_FIELD.test(b.path)) - Number(LIFECYCLE_FIELD.test(a.path)) || a.path.localeCompare(b.path));
   return (
