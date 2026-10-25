@@ -23,6 +23,11 @@ use PaxofiCloud\Application\Contracts\CatalogueStore;
 use PaxofiCloud\Application\Cart\DomainCart;
 use PaxofiCloud\Application\Identity\Session\Sessions;
 use PaxofiCloud\Http\Controllers\CartController;
+use PaxofiCloud\Application\Audit\AuditTrail;
+use PaxofiCloud\Application\Billing\BillingDetailsService;
+use PaxofiCloud\Http\Controllers\BillingDetailsController;
+use PaxofiCloud\Infrastructure\Billing\MysqlBillingStore;
+use PaxofiCloud\Infrastructure\Billing\MysqlTaxRateStore;
 use PaxofiCloud\Http\Controllers\CatalogueController;
 use PaxofiCloud\Http\Controllers\DomainCheckController;
 use PaxofiCloud\Http\Controllers\DomainPricesController;
@@ -92,6 +97,17 @@ final class CommerceProvider implements Provider
         // Signed-in domain cart (CD-20): lines only, re-quoted on every read.
         $container->singleton(CartController::class, static fn (Container $c): CartController => new CartController(
             new DomainCart(Resolve::get($c, RedisClient::class), Resolve::get($c, ExtensionQuotes::class), new RedisRateLimiter(Resolve::get($c, RedisClient::class))),
+            Resolve::get($c, Sessions::class),
+        ));
+        // Billing details and the tax table (CD-21, CD-22): the session's account only.
+        $container->singleton(BillingDetailsController::class, static fn (Container $c): BillingDetailsController => new BillingDetailsController(
+            new BillingDetailsService(
+                new MysqlBillingStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+                new MysqlTaxRateStore(Resolve::get($c, Repository::class)),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                Resolve::get($c, AuditTrail::class),
+                new SystemClock(),
+            ),
             Resolve::get($c, Sessions::class),
         ));
         // Public price list (DS-11): selling prices only, cacheable.

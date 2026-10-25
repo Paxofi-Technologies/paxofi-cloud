@@ -52,6 +52,8 @@ abstract class IntegrationTestCase extends TestCase
     protected static function resetDatabase(): void
     {
         $pdo = self::pdo();
+        $pdo->exec('DROP TABLE IF EXISTS account_billing_details');
+        $pdo->exec('DROP TABLE IF EXISTS tax_rates');
         $pdo->exec('DROP TABLE IF EXISTS domain_extension_settings');
         $pdo->exec('DROP TABLE IF EXISTS domain_pricing_settings');
         $pdo->exec('DROP TABLE IF EXISTS spaceship_price_check_items');
