@@ -94,6 +94,7 @@ final class OrderStoreIntegrationTest extends IntegrationTestCase
 
         $list = $this->orders->forAccount(self::ALICE, 10, 0);
         self::assertCount(2, $list);
+        self::assertSame(['PXO-2026-000002', 'PXO-2026-000001'], array_column($list, 'number'), 'newest first; ties broken by the sequential number');
         $order = $this->orders->find(self::ALICE, $list[1]['id']);
         self::assertNotNull($order);
         self::assertSame('pending_payment', $order['status']);

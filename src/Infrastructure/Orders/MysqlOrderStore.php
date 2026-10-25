@@ -189,7 +189,7 @@ final readonly class MysqlOrderStore implements OrderStore
     public function forAccount(string $accountId, int $limit, int $offset): array
     {
         $rows = $this->repository->fetchAll(
-            self::SELECT . ' WHERE o.account_id = :account ORDER BY o.placed_at DESC, o.id DESC LIMIT ' . self::LIST_CAP,
+            self::SELECT . ' WHERE o.account_id = :account ORDER BY o.placed_at DESC, o.number DESC LIMIT ' . self::LIST_CAP,
             ['account' => $accountId],
         );
 
