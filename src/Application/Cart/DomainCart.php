@@ -86,6 +86,28 @@ final readonly class DomainCart
         $this->save($accountId, $lines);
     }
 
+    /**
+     * The validated names in the cart, for checkout (CD-23).
+     *
+     * @return list<string>
+     * @phpstan-impure
+     */
+    public function domains(string $accountId): array
+    {
+        return array_map(static fn (array $l): string => $l['domain'], $this->lines($accountId));
+    }
+
+    /**
+     * Removes ordered names after a successful checkout; unknown names are ignored.
+     *
+     * @param list<string> $domains
+     */
+    public function removeDomains(string $accountId, array $domains): void
+    {
+        $kept = array_values(array_filter($this->lines($accountId), static fn (array $l): bool => !in_array($l['domain'], $domains, true)));
+        $this->save($accountId, $kept);
+    }
+
     /** @throws CartRefused */
     public function remove(string $accountId, mixed $lineId): void
     {

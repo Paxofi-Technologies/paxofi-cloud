@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Alert, AppShell, Button, type NavItem } from './components';
+import { Alert, AppShell, Button, CartButton, type NavItem } from './components';
 import { CloudIcon, GlobeIcon, HomeIcon, LifebuoyIcon, ReceiptIcon, ServerIcon, ShieldIcon } from './components/icons';
 import { BillingScreen } from './screens/BillingScreen';
+import { CheckoutScreen } from './screens/CheckoutScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DomainSearchScreen } from './screens/DomainSearchScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
@@ -21,10 +22,10 @@ const NAV: readonly NavItem[] = [
   { id: 'security', label: 'Security', icon: <ShieldIcon /> },
 ];
 
-type Screen = 'dashboard' | 'domains' | 'billing' | 'security';
+type Screen = 'dashboard' | 'domains' | 'checkout' | 'billing' | 'security';
 
 /** Each portal page has its own address, so refresh, links in emails and back/forward land on it. */
-const SCREEN_PATHS: Readonly<Record<Screen, string>> = { dashboard: '/', domains: '/domains', billing: '/billing', security: '/security' };
+const SCREEN_PATHS: Readonly<Record<Screen, string>> = { dashboard: '/', domains: '/domains', checkout: '/checkout', billing: '/billing', security: '/security' };
 
 export function screenForPath(path: string): Screen | null {
   const match = (Object.keys(SCREEN_PATHS) as Screen[]).find((screen) => SCREEN_PATHS[screen] === path);
@@ -70,6 +71,8 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
   const [attempt, setAttempt] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
   const [mfaEnabled, setMfaEnabled] = useState<boolean | null>(null);
+  // Bumped whenever a page changes the cart, so the top-bar count and other pages refresh.
+  const [cartVersion, setCartVersion] = useState(0);
 
   // Unknown addresses show the dashboard under its own address; back/forward follow the address bar.
   useEffect(() => {
@@ -135,9 +138,19 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
   return (
     <AppShell
       nav={NAV}
-      current={screen}
+      current={screen === 'checkout' ? 'domains' : screen}
       onNavigate={(id) => go(id === 'domains' || id === 'billing' || id === 'security' ? id : 'dashboard')}
       userName={session.fullName}
+      topbarActions={
+        <CartButton
+          csrfToken={session.csrfToken}
+          fetchImpl={fetchImpl}
+          version={cartVersion}
+          onChange={() => setCartVersion((v) => v + 1)}
+          onCheckout={() => go('checkout')}
+          onFindDomains={() => go('domains')}
+        />
+      }
       onSignOut={() => {
         if (!signingOut) void handleSignOut();
       }}
@@ -145,7 +158,24 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
       {screen === 'dashboard' && (
         <DashboardScreen fullName={session.fullName} mfaEnabled={mfaEnabled ?? true} onFindDomain={() => go('domains')} onSetUpMfa={() => go('security')} />
       )}
-      {screen === 'domains' && <DomainSearchScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
+      {screen === 'domains' && (
+        <DomainSearchScreen
+          csrfToken={session.csrfToken}
+          fetchImpl={fetchImpl}
+          onCheckout={() => go('checkout')}
+          cartVersion={cartVersion}
+          onCartChange={() => setCartVersion((v) => v + 1)}
+        />
+      )}
+      {screen === 'checkout' && (
+        <CheckoutScreen
+          csrfToken={session.csrfToken}
+          fetchImpl={fetchImpl}
+          onBack={() => go('domains')}
+          onBilling={() => go('billing')}
+          onCartChange={() => setCartVersion((v) => v + 1)}
+        />
+      )}
       {screen === 'billing' && <BillingScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
       {screen === 'security' && <SecurityScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} onStatusChange={(status) => setMfaEnabled(status.totpEnabled)} />}
     </AppShell>

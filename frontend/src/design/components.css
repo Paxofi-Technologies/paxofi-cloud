@@ -286,3 +286,16 @@
 .pc-promo--promo { background: var(--pc-semantic-promo-promo); }
 .pc-promo--sale { background: var(--pc-semantic-promo-sale); }
 .pc-promo--new { background: var(--pc-semantic-promo-new); }
+
+/* ---------- Cart in the top bar (CD-20) ---------- */
+.pc-cart { position: relative; }
+.pc-cart__button { position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: var(--pc-radius-md); background: transparent; color: var(--pc-semantic-text-primary); cursor: pointer; transition: background-color var(--pc-motion-fast); }
+.pc-cart__button:hover { background: var(--pc-semantic-surface-subtle); }
+.pc-cart__button:focus-visible { outline: 2px solid var(--pc-semantic-focus-ring); outline-offset: 2px; }
+.pc-cart__count { position: absolute; top: 2px; right: 0; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--pc-semantic-action-primary); color: var(--pc-semantic-text-inverse); font-size: 11px; font-weight: var(--pc-font-weight-semibold); line-height: 18px; text-align: center; }
+.pc-cart__panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(340px, calc(100vw - 32px)); padding: var(--pc-space-4); border: 1px solid var(--pc-semantic-border-default); border-radius: var(--pc-radius-lg); background: var(--pc-semantic-surface-card); box-shadow: var(--pc-shadow-md); display: grid; gap: var(--pc-space-3); animation: pc-fade 160ms ease-out both; }
+.pc-cart__title { margin: 0; font-weight: var(--pc-font-weight-semibold); }
+.pc-cart__lines { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--pc-space-2); max-height: 260px; overflow-y: auto; }
+.pc-cart__lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--pc-space-2); align-items: center; }
+.pc-cart__domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-cart__total { margin: 0; display: flex; justify-content: space-between; border-top: 1px solid var(--pc-semantic-border-default); padding-top: var(--pc-space-2); }

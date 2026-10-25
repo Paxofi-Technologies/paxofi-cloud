@@ -26,6 +26,11 @@ use PaxofiCloud\Http\Controllers\CartController;
 use PaxofiCloud\Application\Audit\AuditTrail;
 use PaxofiCloud\Application\Billing\BillingDetailsService;
 use PaxofiCloud\Http\Controllers\BillingDetailsController;
+use PaxofiCloud\Application\Checkout\Checkout;
+use PaxofiCloud\Http\Controllers\CheckoutController;
+use PaxofiCloud\Http\Controllers\OrdersController;
+use PaxofiCloud\Infrastructure\Orders\MysqlOrderStore;
+use Paxofi\Core\Contracts\Configuration;
 use PaxofiCloud\Infrastructure\Billing\MysqlBillingStore;
 use PaxofiCloud\Infrastructure\Billing\MysqlTaxRateStore;
 use PaxofiCloud\Http\Controllers\CatalogueController;
@@ -108,6 +113,31 @@ final class CommerceProvider implements Provider
                 Resolve::get($c, AuditTrail::class),
                 new SystemClock(),
             ),
+            Resolve::get($c, Sessions::class),
+        ));
+        // Checkout and orders (CD-23…CD-26): server cart, registrar re-check by the worker, one-transaction placement.
+        $container->singleton(CheckoutController::class, static function (Container $c): CheckoutController {
+            $redis = Resolve::get($c, RedisClient::class);
+            $limiter = new RedisRateLimiter($redis);
+            $quotes = Resolve::get($c, ExtensionQuotes::class);
+            $terms = Resolve::get($c, Configuration::class)->get('identity.terms_version');
+
+            return new CheckoutController(new Checkout(
+                new DomainCart($redis, $quotes, $limiter),
+                $quotes,
+                new RegistrarCheck($quotes, $redis, $limiter),
+                new MysqlBillingStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+                new MysqlTaxRateStore(Resolve::get($c, Repository::class)),
+                new MysqlOrderStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class)),
+                $redis,
+                $limiter,
+                Resolve::get($c, AuditTrail::class),
+                new SystemClock(),
+                is_string($terms) ? $terms : '',
+            ), Resolve::get($c, Sessions::class));
+        });
+        $container->singleton(OrdersController::class, static fn (Container $c): OrdersController => new OrdersController(
+            new MysqlOrderStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class)),
             Resolve::get($c, Sessions::class),
         ));
         // Public price list (DS-11): selling prices only, cacheable.

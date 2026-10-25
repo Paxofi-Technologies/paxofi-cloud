@@ -26,6 +26,12 @@ final readonly class RuntimeGrants
         'account_billing_details' => ['SELECT', 'INSERT', 'UPDATE'],
         // Tax table (CD-22): append-only and read-only for the runtime user until the Sprint 3 editor.
         'tax_rates' => ['SELECT'],
+        // Orders and invoices (CD-24): lines are written once; on the headers only the status may change.
+        'document_sequences' => ['SELECT', 'INSERT', 'UPDATE'],
+        'orders' => ['SELECT', 'INSERT', 'UPDATE (status, status_changed_at)'],
+        'order_lines' => ['SELECT', 'INSERT'],
+        'invoices' => ['SELECT', 'INSERT', 'UPDATE (status, status_changed_at)'],
+        'invoice_lines' => ['SELECT', 'INSERT'],
         // Append-only: events can be written and read, never changed or removed (T-39).
         'audit_events' => ['SELECT', 'INSERT'],
         // The single head row only moves forward.

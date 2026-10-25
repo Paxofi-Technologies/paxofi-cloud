@@ -26,6 +26,7 @@ final class ExtensionQuotes
     private bool $loaded = false;
     private ?DomainPricingSettings $pricing = null;
     private ?ExchangeRates $exchange = null;
+    private ?string $rateSetId = null;
 
     /** @param array<string, string> $registrars provider => environment */
     public function __construct(
@@ -40,12 +41,23 @@ final class ExtensionQuotes
     /** The register and renew price, or null when the extension is not sold online. */
     public function quote(string $tld): ?ExtensionPrices
     {
+        return $this->checkoutQuote($tld)?->prices;
+    }
+
+    /**
+     * The same quote plus what the order line snapshots and never shows the
+     * customer: the chosen registrar, its register cost and the rate set (DX-6).
+     */
+    public function checkoutQuote(string $tld): ?CheckoutQuote
+    {
         if (!$this->loaded) {
             $this->loaded = true;
             $this->pricing = $this->store->pricing();
-            $this->exchange = $this->rates->latestAccepted()?->rates;
+            $stored = $this->rates->latestAccepted();
+            $this->exchange = $stored?->rates;
+            $this->rateSetId = $stored?->id;
         }
-        if ($this->pricing === null || $this->exchange === null) {
+        if ($this->pricing === null || $this->exchange === null || $this->rateSetId === null) {
             return null;
         }
         $choice = RegistrarChoice::choose($this->offers()[$tld] ?? [], ($this->settings()[$tld] ?? null)?->pinnedRegistrar, $this->clock->now());
@@ -54,7 +66,7 @@ final class ExtensionQuotes
         }
         $prices = ExtensionPrices::for($choice->chosen->cost, $this->pricing, $this->exchange, $this->settings()[$tld] ?? null);
 
-        return $prices->usd['register'] === null ? null : $prices;
+        return $prices->usd['register'] === null ? null : new CheckoutQuote($prices, $choice->chosen->registrar, $choice->chosen->cost->register, $this->rateSetId);
     }
 
     /** @return list<string> every extension some registrar offers, alphabetical; quote() decides which are sold */

@@ -144,7 +144,19 @@ export function mergeAnswers(results: readonly SearchResult[], answers: readonly
  * featured extensions, with live availability (a pre-check; the registrar
  * confirms at checkout) and our prices in naira and US dollars.
  */
-export function DomainSearchScreen({ csrfToken, fetchImpl }: { csrfToken?: string | undefined; fetchImpl?: typeof fetch | undefined }) {
+export function DomainSearchScreen({
+  csrfToken,
+  fetchImpl,
+  onCheckout,
+  cartVersion = 0,
+  onCartChange,
+}: {
+  csrfToken?: string | undefined;
+  fetchImpl?: typeof fetch | undefined;
+  onCheckout?: () => void;
+  cartVersion?: number;
+  onCartChange?: () => void;
+}) {
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [results, setResults] = useState<readonly SearchResult[] | null>(null);
@@ -166,7 +178,7 @@ export function DomainSearchScreen({ csrfToken, fetchImpl }: { csrfToken?: strin
     return () => {
       active = false;
     };
-  }, [fetchImpl]);
+  }, [fetchImpl, cartVersion]);
 
   const inCart = new Map((cart?.lines ?? []).map((l) => [l.domain, l]));
 
@@ -212,8 +224,10 @@ export function DomainSearchScreen({ csrfToken, fetchImpl }: { csrfToken?: strin
     const line = inCart.get(result.domain);
     const outcome: CartResult = line ? await removeFromCart(line.id, csrfToken, fetchImpl) : await addDomainToCart(result.domain, csrfToken, fetchImpl);
     setBusy(null);
-    if (outcome.kind === 'ok') setCart(outcome.cart);
-    else setCartError(outcome.message);
+    if (outcome.kind === 'ok') {
+      setCart(outcome.cart);
+      onCartChange?.();
+    } else setCartError(outcome.message);
   }
 
   const lines = cart?.lines ?? [];
@@ -331,7 +345,11 @@ export function DomainSearchScreen({ csrfToken, fetchImpl }: { csrfToken?: strin
               </strong>{' '}
               before VAT
             </span>
-            <span className="pc-small pc-muted">Checkout opens soon.</span>
+            {onCheckout && (
+              <Button size="sm" onClick={onCheckout}>
+                Check out
+              </Button>
+            )}
           </div>
         )}
       </div>

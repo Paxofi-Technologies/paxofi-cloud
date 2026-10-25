@@ -49,3 +49,6 @@ export const CloseIcon = () => (
 export const ChevronDownIcon = () => (
   <svg {...base} aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg>
 );
+export const CartIcon = () => (
+  <svg {...base} aria-hidden="true" focusable="false"><path d="M3 4h2l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.4a1.5 1.5 0 0 0 1.5-1.2L20.5 8H6.2" /><circle cx="9.5" cy="20" r="1.2" /><circle cx="17" cy="20" r="1.2" /></svg>
+);
