@@ -59,6 +59,8 @@ final class AuditEventType
     public const string PROVIDER_PRICES_SYNC_FAILED = 'provider_prices.sync_failed';
     public const string PROVIDER_PRICES_SYNC_REQUESTED = 'provider_prices.sync_requested';
     public const string PROVIDER_PRICES_SYNC_REQUEST_REFUSED = 'provider_prices.sync_request_refused';
+    public const string PROVIDER_PRICES_CHECKED = 'provider_prices.checked';
+    public const string PROVIDER_PRICES_CHECK_FAILED = 'provider_prices.check_failed';
     public const string AUDIT_VIEWED = 'audit.viewed';
     public const string STAFF_SESSION_REVOKED = 'staff.session.revoked';
     public const string STAFF_SESSIONS_REVOKED_OTHERS = 'staff.sessions.revoked_others';

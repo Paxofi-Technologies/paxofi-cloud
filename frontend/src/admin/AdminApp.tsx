@@ -17,6 +17,9 @@ import {
   fetchDomainCosts,
   formatMinor,
   requestDomainCostSync,
+  fetchSpaceshipCheck,
+  requestSpaceshipCheck,
+  type SpaceshipCheckResult,
   type DomainCostItem,
   type SkippedExtension,
   type FeedFieldSummary,
@@ -1373,6 +1376,7 @@ const SYNC_REASONS: Record<string, string> = {
 const UNAUTHORISED_HINTS: Record<string, string> = {
   namecheap: ' Also check that the server IP address is whitelisted in Namecheap.',
   dynadot: ' Use the production key and secret, not the sandbox ones.',
+  spaceship: ' Check that the Spaceship key has the domains:read scope.',
 };
 
 /** Plain words for a sync failure or hold-back reason on one registrar's tab. */
@@ -1404,6 +1408,7 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   const [message, setMessage] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [provider, setProvider] = useState<string | undefined>(undefined);
+  const [spaceshipTab, setSpaceshipTab] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -1464,30 +1469,46 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
   const syncBlocked = costs.pendingSince !== null || costs.nextRequestAt !== null;
 
   const registrar = REGISTRAR_NAMES[costs.provider] ?? costs.provider;
+  // Registrars with a price list, then Spaceship, whose API has none: its tab runs a price check instead (SP-3).
+  const tabs = (
+    <div className="pc-admin__tabs" role="tablist" aria-label="Registrar">
+      {costs.providers.map((p) => (
+        <Button
+          key={p}
+          variant={!spaceshipTab && p === costs.provider ? 'primary' : 'secondary'}
+          role="tab"
+          aria-selected={!spaceshipTab && p === costs.provider}
+          onClick={() => {
+            setSpaceshipTab(false);
+            // Back from the Spaceship tab to the registrar already loaded: nothing to fetch.
+            if (p === costs.provider) return;
+            setMessage(null);
+            setQuery('');
+            setCostPage(1);
+            setProvider(p);
+          }}
+        >
+          {REGISTRAR_NAMES[p] ?? p}
+        </Button>
+      ))}
+      <Button variant={spaceshipTab ? 'primary' : 'secondary'} role="tab" aria-selected={spaceshipTab} onClick={() => setSpaceshipTab(true)}>
+        Spaceship
+      </Button>
+    </div>
+  );
+
+  if (spaceshipTab) {
+    return (
+      <Card title="Domain costs">
+        {tabs}
+        <SpaceshipPriceCheckPanel session={session} fetchImpl={fetchImpl} />
+      </Card>
+    );
+  }
 
   return (
     <Card title="Domain costs">
-      {costs.providers.length > 1 && (
-        <div className="pc-admin__tabs" role="tablist" aria-label="Registrar">
-          {costs.providers.map((p) => (
-            <Button
-              key={p}
-              variant={p === costs.provider ? 'primary' : 'secondary'}
-              role="tab"
-              aria-selected={p === costs.provider}
-              onClick={() => {
-                if (p === costs.provider) return;
-                setMessage(null);
-                setQuery('');
-                setCostPage(1);
-                setProvider(p);
-              }}
-            >
-              {REGISTRAR_NAMES[p] ?? p}
-            </Button>
-          ))}
-        </div>
-      )}
+      {tabs}
       <p className="pc-muted">
         What each extension costs us at {registrar} ({costs.environment === 'live' ? 'live prices' : 'test environment'}), before our markup. Internal: never shown to
         customers. Updated daily at {costs.dailyAt}.
@@ -1588,6 +1609,129 @@ function DomainCostsCard({ session, fetchImpl }: { session: StaffSession; fetchI
         </details>
       )}
     </Card>
+  );
+}
+
+const CHECK_RESULTS: Record<string, string> = { available: 'Available', missing: 'No answer', other: 'Other answer' };
+
+/**
+ * The Spaceship tab (THREAT-MODEL-DOMAIN-PRICING.md SP-3, SP-7). Spaceship's
+ * API has no price list, so this asks the provider worker to check one
+ * made-up, unregistered name per common extension and shows whether Spaceship
+ * returned a price for it. Nothing is registered. Values render as text only.
+ */
+function SpaceshipPriceCheckPanel({ session, fetchImpl }: { session: StaffSession; fetchImpl?: typeof fetch | undefined }) {
+  const [result, setResult] = useState<SpaceshipCheckResult | 'loading'>('loading');
+  const [version, setVersion] = useState(0);
+  const [requesting, setRequesting] = useState(false);
+  const [message, setMessage] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetchSpaceshipCheck(fetchImpl).then((next) => {
+      if (active) setResult(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchImpl, version]);
+
+  // While a check waits for the worker, look again every few seconds.
+  const pending = result !== 'loading' && result.kind === 'ok' && result.state.pendingSince !== null;
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setTimeout(() => setVersion((n) => n + 1), 5000);
+    return () => window.clearTimeout(timer);
+  }, [pending, version]);
+
+  async function runCheck() {
+    setRequesting(true);
+    setMessage(null);
+    const sent = await requestSpaceshipCheck(session.csrfToken, fetchImpl);
+    setRequesting(false);
+    if (sent.kind === 'ok') {
+      setMessage({ tone: 'success', text: 'Price check requested. The answer usually arrives within a minute; this page updates by itself.' });
+    } else if (sent.kind === 'throttled') {
+      setMessage({ tone: 'warning', text: `A check was requested recently. You can ask again ${describeWait(sent.retryAfterSeconds)}.` });
+    } else if (sent.kind === 'rejected' && sent.code === 'not_connected') {
+      setMessage({ tone: 'warning', text: 'Connect Spaceship first, under API providers → Domain registrars.' });
+    } else {
+      setMessage({ tone: 'danger', text: problemText(sent, 'The price check could not be requested.') });
+    }
+    setVersion((n) => n + 1);
+  }
+
+  if (result === 'loading') return <p className="pc-muted">Loading the Spaceship price check…</p>;
+  if (result.kind === 'failed') return <Alert tone="danger">The Spaceship price check could not be loaded.</Alert>;
+
+  const state = result.state;
+  const latest = state.latest;
+  const order = new Map(state.probeTlds.map((tld, index) => [tld, index]));
+  const items = latest ? [...latest.items].sort((a, b) => (order.get(a.tld) ?? 99) - (order.get(b.tld) ?? 99)) : [];
+  const blocked = !state.connected || state.pendingSince !== null || state.nextRequestAt !== null;
+
+  return (
+    <>
+      <p className="pc-muted">
+        Spaceship&apos;s API has no price list. This check asks Spaceship about one made-up, unregistered name in each of {state.probeTlds.length || 20} common
+        extensions, to see whether it shows prices for ordinary names. Nothing is registered. Internal: never shown to customers.
+      </p>
+      {message && <Alert tone={message.tone}>{message.text}</Alert>}
+      {!state.connected && (
+        <Alert tone="warning">
+          Spaceship is not connected yet. Add it under API providers → Domain registrars, with a key that has only the domains:read scope.
+        </Alert>
+      )}
+      <div className="pc-admin__row">
+        <p>
+          {latest ? `Last check ${formatWhen(latest.checkedAt)}.` : 'No check has run yet.'}
+          {state.pendingSince && <span className="pc-muted"> A check is on its way…</span>}
+          {!state.pendingSince && state.nextRequestAt && <span className="pc-muted"> You can run another {formatWhen(state.nextRequestAt)}.</span>}
+        </p>
+        {state.canRun && (
+          <Button variant="secondary" onClick={() => void runCheck()} loading={requesting} disabled={blocked}>
+            Run price check
+          </Button>
+        )}
+      </div>
+      {latest && latest.outcome === 'failed' && (
+        <Alert tone="danger">
+          The check failed: {syncReason(latest.reason ?? '', 'spaceship') ?? 'unknown problem'}.
+        </Alert>
+      )}
+      {latest && latest.outcome === 'done' && (
+        <>
+          <Alert tone={latest.priced > 0 ? 'success' : 'warning'}>
+            Spaceship answered {latest.answered} of {latest.asked} names and showed a one-year price for {latest.priced}.{' '}
+            {latest.priced > 0
+              ? 'Its prices can be fetched automatically for these extensions.'
+              : 'It does not show ordinary prices, so Spaceship costs would have to be entered by hand for a short list of extensions.'}
+          </Alert>
+          <div className="pc-table-scroll">
+            <table className="pc-table" aria-label="Spaceship price check">
+              <thead>
+                <tr>
+                  <th scope="col">Extension</th>
+                  <th scope="col">Answer</th>
+                  <th scope="col">Register (1 year)</th>
+                  <th scope="col">Other prices shown</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.tld}>
+                    <td>.{item.tld}</td>
+                    <td>{CHECK_RESULTS[item.result] ?? item.result}</td>
+                    <td>{item.register !== null && item.currency ? formatMinor(item.register, item.currency) : '—'}</td>
+                    <td>{item.otherPriced.length > 0 ? item.otherPriced.join(', ') : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

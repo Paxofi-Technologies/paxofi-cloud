@@ -26,7 +26,7 @@ PROVIDER_CREDENTIAL_ACTIVE_KEY="k2026a"
 
 ## Entering a credential in the admin console (preferred)
 
-Security Admins set or replace the DomainNameAPI, Namecheap, Dynadot, Hetzner and Vultr credentials on the
+Security Admins set or replace the DomainNameAPI, Namecheap, Dynadot, Spaceship, Hetzner and Vultr credentials on the
 **API providers** pages of the admin console: **API providers → Domain registrars** (DomainNameAPI,
 Namecheap; addresses `/api-providers/domain-registrars`, old `/provider-connections` links land here) and
 **API providers → Server providers** (Hetzner, Vultr; `/api-providers/server-providers`). Every field shows
@@ -80,6 +80,13 @@ secret**, both from Tools > API in the Dynadot account. Use the production key, 
 key. The key is sent as a bearer token; the secret never leaves the provider worker and only signs
 each request. Dynadot no longer requires an IP whitelist for the RESTful API; if the account has
 one, add the staging server's IPv4 address to it.
+
+Spaceship takes two values (THREAT-MODEL-DOMAIN-PRICING.md, SP-1, SP-2): the **API key** and the
+**API secret**, from API Manager in the Spaceship account. Create a key for PaxofiCloud with **only
+the `domains:read` scope** and check the scope list before entering it: no write, transfer, billing,
+contacts or DNS access until registration through Spaceship goes live (then a new key). Never enter
+a full-access key. The secret is shown once, when the key is created. Both values travel only in
+request headers (`X-API-Secret`, `X-API-Key`).
 
 Credential IDs are fixed per environment, for example `domainnameapi-staging` and
 `hetzner-prod`. A credential stored this way gets a review date one year ahead.

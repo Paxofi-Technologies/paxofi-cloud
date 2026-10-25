@@ -15,6 +15,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminEnrolmentController;
 use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 
 /**
@@ -34,9 +35,10 @@ final class AdminRoutes
      * @param \Closure(): AdminDomainCostsController $domainCosts
      * @param \Closure(): AdminAuditLogController $auditLog
      * @param \Closure(): AdminSessionsController $sessions
+     * @param \Closure(): AdminSpaceshipPriceCheckController $spaceship
      * @return list<AdminRoute>
      */
-    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog, \Closure $sessions): array
+    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog, \Closure $sessions, \Closure $spaceship): array
     {
         $credentials = AdminAccess::permission(Permission::ProviderCredentialsManage);
         $public = AdminAccess::public();
@@ -82,6 +84,9 @@ final class AdminRoutes
             // Domain costs: internal prices for Catalogue and Finance; "Sync now" queues work for the provider worker (DR-12, DR-13).
             new AdminRoute('GET', '/admin-api/v1/domain-costs', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainCosts()->overview($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/domain-costs/sync', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainCosts()->sync($r, $c)),
+            // Spaceship price check: read the newest result, or queue one for the provider worker (SP-3, SP-7).
+            new AdminRoute('GET', '/admin-api/v1/spaceship-price-check', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $spaceship()->overview($r, $c)),
+            new AdminRoute('POST', '/admin-api/v1/spaceship-price-check/run', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $spaceship()->run($r, $c)),
 
             // Audit log: read-only; full IPs only for staff managers; every look is itself audited (§6.24).
             new AdminRoute('GET', '/admin-api/v1/audit-events', $auditView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $auditLog()->list($r, $c)),

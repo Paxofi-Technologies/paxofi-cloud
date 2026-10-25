@@ -6,6 +6,8 @@ namespace PaxofiCloud\Cli;
 
 use Paxofi\Core\Contracts\Command;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
+use PaxofiCloud\Application\Registrar\PriceCheckRun;
+use PaxofiCloud\Application\Registrar\SpaceshipPriceCheck;
 use PaxofiCloud\Application\Registrar\SyncRun;
 use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
 
@@ -17,6 +19,8 @@ use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
  * once a minute checks whether each registrar's daily sync is due (02:30 WAT;
  * DR-8). The list of registrars is rebuilt at each of those checks, so a
  * registrar whose connection was just entered joins within a minute (NC-9).
+ * It also runs a Spaceship price check when the admin console asks for one
+ * (SP-3), once a Spaceship connection exists.
  * Runs for a bounded time and exits so the container restarts it fresh. A
  * failing price sync never stops credential intake or another registrar's.
  */
@@ -28,12 +32,14 @@ final readonly class ProvidersWorkCommand implements Command
      * @param \Closure(): CredentialIntakeWorker $intake built lazily so keys are read only when it runs
      * @param (\Closure(): list<DomainCostSync>)|null $prices one price sync per active registrar, also built lazily
      * @param (\Closure(int): void)|null $sleep
+     * @param (\Closure(): ?SpaceshipPriceCheck)|null $spaceship the price check, or null while Spaceship is not connected
      */
     public function __construct(
         private \Closure $intake,
         private Console $console,
         private ?\Closure $sleep = null,
         private ?\Closure $prices = null,
+        private ?\Closure $spaceship = null,
     ) {
     }
 
@@ -64,6 +70,7 @@ final readonly class ProvidersWorkCommand implements Command
             sleep($seconds);
         };
         $prices = [];
+        $check = null;
         $deadline = time() + $maxSeconds;
         $nextScheduleCheck = 0;
         do {
@@ -73,6 +80,10 @@ final readonly class ProvidersWorkCommand implements Command
                 if ($due) {
                     $nextScheduleCheck = time() + self::SCHEDULE_CHECK_SECONDS;
                     $prices = $this->pricesSyncs();
+                    $check = $this->spaceshipCheck();
+                }
+                if ($check !== null) {
+                    $this->runCheck($check);
                 }
                 foreach ($prices as $sync) {
                     $this->runPrices(static fn (): ?SyncRun => $sync->runIfRequested());
@@ -110,6 +121,32 @@ final readonly class ProvidersWorkCommand implements Command
             $this->console->error('Price sync could not be prepared: ' . $e::class);
 
             return [];
+        }
+    }
+
+    private function spaceshipCheck(): ?SpaceshipPriceCheck
+    {
+        if ($this->spaceship === null) {
+            return null;
+        }
+        try {
+            return ($this->spaceship)();
+        } catch (\Throwable $e) {
+            $this->console->error('Spaceship price check could not be prepared: ' . $e::class);
+
+            return null;
+        }
+    }
+
+    private function runCheck(SpaceshipPriceCheck $check): void
+    {
+        try {
+            $run = $check->runIfRequested();
+            if ($run instanceof PriceCheckRun) {
+                $this->console->line(sprintf('Spaceship price check: %s, %d of %d priced.', $run->failure ?? 'done', $run->priced(), $run->asked));
+            }
+        } catch (\Throwable $e) {
+            $this->console->error('Spaceship price check error: ' . $e::class);
         }
     }
 

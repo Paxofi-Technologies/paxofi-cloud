@@ -20,13 +20,16 @@ final class ProviderRequest
      * Extra request headers an adapter may set, each with the exact format
      * its value must have; anything else is refused. `__reseller` carries the
      * DomainNameAPI Reseller ID (DR-3); `X-Request-ID` and `X-Signature` sign
-     * Dynadot calls (THREAT-MODEL-DOMAIN-PRICING.md DY-3).
+     * Dynadot calls (THREAT-MODEL-DOMAIN-PRICING.md DY-3); `X-API-Key` is the
+     * Spaceship key, sent beside the secret in the endpoint's credential
+     * header (SP-2). Header values are sensitive and never shown in debug output.
      */
     private const array HEADERS = [
         'Idempotency-Key' => '/^[A-Za-z0-9._:-]{1,128}$/',
         '__reseller' => '/^[A-Za-z0-9._:-]{1,128}$/',
         'X-Request-ID' => '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
         'X-Signature' => '/^[A-Za-z0-9+\/]{43}=$/',
+        'X-API-Key' => '/^[\x21-\x7E]{8,256}$/',
     ];
 
     /**
@@ -40,7 +43,7 @@ final class ProviderRequest
         public readonly string $path,
         public readonly array $query = [],
         public readonly ?array $json = null,
-        public readonly array $headers = [],
+        #[\SensitiveParameter] public readonly array $headers = [],
         #[\SensitiveParameter] public readonly ?array $form = null,
     ) {
         foreach ($headers as $name => $value) {
@@ -105,7 +108,7 @@ final class ProviderRequest
      * @param array<string, mixed> $json
      * @param array<string, string> $headers
      */
-    public static function post(string $path, array $json, array $headers = []): self
+    public static function post(string $path, array $json, #[\SensitiveParameter] array $headers = []): self
     {
         return new self('POST', $path, [], $json, $headers);
     }

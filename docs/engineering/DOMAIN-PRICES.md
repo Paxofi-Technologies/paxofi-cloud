@@ -91,7 +91,7 @@ Every active staff manager is emailed ("Price sync needs attention") when:
 
 | Command | What it does | Exit codes |
 |---|---|---|
-| `prices:sync [--provider=domainnameapi\|namecheap]` | Runs a sync now for one registrar (`trigger=cli`; default DomainNameAPI). Prints provider, outcome, reason and attempts. | 0 accepted, 1 failed, 2 quarantined, 3 another run in progress |
+| `prices:sync [--provider=domainnameapi\|namecheap\|dynadot]` | Runs a sync now for one registrar (`trigger=cli`; default DomainNameAPI). Prints provider, outcome, reason and attempts. | 0 accepted, 1 failed, 2 quarantined, 3 another run in progress |
 | `prices:status` | Per registrar: size of the newest accepted list and the last five runs. Codes, times and counts only. | 0 |
 
 Settings (environment): `DOMAINNAMEAPI_ENVIRONMENT` = `live` (default) or
@@ -101,3 +101,30 @@ production.
 
 The Domain costs page has one tab per registrar; "Sync now" asks only the
 registrar on screen.
+
+## Spaceship price check (SP-3, SP-7)
+
+Spaceship's API has no price list, so Spaceship is not part of the daily sync.
+The **Spaceship** tab of Domain costs runs a price check instead: staff with
+`catalogue.manage` press **Run price check** (at most once per 10 minutes,
+audited), and the provider worker sends **one** availability request for a
+made-up, random name (`paxofi-price-check-<16 hex>.<tld>`) in each of 20 common
+extensions. Nothing is registered: the client has a single read operation and
+the key has only `domains:read`. The button stays disabled until a Spaceship
+connection exists.
+
+The tab shows, per extension, Spaceship's answer, the one-year register price
+if it showed one, and any other operations that carried a price. Test names
+and Spaceship's text are never stored. The answer decides the next step:
+
+- **Prices shown for ordinary names:** a daily automatic Spaceship sync can be
+  built (SP-4).
+- **No prices shown:** Spaceship becomes a fallback for a short, staff-chosen
+  list of extensions with hand-entered costs that expire after 30 days (SP-5).
+
+A failed check shows its reason; "the registrar refused the API key" usually
+means the key lacks the `domains:read` scope.
+
+| Command | What it does | Exit codes |
+|---|---|---|
+| `prices:probe-spaceship` | Runs the price check now (`trigger=cli`). Prints counts or the failure reason. | 0 done, 1 failed or not configured |

@@ -49,6 +49,9 @@ final readonly class RuntimeGrants
         'domain_cost_skipped' => ['SELECT', 'INSERT'],
         'domain_cost_feed_fields' => ['SELECT', 'INSERT'],
         'provider_sync_runs' => ['SELECT', 'INSERT'],
+        // Spaceship price checks (SP-7): written once, never edited.
+        'spaceship_price_checks' => ['SELECT', 'INSERT'],
+        'spaceship_price_check_items' => ['SELECT', 'INSERT'],
         // "Sync now" requests (DR-12): UPDATE only so the provider worker can mark a claim.
         'provider_sync_requests' => ['SELECT', 'INSERT', 'UPDATE'],
         'email_verification_tokens' => self::CRUD,

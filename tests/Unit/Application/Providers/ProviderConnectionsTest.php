@@ -84,8 +84,11 @@ final class ProviderConnectionsTest extends TestCase
         $overview = $this->connections->overview($this->staffId, AuditFixtures::client());
         $byProvider = array_column($overview, null, 'provider');
 
-        self::assertSame(['domainnameapi', 'namecheap', 'dynadot', 'hetzner', 'vultr'], array_keys($byProvider));
-        self::assertSame(['domains', 'domains', 'domains', 'servers', 'servers'], array_column($overview, 'category'));
+        self::assertSame(['domainnameapi', 'namecheap', 'dynadot', 'spaceship', 'hetzner', 'vultr'], array_keys($byProvider));
+        self::assertSame(['domains', 'domains', 'domains', 'domains', 'servers', 'servers'], array_column($overview, 'category'));
+        self::assertSame(['api_key', 'api_secret'], array_column($byProvider['spaceship']['fields'], 'name'));
+        self::assertSame([true, true], array_column($byProvider['spaceship']['fields'], 'secret'));
+        self::assertStringContainsString('domains:read', (string) $byProvider['spaceship']['fields'][0]['hint'], 'SP-1: the hint asks for a read-only key');
         self::assertNotNull($byProvider['domainnameapi']['pending_since']);
         self::assertNull($byProvider['domainnameapi']['configured_at']);
         self::assertSame('2027-10-20', $byProvider['hetzner']['review_due_on']);
