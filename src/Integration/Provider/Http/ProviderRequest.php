@@ -54,8 +54,8 @@ final class ProviderRequest
         if (!in_array($method, self::METHODS, true)) {
             throw new \InvalidArgumentException('Unsupported HTTP method for provider calls.');
         }
-        // Segments are lower-case words, optionally dotted ("xml.response"); a segment never starts with a dot.
-        if (preg_match('#^(/[a-z0-9_-]+(\.[a-z0-9_-]+)*)+$#', $path) !== 1) {
+        // Segments are plain words (letters, digits, _ and -; Paystack references are upper-case), optionally dotted ("xml.response"); a segment never starts with a dot.
+        if (preg_match('#^(/[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*)+$#', $path) !== 1) {
             throw new \InvalidArgumentException('Provider request path must be a plain relative path.');
         }
         if (($json !== null || $form !== null) && ($method === 'GET' || $method === 'HEAD' || $method === 'DELETE')) {

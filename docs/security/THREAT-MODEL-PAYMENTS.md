@@ -191,6 +191,7 @@ Every PR carries happy-path, failure and security-negative tests from the table 
 | 2026-10-26 | Baseline, written before any payment or ledger code. Flutterwave facts checked against official docs; Paystack facts from SRS §6.4 (R-1). | Claude (security engineering) |
 | 2026-10-26 | Paystack facts confirmed from CEO captures of the API reference and Webhooks guide (signature, source IPs, retries, refund events); Paystack NGN-only (PA-5); refunds async (R-7); dedicated virtual accounts recorded as future scope (§11). | Claude (security engineering) |
 | 2026-10-26 | PY-14: backfill moved into migration 0025 (no deploy-agent change); fixed chart adds per-gateway clearing accounts; reversals keyed `reversal:<entry id>` so an entry is reversed at most once. | Claude (security engineering) |
+| 2026-10-26 | Step 3a (adapters): the port has `initialise`, `verify`, `webhookHint`; `refund` joins it in step 7 with the refund flow. Paystack verify also checks `data.domain` (test/live) against the environment, a second PY-4 check after the key prefix. Checkout URLs must be https on the gateway's own checkout host (Paystack `checkout.paystack.com`; Flutterwave `checkout.flutterwave.com`, test host confirmed on staging under R-2; unknown hosts fail closed). Provider request paths may now contain upper-case letters (Paystack verify path carries `PXC-<ULID>`); traversal, query, encoding and whitespace stay refused. | Claude (security engineering) |
 
 ## 11. Future scope: dedicated virtual accounts (not MVP)
 
