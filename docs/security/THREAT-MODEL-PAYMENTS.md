@@ -36,7 +36,7 @@ Out of scope: saved cards and renewal auto-charge (PAY-010, Sprint 8), provision
 | Amounts | Docs show `amount` as a number in the currency's major unit (e.g. `100`, `app_fee` `1.4`); we parse it as exact decimal text, never a float (R-3) |
 | Currencies | NGN default; USD hosted checkout is **not explicitly documented** (R-2) |
 
-**Paystack** — the docs site refuses automated reads from our build environment (HTTP 403). The CEO captured the API reference pages (Introduction, Authentication, Rate limits, Pagination, Errors, Transactions, Customers, Dedicated Virtual Accounts, Settlements, Refunds, Webhook Events, Verification) on 26 Oct 2026; those confirm everything below except the webhook signature row, which still comes from the signed SRS §6.4 (R-1):
+**Paystack** — the docs site refuses automated reads from our build environment (HTTP 403). The CEO captured the API reference pages (Introduction, Authentication, Rate limits, Pagination, Errors, Transactions, Customers, Dedicated Virtual Accounts, Settlements, Refunds, Webhook Events, Verification) on 26 Oct 2026; the Webhooks guide and the refund-status article followed the same day. Every row below is now confirmed from Paystack's own documentation:
 
 | Fact | Value | Source |
 |---|---|---|
@@ -50,7 +50,11 @@ Out of scope: saved cards and renewal auto-charge (PAY-010, Sprint 8), provision
 | Missed webhooks | `GET /integration/webhooks/events` (status Delivered/Pending/Failed, by transaction id) lets the reconciliation job find failed deliveries; resend is **not idempotent** (same event delivered twice) | API docs |
 | Rate limits | Live 600 requests/60 s per endpoint (verify 3,000, initialize 1,200); test 100/60 s; 429 with `x-ratelimit-reset` seconds | API docs |
 | Refund | `POST /refund` {transaction, amount (subunit, ≤ original, default full), currency, customer_note, merchant_note} → **queued** (async); `GET /refund/:id`, `GET /refund?transaction=`; a refund in `needs-attention` needs customer bank details (`/refund/retry_with_customer_details/:id`) | API docs |
-| Webhook | Header `x-paystack-signature` = hex HMAC-SHA512 of the **raw body** keyed with the **secret key**; Paystack publishes source IPs for edge filtering | SRS §6.4 only (R-1) |
+| Webhook signature | Header `x-paystack-signature` = HMAC-SHA512 of the **raw event payload** keyed with the **secret key** (hex); verify before processing | Webhooks guide |
+| Webhook source IPs | `52.31.139.75`, `52.49.173.169`, `52.214.14.220` — same for test and live; anything else is counterfeit | Webhooks guide |
+| Webhook retries | Without a 200 OK: live retries every 3 minutes for the first 4 tries, then hourly for 72 hours; test retries hourly for 10 hours; 30 s timeout per attempt. Return 200 fast, do work after | Webhooks guide |
+| Webhook events we use | `charge.success`; `refund.pending`, `refund.processing`, `refund.processed`, `refund.failed` (failed = amount credited back to our balance). Everything else is acknowledged and ignored | Webhooks guide |
+| Refund states | Pending (amount deducted from our next payout; transaction → Reversal pending) → Processing → Processed (transaction → Reversed) or Failed (transaction back to Success, amount returned to payout) | Paystack support article |
 | Currencies | **NGN only on our merchant account today**; USD needs Paystack to enable it (PA-5). USD goes through Flutterwave meanwhile | CEO, 26 Oct 2026 |
 
 ## 3. Assets
@@ -162,13 +166,13 @@ Every PR carries happy-path, failure and security-negative tests from the table 
 
 | ID | Risk | Plan |
 |---|---|---|
-| R-1 | Paystack API facts are now confirmed from the CEO's captures of the API reference, **except the webhook signature header/algorithm, source IPs and retry schedule** (the Webhooks guide page did not upload) | Confirm with a test-mode initialise → pay → webhook → verify on staging before the adapter merges: a real test webhook must pass the HMAC check and a one-byte change must fail it |
+| R-1 | Paystack facts now come from Paystack's own docs (captured by the CEO), not a live read by us | Still run one test-mode initialise → pay → webhook → verify on staging before the adapter merges: a real test webhook must pass the HMAC check and a one-byte change must fail it |
 | R-2 | Flutterwave USD hosted checkout is not explicitly documented | Test a USD payment in Flutterwave test mode; until it works, USD is offered only through gateways where it is proven (PY-17 setting stays off) |
 | R-3 | Flutterwave `amount` unit and `phone_number`/`phonenumber` naming differ between doc pages | Amounts parsed as exact decimal text and cross-checked in the test-mode run; phone not sent (not required) |
 | R-4 | Neither gateway signs a timestamp, so no replay window (CLAUDE.md §5 asks for one) | Accepted: dedupe + verify-is-truth + exactly-once make replays harmless; revisit if a gateway adds signed timestamps |
-| R-5 | Paystack source-IP filter depends on a Cloudflare WAF rule the CEO adds | Listed in the rollout steps; the app is safe without it (PY-7/PY-8), the rule only cuts noise |
+| R-5 | Paystack source-IP filter (3 published IPs, §2) depends on a Cloudflare WAF rule the CEO adds | Listed in the rollout steps; the app is safe without it (PY-7/PY-8), the rule only cuts noise |
 | R-6 | Domain VAT treatment still awaits the accountant (CR-7) | Tax is data (CD-28); ledger posts whatever the invoice carries |
-| R-7 | Paystack refunds are asynchronous and can stop in `needs-attention` | Refund state follows the gateway (queued → processed/failed/needs-attention); a credit note is issued when the refund is approved, the ledger posts the payout only when the gateway reports it processed; `needs-attention` alerts Billing |
+| R-7 | Paystack refunds are asynchronous (pending → processing → processed/failed) and can stop in `needs-attention` | Refund state follows the gateway and the `refund.*` webhooks (each one still confirmed by fetching the refund); a credit note is issued when the refund is approved, the ledger posts the payout only when the gateway reports it processed; `needs-attention` alerts Billing |
 
 ## 9. CEO actions
 
@@ -177,7 +181,7 @@ Every PR carries happy-path, failure and security-negative tests from the table 
 | PA-1 | Paystack: test mode secret key; set the test webhook URL to `https://cloud-staging.paxofi.com/webhooks/paystack` | Before step 4 is deployed |
 | PA-2 | Flutterwave: test mode secret key; generate a long random secret hash (I will give a one-line command), set it and the webhook URL `…/webhooks/flutterwave` in the dashboard; enable webhook retries | Before step 4 is deployed |
 | PA-3 | Enter both under Admin → API providers → Payment gateways (never in chat) | After step 3 is deployed |
-| PA-4 | Cloudflare WAF rule: `/webhooks/paystack` only from Paystack's published IPs | Before production |
+| PA-4 | Cloudflare WAF rule: `/webhooks/paystack` only from `52.31.139.75`, `52.49.173.169`, `52.214.14.220` (staging and production) | Before production |
 | PA-5 | Ask Paystack to enable USD collection (account is NGN-only today); Paystack USD stays off in PY-17 until confirmed | Before Paystack USD is switched on |
 
 ## 10. Review log
@@ -185,7 +189,7 @@ Every PR carries happy-path, failure and security-negative tests from the table 
 | Date | Change | By |
 |---|---|---|
 | 2026-10-26 | Baseline, written before any payment or ledger code. Flutterwave facts checked against official docs; Paystack facts from SRS §6.4 (R-1). | Claude (security engineering) |
-| 2026-10-26 | Paystack facts confirmed from CEO captures of the API reference (all but the webhook signature, R-1 narrowed); Paystack NGN-only (PA-5); refunds async (R-7); dedicated virtual accounts recorded as future scope (§11). | Claude (security engineering) |
+| 2026-10-26 | Paystack facts confirmed from CEO captures of the API reference and Webhooks guide (signature, source IPs, retries, refund events); Paystack NGN-only (PA-5); refunds async (R-7); dedicated virtual accounts recorded as future scope (§11). | Claude (security engineering) |
 
 ## 11. Future scope: dedicated virtual accounts (not MVP)
 
