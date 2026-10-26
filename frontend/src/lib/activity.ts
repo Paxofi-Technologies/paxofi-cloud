@@ -132,7 +132,7 @@ export function formatWhen(iso: string): string {
   return `${get('day')} ${get('month')} ${get('year')}, ${get('hour')}:${get('minute')} WAT`;
 }
 
-function countryName(code: string): string {
+export function countryName(code: string): string {
   try {
     return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code;
   } catch {

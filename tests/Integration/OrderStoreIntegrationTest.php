@@ -115,6 +115,22 @@ final class OrderStoreIntegrationTest extends IntegrationTestCase
         self::assertTrue($this->ledger->verify()->ok());
     }
 
+    public function testReadsTheInvoiceWithItsBillingSnapshot(): void
+    {
+        $this->orders->place(self::order('key-0000000000000001'));
+        $id = $this->orders->forAccount(self::ALICE, 1, 0)[0]['id'];
+
+        $invoice = $this->orders->invoiceForOrder(self::ALICE, $id);
+        self::assertNotNull($invoice);
+        self::assertSame('PXC-2026-000001', $invoice['number']);
+        self::assertSame('PXO-2026-000001', $invoice['order_number']);
+        self::assertSame('unpaid', $invoice['status']);
+        self::assertSame([1_650_000, 123_750, 1_773_750], [$invoice['subtotal'], $invoice['tax'], $invoice['total']]);
+        self::assertSame(['Alice Test', null, '1 Test Street', 'Ikeja', 'Lagos', 'NG'], [$invoice['bill_to']['name'], $invoice['bill_to']['company'], $invoice['bill_to']['line1'], $invoice['bill_to']['city'], $invoice['bill_to']['region'], $invoice['bill_to']['country']]);
+        self::assertSame([['description' => 'Domain registration: paxofi-test.com (1 year)', 'amount' => 1_650_000, 'tax' => 123_750, 'total' => 1_773_750]], $invoice['lines']);
+        self::assertNull($this->orders->invoiceForOrder(self::BOB, $id), 'another account cannot read the invoice');
+    }
+
     public function testAnotherAccountCannotReadTheOrder(): void
     {
         $this->orders->place(self::order('key-0000000000000001'));

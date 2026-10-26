@@ -101,6 +101,7 @@ final class HttpProvider implements Provider
             $orders = static fn (): OrdersController => Resolve::get($c, OrdersController::class);
             $router->get('/api/v1/orders', static fn (HttpRequest $r): HttpResponse => $orders()->list($r));
             $router->get('/api/v1/orders/detail', static fn (HttpRequest $r): HttpResponse => $orders()->detail($r));
+            $router->get('/api/v1/orders/invoice', static fn (HttpRequest $r): HttpResponse => $orders()->invoice($r));
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('GET', '/api/v1/catalogue', CatalogueController::class, $dispatcher);
             $router->controller('GET', '/api/v1/domains/search', DomainSearchController::class, $dispatcher);
