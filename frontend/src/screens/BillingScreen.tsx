@@ -1,7 +1,8 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Card, TextField } from '../components';
+import { Alert, Badge, Button, Card, Modal, TextField } from '../components';
 import { fetchOrders, ORDER_STATUS_LABELS, type Order } from '../lib/checkout';
 import { formatMoney } from '../lib/money';
+import { InvoiceView } from './InvoiceView';
 import { BILLING_FIELDS, EMPTY_DETAILS, fetchBilling, formatRate, saveBilling, type BillingDetails, type BillingField, type BillingState } from '../lib/billing';
 
 export interface BillingScreenProps {
@@ -164,6 +165,7 @@ export function BillingScreen({ csrfToken, fetchImpl }: BillingScreenProps) {
 function OrdersCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<Order | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -199,6 +201,9 @@ function OrdersCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
                 <th scope="col" className="pc-num">
                   Total
                 </th>
+                <th scope="col">
+                  <span className="pc-visually-hidden">Invoice</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -214,12 +219,20 @@ function OrdersCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
                   </td>
                   <td>{o.invoiceNumber}</td>
                   <td className="pc-num">{formatMoney({ minor: o.total, currency: o.currency })}</td>
+                  <td>
+                    <Button variant="secondary" onClick={() => setViewing(o)} aria-haspopup="dialog" aria-label={`View invoice ${o.invoiceNumber}`}>
+                      View invoice
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <Modal open={viewing !== null} title={viewing ? `Invoice ${viewing.invoiceNumber}` : 'Invoice'} size="lg" onClose={() => setViewing(null)}>
+        {viewing && <InvoiceView key={viewing.id} orderId={viewing.id} fetchImpl={fetchImpl} />}
+      </Modal>
     </Card>
   );
 }

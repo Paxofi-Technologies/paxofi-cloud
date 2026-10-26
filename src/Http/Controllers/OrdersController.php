@@ -15,7 +15,7 @@ use PaxofiCloud\Http\RequestId;
 
 /**
  * The customer's orders (ORD-004; CD-26): GET /api/v1/orders?page= and
- * GET /api/v1/orders/detail?id=. Scoped by the session's account in SQL;
+ * GET /api/v1/orders/detail?id= and GET /api/v1/orders/invoice?id=. Scoped by the session's account in SQL;
  * another account's ID is 404. Lines show the snapshot, never today's price.
  */
 final readonly class OrdersController
@@ -52,6 +52,22 @@ final readonly class OrdersController
         }
 
         return self::json(['order' => $order]);
+    }
+
+    /** GET /api/v1/orders/invoice?id=<order id>: the invoice for one of the session account's orders (INV-001). */
+    public function invoice(HttpRequest $request): HttpResponse
+    {
+        $session = Authenticated::session($request, $this->sessions, write: false);
+        if ($session instanceof HttpResponse) {
+            return $session;
+        }
+        $id = $request->query()['id'] ?? null;
+        $invoice = is_string($id) && preg_match('/^[a-f0-9]{32}$/', $id) === 1 ? $this->orders->invoiceForOrder($session->accountId, $id) : null;
+        if ($invoice === null) {
+            return ProblemDetails::response(404, 'invoice_not_found', RequestId::of($request));
+        }
+
+        return self::json(['invoice' => $invoice]);
     }
 
     /** @param array<string, mixed> $body */

@@ -52,6 +52,37 @@ final class InMemoryOrderStore implements OrderStore
         return $order === null || $order->accountId !== $accountId ? null : $this->row($order);
     }
 
+    public function invoiceForOrder(string $accountId, string $orderId): ?array
+    {
+        $o = $this->orders[$orderId] ?? null;
+        if ($o === null || $o->accountId !== $accountId) {
+            return null;
+        }
+        $b = $o->billTo;
+
+        return [
+            'number' => $this->numbers[$orderId]['invoice_number'],
+            'status' => 'unpaid',
+            'currency' => $o->currency->value,
+            'subtotal' => $o->subtotalMinor(),
+            'tax' => $o->taxMinor(),
+            'total' => $o->subtotalMinor() + $o->taxMinor(),
+            'tax_name' => $o->tax->name,
+            'tax_rate_bp' => $o->tax->rate->value,
+            'tax_country' => $o->tax->country,
+            'issued_at' => $o->placedAt->format(\DATE_ATOM),
+            'due_at' => $o->placedAt->format(\DATE_ATOM),
+            'expires_at' => $o->expiresAt->format(\DATE_ATOM),
+            'order_id' => $o->orderId,
+            'order_number' => $this->numbers[$orderId]['order_number'],
+            'bill_to' => [
+                'name' => $b->fullName, 'company' => $b->company, 'line1' => $b->addressLine1, 'line2' => $b->addressLine2, 'city' => $b->city,
+                'region' => $b->region, 'postcode' => $b->postcode, 'country' => $b->country, 'phone' => $b->phone, 'tin' => $b->tin,
+            ],
+            'lines' => array_map(static fn (NewOrderLine $l): array => ['description' => 'Domain registration: ' . $l->domain . ' (1 year)', 'amount' => $l->priceMinor, 'tax' => $l->taxMinor, 'total' => $l->totalMinor()], $o->lines),
+        ];
+    }
+
     public function forAccount(string $accountId, int $limit, int $offset): array
     {
         $rows = array_values(array_map($this->row(...), array_filter($this->orders, static fn (NewOrder $o): bool => $o->accountId === $accountId)));

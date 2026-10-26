@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { formatRate, readBilling } from '../lib/billing';
@@ -91,5 +91,60 @@ describe('billing helpers', () => {
 
   it('formats basis points', () => {
     expect([formatRate(750), formatRate(0), formatRate(1000), formatRate(1234)]).toEqual(['7.5%', '0%', '10%', '12.34%']);
+  });
+
+  it('opens the invoice for an order from the orders list (INV-001)', async () => {
+    const user = userEvent.setup();
+    const orderId = 'a'.repeat(32);
+    const fetchImpl = vi.fn((path: string) => {
+      if (path.startsWith('/api/v1/orders?')) {
+        return Promise.resolve(
+          json(200, {
+            orders: [{ id: orderId, number: 'PXO-2026-000001', status: 'pending_payment', currency: 'NGN', subtotal: 1650000, tax: 123750, total: 1773750, tax_name: 'VAT', tax_rate_bp: 750, placed_at: '2026-10-25T12:00:00+00:00', invoice_number: 'PXC-2026-000001', invoice_status: 'unpaid', lines: [{ domain: 'paxofi-test.com', years: 1, price: 1650000, tax: 123750, total: 1773750, renewal_price: 1815000 }] }],
+            has_more: false,
+          }),
+        );
+      }
+      if (path === `/api/v1/orders/invoice?id=${orderId}`) {
+        return Promise.resolve(
+          json(200, {
+            invoice: {
+              number: 'PXC-2026-000001', status: 'unpaid', currency: 'NGN', subtotal: 1650000, tax: 123750, total: 1773750, tax_name: 'VAT', tax_rate_bp: 750, tax_country: 'NG',
+              issued_at: '2026-10-25T12:00:00+00:00', due_at: '2026-10-25T12:00:00+00:00', expires_at: '2026-10-28T12:00:00+00:00', order_id: orderId, order_number: 'PXO-2026-000001',
+              bill_to: { ...{ name: 'Ada Test', company: null, line1: '1 Test Street', line2: null, city: 'Ikeja', region: 'Lagos', postcode: null, country: 'NG', phone: '+2348000000000', tin: null } },
+              lines: [{ description: 'Domain registration: paxofi-test.com (1 year)', amount: 1650000, tax: 123750, total: 1773750 }],
+            },
+          }),
+        );
+      }
+      return Promise.resolve(json(200, { details: SAVED, currency: 'NGN', currency_locked: true, tax: { name: 'VAT', rate_bp: 750 }, countries: COUNTRIES }));
+    }) as unknown as typeof fetch;
+
+    render(<BillingScreen csrfToken="csrf-1" fetchImpl={fetchImpl} />);
+    await user.click(await screen.findByRole('button', { name: 'View invoice PXC-2026-000001' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const invoice = await within(dialog).findByRole('article', { name: 'Invoice PXC-2026-000001' });
+    expect(invoice).toHaveTextContent('Ada Test');
+    expect(invoice).toHaveTextContent('Domain registration: paxofi-test.com (1 year)');
+    expect(invoice).toHaveTextContent('VAT (7.5%, Nigeria)');
+    expect(within(invoice).getByText('Unpaid')).toBeInTheDocument();
+    expect(within(invoice).getByRole('button', { name: 'Print or save as PDF' })).toBeInTheDocument();
+  });
+
+  it('says so when the invoice cannot be found', async () => {
+    const user = userEvent.setup();
+    const orderId = 'b'.repeat(32);
+    const fetchImpl = vi.fn((path: string) => {
+      if (path.startsWith('/api/v1/orders?')) {
+        return Promise.resolve(json(200, { orders: [{ id: orderId, number: 'PXO-2026-000002', status: 'pending_payment', currency: 'USD', subtotal: 1000, tax: 0, total: 1000, tax_name: 'Tax', tax_rate_bp: 0, placed_at: '2026-10-25T12:00:00+00:00', invoice_number: 'PXC-2026-000002', invoice_status: 'unpaid', lines: [] }], has_more: false }));
+      }
+      if (path.startsWith('/api/v1/orders/invoice')) return Promise.resolve(json(404, { code: 'invoice_not_found' }));
+      return Promise.resolve(json(200, { details: SAVED, currency: 'USD', currency_locked: true, tax: null, countries: COUNTRIES }));
+    }) as unknown as typeof fetch;
+
+    render(<BillingScreen csrfToken="csrf-1" fetchImpl={fetchImpl} />);
+    await user.click(await screen.findByRole('button', { name: 'View invoice PXC-2026-000002' }));
+    expect(await within(await screen.findByRole('dialog')).findByText('This invoice was not found.')).toBeInTheDocument();
   });
 });

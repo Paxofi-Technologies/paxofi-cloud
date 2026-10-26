@@ -146,3 +146,21 @@
 .pc-totals dd { margin: 0; font-variant-numeric: tabular-nums; }
 .pc-totals__total { border-top: 1px solid var(--pc-semantic-border-default); padding-top: var(--pc-space-2); font-weight: var(--pc-font-weight-semibold); }
 .pc-totals__total dt { color: var(--pc-semantic-text-primary); }
+
+/* Invoice (INV-001): readable on screen, clean when printed or saved as PDF. */
+.pc-invoice { display: grid; gap: var(--pc-space-5); }
+.pc-invoice__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--pc-space-4); }
+.pc-invoice__brand { margin: 0; font-size: var(--pc-font-size-lg); font-weight: 700; color: var(--pc-color-navy, #0B1F3A); }
+.pc-invoice__meta h3 { margin: 0 0 var(--pc-space-2); }
+.pc-invoice__meta dl, .pc-invoice__totals { display: grid; grid-template-columns: auto auto; gap: var(--pc-space-1) var(--pc-space-4); margin: var(--pc-space-2) 0 0; }
+.pc-invoice__meta dd, .pc-invoice__totals dd { margin: 0; text-align: right; }
+.pc-invoice__billto h4 { margin: 0 0 var(--pc-space-1); }
+.pc-invoice__billto p { margin: 0; }
+.pc-invoice__totals { justify-content: end; }
+.pc-invoice__actions { display: flex; justify-content: flex-end; }
+@media print {
+  body * { visibility: hidden; }
+  .pc-invoice, .pc-invoice * { visibility: visible; }
+  .pc-invoice { position: absolute; inset: 0; padding: 24px; background: #fff; color: #000; }
+  .pc-invoice__actions { display: none; }
+}

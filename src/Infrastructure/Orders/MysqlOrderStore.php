@@ -27,6 +27,7 @@ use PaxofiCloud\Infrastructure\Persistence\Row;
  *
  * @phpstan-import-type OrderRow from OrderStore
  * @phpstan-import-type OrderLineRow from OrderStore
+ * @phpstan-import-type InvoiceRow from OrderStore
  */
 final readonly class MysqlOrderStore implements OrderStore
 {
@@ -196,6 +197,64 @@ final readonly class MysqlOrderStore implements OrderStore
             self::SELECT . ' WHERE o.account_id = :account AND o.id = :id',
             ['account' => $accountId, 'id' => $orderId],
         ))[0] ?? null;
+    }
+
+    public function invoiceForOrder(string $accountId, string $orderId): ?array
+    {
+        $row = $this->repository->fetchAll(
+            'SELECT i.id, i.number, i.status, i.currency, i.subtotal_minor, i.tax_minor, i.total_minor, i.tax_name, i.tax_rate_bp, i.tax_country,
+                    i.bill_to_name, i.bill_to_company, i.bill_to_line1, i.bill_to_line2, i.bill_to_city, i.bill_to_region, i.bill_to_postcode,
+                    i.bill_to_country, i.bill_to_phone, i.bill_to_tin, i.issued_at, i.due_at, i.expires_at, o.id AS order_id, o.number AS order_number
+             FROM invoices i JOIN orders o ON o.id = i.order_id AND o.account_id = i.account_id
+             WHERE i.account_id = :account AND i.order_id = :order',
+            ['account' => $accountId, 'order' => $orderId],
+        )[0] ?? null;
+        if ($row === null) {
+            return null;
+        }
+        $lines = [];
+        foreach ($this->repository->fetchAll(
+            'SELECT description, amount_minor, tax_minor, total_minor FROM invoice_lines WHERE invoice_id = :id ORDER BY line_no',
+            ['id' => Row::string($row, 'id')],
+        ) as $line) {
+            $lines[] = [
+                'description' => Row::string($line, 'description'),
+                'amount' => Row::int($line, 'amount_minor'),
+                'tax' => Row::int($line, 'tax_minor'),
+                'total' => Row::int($line, 'total_minor'),
+            ];
+        }
+        $optional = static fn (string $key): ?string => is_string($row[$key] ?? null) && $row[$key] !== '' ? $row[$key] : null;
+
+        return [
+            'number' => Row::string($row, 'number'),
+            'status' => Row::string($row, 'status'),
+            'currency' => Row::string($row, 'currency'),
+            'subtotal' => Row::int($row, 'subtotal_minor'),
+            'tax' => Row::int($row, 'tax_minor'),
+            'total' => Row::int($row, 'total_minor'),
+            'tax_name' => Row::string($row, 'tax_name'),
+            'tax_rate_bp' => Row::int($row, 'tax_rate_bp'),
+            'tax_country' => Row::string($row, 'tax_country'),
+            'issued_at' => self::atom(Row::string($row, 'issued_at')),
+            'due_at' => self::atom(Row::string($row, 'due_at')),
+            'expires_at' => self::atom(Row::string($row, 'expires_at')),
+            'order_id' => Row::string($row, 'order_id'),
+            'order_number' => Row::string($row, 'order_number'),
+            'bill_to' => [
+                'name' => Row::string($row, 'bill_to_name'),
+                'company' => $optional('bill_to_company'),
+                'line1' => Row::string($row, 'bill_to_line1'),
+                'line2' => $optional('bill_to_line2'),
+                'city' => Row::string($row, 'bill_to_city'),
+                'region' => Row::string($row, 'bill_to_region'),
+                'postcode' => $optional('bill_to_postcode'),
+                'country' => Row::string($row, 'bill_to_country'),
+                'phone' => Row::string($row, 'bill_to_phone'),
+                'tin' => $optional('bill_to_tin'),
+            ],
+            'lines' => $lines,
+        ];
     }
 
     public function forAccount(string $accountId, int $limit, int $offset): array
