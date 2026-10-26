@@ -15,7 +15,7 @@ final readonly class AuditLogQuery
     public const int PAGE_SIZE = 50;
 
     /** Event-type groups staff may filter by: the prefix before the first dot. */
-    public const array GROUPS = ['auth', 'identity', 'mfa', 'staff', 'provider_credential', 'provider_prices', 'domain_pricing', 'registrar', 'audit', 'billing', 'order'];
+    public const array GROUPS = ['auth', 'identity', 'mfa', 'staff', 'provider_credential', 'provider_prices', 'domain_pricing', 'registrar', 'audit', 'billing', 'order', 'tax_rate'];
 
     private function __construct(
         public ?int $beforeSeq,

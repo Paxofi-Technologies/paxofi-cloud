@@ -909,6 +909,7 @@ describe('Admin navigation', () => {
       '/api-providers/server-providers',
       '/domain-extensions',
       '/domain-costs',
+      '/tax-rates',
     ]);
     expect(adminPageForPath('/domain-extensions', ['catalogue.view'])).toBe('domain-extensions');
     expect(adminPageForPath('/domain-extensions', ['ticket.reply'])).toBe('overview');

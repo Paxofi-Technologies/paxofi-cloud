@@ -93,6 +93,9 @@ use PaxofiCloud\Infrastructure\Registrar\MysqlPriceCheckStore;
 use PaxofiCloud\Application\Registrar\SpaceshipPriceCheckAdmin;
 use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainExtensionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminTaxRatesController;
+use PaxofiCloud\Application\Billing\TaxRatesAdmin;
+use PaxofiCloud\Infrastructure\Billing\MysqlTaxRateStore;
 use PaxofiCloud\Application\Extensions\ExtensionsAdmin;
 use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\FxRateStore;
@@ -480,6 +483,20 @@ final class IdentityProvider implements Provider
                 new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
                 new MysqlExtensionSettingsStore($connection, $repository),
                 Resolve::get($c, FxRateStore::class),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                static fn (string $staffId, string $code): bool => $secondFactor !== null && $secondFactor->verifyCode($staffId, $code),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            ));
+        });
+
+        // Tax rates (CD-28): a change adds a row from now or a future date; needs catalogue.manage and a fresh code.
+        $container->singleton(AdminTaxRatesController::class, static function (Container $c): AdminTaxRatesController {
+            $secondFactor = self::staffSecondFactor($c);
+
+            return new AdminTaxRatesController(new TaxRatesAdmin(
+                Resolve::get($c, StaffAuthorizer::class),
+                new MysqlTaxRateStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 static fn (string $staffId, string $code): bool => $secondFactor !== null && $secondFactor->verifyCode($staffId, $code),
                 new SystemClock(),

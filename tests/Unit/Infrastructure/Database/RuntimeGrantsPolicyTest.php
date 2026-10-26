@@ -51,6 +51,6 @@ final class RuntimeGrantsPolicyTest extends TestCase
         foreach (['order_lines', 'invoice_lines'] as $table) {
             self::assertSame(['SELECT', 'INSERT'], RuntimeGrants::POLICY[$table], $table);
         }
-        self::assertSame(['SELECT'], RuntimeGrants::POLICY['tax_rates']);
+        self::assertSame(['SELECT', 'INSERT'], RuntimeGrants::POLICY['tax_rates'], 'rates are only added, never edited or deleted (CD-28)');
     }
 }

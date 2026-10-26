@@ -93,7 +93,9 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         self::assertDenied($app, 'UPDATE invoices SET total_minor = 1');
         self::assertDenied($app, 'DELETE FROM invoice_lines');
         self::assertDenied($app, "UPDATE tax_rates SET rate_bp = 0 WHERE country = 'NG'");
-        self::assertDenied($app, "INSERT INTO tax_rates (country, tax_name, rate_bp, effective_from, created_by) VALUES ('NG', 'VAT', 0, NOW(6), 'x')");
+        // The tax editor adds rows (CD-28); history can never be rewritten or removed.
+        $app->exec("INSERT INTO tax_rates (country, tax_name, rate_bp, effective_from, created_by) VALUES ('NG', 'VAT', 800, '2099-01-01 00:00:00', 'grants-test')");
+        self::assertDenied($app, "DELETE FROM tax_rates WHERE created_by = 'grants-test'");
 
         // Ordinary tables keep full row access.
         self::scalar($app, 'SELECT COUNT(*) FROM identities');

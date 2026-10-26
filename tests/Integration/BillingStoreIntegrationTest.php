@@ -7,7 +7,10 @@ namespace PaxofiCloud\Tests\Integration;
 use Paxofi\Core\Contracts\Connection;
 use Paxofi\Core\Contracts\Repository;
 use PaxofiCloud\Application\Billing\BillingDetails;
+use PaxofiCloud\Application\Contracts\DuplicateTaxRate;
 use PaxofiCloud\Bootstrap\AppFactory;
+use PaxofiCloud\Domain\Billing\TaxRate;
+use PaxofiCloud\Domain\Money\BasisPoints;
 use PaxofiCloud\Domain\Money\Currency;
 use PaxofiCloud\Infrastructure\Billing\MysqlBillingStore;
 use PaxofiCloud\Infrastructure\Billing\MysqlTaxRateStore;
@@ -41,7 +44,7 @@ final class BillingStoreIntegrationTest extends IntegrationTestCase
             ->execute([self::OWNER, hash('sha256', 'owner@example.test')]);
         $pdo->prepare("INSERT INTO account_members (account_id, identity_id, role) VALUES (?, ?, 'owner')")->execute([self::ACCOUNT, self::OWNER]);
         $this->store = new MysqlBillingStore($connection, $repository);
-        $this->taxes = new MysqlTaxRateStore($repository);
+        $this->taxes = new MysqlTaxRateStore($connection, $repository);
     }
 
     private static function details(string $country): BillingDetails
@@ -101,8 +104,24 @@ final class BillingStoreIntegrationTest extends IntegrationTestCase
         self::assertSame(1000, $this->taxes->inForce('NG', new \DateTimeImmutable('2027-01-02 00:00:00 UTC'))->rate->value);
     }
 
+    public function testTheEditorAddsRowsKeepsHistoryAndRefusesADuplicateStart(): void
+    {
+        $from = new \DateTimeImmutable('2026-12-01 00:00:00 UTC');
+        $this->taxes->add(new TaxRate('NG', 'VAT', new BasisPoints(500)), $from, 'c0000000000000000000000000000000');
+
+        self::assertSame(750, $this->taxes->inForce('NG', $from->modify('-1 second'))->rate->value);
+        self::assertSame(500, $this->taxes->inForce('NG', $from)->rate->value);
+        $history = $this->taxes->history();
+        self::assertCount(4, $history);
+        self::assertSame(['NG', 500, 'c0000000000000000000000000000000'], [$history[0]['country'], $history[0]['rate_bp'], $history[0]['created_by']]);
+        self::assertEquals($from, $history[0]['effective_from']);
+
+        $this->expectException(DuplicateTaxRate::class);
+        $this->taxes->add(new TaxRate('NG', 'VAT', new BasisPoints(600)), $from, 'c0000000000000000000000000000000');
+    }
+
     /** @return array{string, string, int} */
-    private static function row(\PaxofiCloud\Domain\Billing\TaxRate $rate): array
+    private static function row(TaxRate $rate): array
     {
         return [$rate->country, $rate->name, $rate->rate->value];
     }
