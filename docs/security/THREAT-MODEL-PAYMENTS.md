@@ -36,16 +36,22 @@ Out of scope: saved cards and renewal auto-charge (PAY-010, Sprint 8), provision
 | Amounts | Docs show `amount` as a number in the currency's major unit (e.g. `100`, `app_fee` `1.4`); we parse it as exact decimal text, never a float (R-3) |
 | Currencies | NGN default; USD hosted checkout is **not explicitly documented** (R-2) |
 
-**Paystack** — the docs site refuses automated reads from our build environment (HTTP 403), so the facts below are the ones in the signed SRS §6.4 and must be confirmed in test mode before the adapter merges (R-1):
+**Paystack** — the docs site refuses automated reads from our build environment (HTTP 403). The CEO captured the API reference pages (Introduction, Authentication, Rate limits, Pagination, Errors, Transactions, Customers, Dedicated Virtual Accounts, Settlements, Refunds, Webhook Events, Verification) on 26 Oct 2026; those confirm everything below except the webhook signature row, which still comes from the signed SRS §6.4 (R-1):
 
-| Fact | Value (SRS §6.4) |
-|---|---|
-| Base URL and auth | `https://api.paystack.co`, header `Authorization: Bearer <secret key>` |
-| Hosted checkout | `POST /transaction/initialize` (email, amount in kobo/cents, currency, reference, callback_url) → `data.authorization_url` |
-| Verify | `GET /transaction/verify/:reference` → status, amount (subunit), currency, reference, fees, channel |
-| Webhook | Header `x-paystack-signature` = hex HMAC-SHA512 of the **raw body** keyed with the **secret key**; Paystack publishes source IPs for edge filtering |
-| Refund | `POST /refund` |
-| Currencies | NGN; USD only if enabled on the merchant account |
+| Fact | Value | Source |
+|---|---|---|
+| Base URL and auth | `https://api.paystack.co` for both modes; header `Authorization: Bearer <secret key>`; HTTPS only, TLS must be verified; 401 for a missing or wrong key | API docs |
+| Test vs live | Keys prefixed `sk_test_` / `pk_test_` and `sk_live_` / `pk_live_`; the key alone decides the mode, and every transaction says `domain: test` or `live` | API docs |
+| Responses | JSON `{status, message, data, meta}`; errors add `type` (`api_error`, `validation_error`, `processor_error`) and `code`. Verify and charge return **HTTP 200 even when the payment failed** — only `data.status` decides | API docs |
+| Amounts | Integer **subunit** (kobo, cents); minimum NGN 50.00, USD 2.00 | API docs |
+| Hosted checkout | `POST /transaction/initialize` (email, amount, currency, reference, callback_url, channels, metadata) → `data.authorization_url`, `access_code`, `reference`. Reference allows only letters, digits, `-`, `.`, `=` (our `PXC-<ULID>` fits) | API docs |
+| Verify | `GET /transaction/verify/:reference` → `data.id` (unsigned 64-bit, stored as text), `domain`, `status` (`success`, `failed`, `abandoned`, …), `reference`, `amount`, `currency`, `paid_at`, `gateway_response` | API docs |
+| Reconciliation | `GET /transaction?from&to` (offset or cursor pages, ≤ 1000 per page, default 50); `GET /settlement` and settlement transactions for payouts to our bank | API docs |
+| Missed webhooks | `GET /integration/webhooks/events` (status Delivered/Pending/Failed, by transaction id) lets the reconciliation job find failed deliveries; resend is **not idempotent** (same event delivered twice) | API docs |
+| Rate limits | Live 600 requests/60 s per endpoint (verify 3,000, initialize 1,200); test 100/60 s; 429 with `x-ratelimit-reset` seconds | API docs |
+| Refund | `POST /refund` {transaction, amount (subunit, ≤ original, default full), currency, customer_note, merchant_note} → **queued** (async); `GET /refund/:id`, `GET /refund?transaction=`; a refund in `needs-attention` needs customer bank details (`/refund/retry_with_customer_details/:id`) | API docs |
+| Webhook | Header `x-paystack-signature` = hex HMAC-SHA512 of the **raw body** keyed with the **secret key**; Paystack publishes source IPs for edge filtering | SRS §6.4 only (R-1) |
+| Currencies | **NGN only on our merchant account today**; USD needs Paystack to enable it (PA-5). USD goes through Flutterwave meanwhile | CEO, 26 Oct 2026 |
 
 ## 3. Assets
 
@@ -156,12 +162,13 @@ Every PR carries happy-path, failure and security-negative tests from the table 
 
 | ID | Risk | Plan |
 |---|---|---|
-| R-1 | Paystack API details come from the signed SRS, not a fresh read of the docs (site blocks automated reads) | Confirm with a test-mode initialise → pay → webhook → verify on staging before the adapter merges; CEO can also open the Paystack docs pages and share the webhook page |
+| R-1 | Paystack API facts are now confirmed from the CEO's captures of the API reference, **except the webhook signature header/algorithm, source IPs and retry schedule** (the Webhooks guide page did not upload) | Confirm with a test-mode initialise → pay → webhook → verify on staging before the adapter merges: a real test webhook must pass the HMAC check and a one-byte change must fail it |
 | R-2 | Flutterwave USD hosted checkout is not explicitly documented | Test a USD payment in Flutterwave test mode; until it works, USD is offered only through gateways where it is proven (PY-17 setting stays off) |
 | R-3 | Flutterwave `amount` unit and `phone_number`/`phonenumber` naming differ between doc pages | Amounts parsed as exact decimal text and cross-checked in the test-mode run; phone not sent (not required) |
 | R-4 | Neither gateway signs a timestamp, so no replay window (CLAUDE.md §5 asks for one) | Accepted: dedupe + verify-is-truth + exactly-once make replays harmless; revisit if a gateway adds signed timestamps |
 | R-5 | Paystack source-IP filter depends on a Cloudflare WAF rule the CEO adds | Listed in the rollout steps; the app is safe without it (PY-7/PY-8), the rule only cuts noise |
 | R-6 | Domain VAT treatment still awaits the accountant (CR-7) | Tax is data (CD-28); ledger posts whatever the invoice carries |
+| R-7 | Paystack refunds are asynchronous and can stop in `needs-attention` | Refund state follows the gateway (queued → processed/failed/needs-attention); a credit note is issued when the refund is approved, the ledger posts the payout only when the gateway reports it processed; `needs-attention` alerts Billing |
 
 ## 9. CEO actions
 
@@ -171,10 +178,15 @@ Every PR carries happy-path, failure and security-negative tests from the table 
 | PA-2 | Flutterwave: test mode secret key; generate a long random secret hash (I will give a one-line command), set it and the webhook URL `…/webhooks/flutterwave` in the dashboard; enable webhook retries | Before step 4 is deployed |
 | PA-3 | Enter both under Admin → API providers → Payment gateways (never in chat) | After step 3 is deployed |
 | PA-4 | Cloudflare WAF rule: `/webhooks/paystack` only from Paystack's published IPs | Before production |
-| PA-5 | Confirm with Paystack whether USD collection is enabled on the merchant account | Before USD is switched on |
+| PA-5 | Ask Paystack to enable USD collection (account is NGN-only today); Paystack USD stays off in PY-17 until confirmed | Before Paystack USD is switched on |
 
 ## 10. Review log
 
 | Date | Change | By |
 |---|---|---|
 | 2026-10-26 | Baseline, written before any payment or ledger code. Flutterwave facts checked against official docs; Paystack facts from SRS §6.4 (R-1). | Claude (security engineering) |
+| 2026-10-26 | Paystack facts confirmed from CEO captures of the API reference (all but the webhook signature, R-1 narrowed); Paystack NGN-only (PA-5); refunds async (R-7); dedicated virtual accounts recorded as future scope (§11). | Claude (security engineering) |
+
+## 11. Future scope: dedicated virtual accounts (not MVP)
+
+A bank account number per customer, shown in the dashboard, that the customer can pay into directly at any time. Paystack offers it (`/dedicated_account`, `/dedicated_account/assign`; NGN only; banks such as Wema or Titan). CBN rules mean every provider (Paystack, Flutterwave, Monnify and others) needs the customer's **BVN or NIN** and validated names and phone first; Paystack's customer validation is asynchronous and reports its result by webhook. BVN and NIN are sensitive personal data under the NDPA 2023, so this feature needs its own threat model before any code: whether we store BVN at all (preferred: pass it straight to the provider and keep only the provider's customer code and validation result), consent and retention, who may see it, and how money arriving in a virtual account maps to invoices and credit (the PY-8 verify rule and the ledger apply unchanged).
