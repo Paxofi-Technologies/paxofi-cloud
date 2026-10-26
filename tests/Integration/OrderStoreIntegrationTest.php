@@ -13,10 +13,12 @@ use PaxofiCloud\Application\Checkout\NewOrderLine;
 use PaxofiCloud\Application\Contracts\DuplicateIdempotencyKey;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Domain\Billing\TaxRate;
+use PaxofiCloud\Domain\Ledger\LedgerAccount;
 use PaxofiCloud\Domain\Money\BasisPoints;
 use PaxofiCloud\Domain\Money\Currency;
 use PaxofiCloud\Infrastructure\Billing\MysqlBillingStore;
 use PaxofiCloud\Infrastructure\Container\Resolve;
+use PaxofiCloud\Infrastructure\Ledger\MysqlLedger;
 use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
@@ -32,6 +34,7 @@ final class OrderStoreIntegrationTest extends IntegrationTestCase
 
     private MysqlOrderStore $orders;
     private MysqlBillingStore $billing;
+    private MysqlLedger $ledger;
 
     protected function setUp(): void
     {
@@ -48,7 +51,8 @@ final class OrderStoreIntegrationTest extends IntegrationTestCase
         $pdo->prepare("INSERT INTO identities (id, email, email_lookup, full_name, phone_e164, password_hash, status, terms_version, terms_accepted_at, verified_at)
             VALUES (?, 'alice@example.test', ?, 'Alice', '+2348000000000', '\$argon2id\$v=19\$m=65536,t=4,p=1\$x\$y', 'active', 'v1', NOW(6), NOW(6))")
             ->execute([self::ALICE_ID, hash('sha256', 'alice@example.test')]);
-        $this->orders = new MysqlOrderStore($connection, $repository, Resolve::get($container, TransactionManager::class));
+        $this->ledger = new MysqlLedger($connection, $repository, Resolve::get($container, TransactionManager::class));
+        $this->orders = new MysqlOrderStore($connection, $repository, Resolve::get($container, TransactionManager::class), $this->ledger);
         $this->billing = new MysqlBillingStore($connection, $repository);
         $this->billing->save(self::ALICE, self::details(), Currency::NGN, new \DateTimeImmutable('2026-10-25 11:00:00 UTC'));
     }
@@ -102,6 +106,13 @@ final class OrderStoreIntegrationTest extends IntegrationTestCase
         self::assertSame(1_773_750, $order['total']);
         self::assertSame([['domain' => 'paxofi-test.com', 'years' => 1, 'price' => 1_650_000, 'tax' => 123_750, 'total' => 1_773_750, 'renewal_price' => 1_815_000]], $order['lines']);
         self::assertSame('Alice Test', self::column("SELECT bill_to_name FROM invoices WHERE order_id = '{$order['id']}'"), 'the invoice keeps a billing snapshot');
+
+        // PY-13: each invoice posted its issue entry in the same transaction.
+        self::assertSame(2 * 1_773_750, $this->ledger->balance(LedgerAccount::Receivable, Currency::NGN, self::ALICE));
+        self::assertSame(-2 * 1_650_000, $this->ledger->balance(LedgerAccount::RevenueDomains, Currency::NGN));
+        self::assertSame(-2 * 123_750, $this->ledger->balance(LedgerAccount::TaxPayable, Currency::NGN));
+        self::assertSame(0, $this->ledger->balance(LedgerAccount::Receivable, Currency::NGN, self::BOB));
+        self::assertTrue($this->ledger->verify()->ok());
     }
 
     public function testAnotherAccountCannotReadTheOrder(): void
@@ -126,6 +137,8 @@ final class OrderStoreIntegrationTest extends IntegrationTestCase
         // INV-002: the failed transaction returned its numbers.
         self::assertSame('PXC-2026-000002', $this->orders->place(self::order('key-0000000000000003'))['invoice_number']);
         self::assertEquals(2, self::column('SELECT COUNT(*) FROM invoices'));
+        self::assertEquals(2, self::column('SELECT COUNT(*) FROM journal_entries'), 'the rolled-back order left no ledger entry');
+        self::assertTrue($this->ledger->verify()->ok());
     }
 
     public function testChecksRefuseInconsistentTotals(): void

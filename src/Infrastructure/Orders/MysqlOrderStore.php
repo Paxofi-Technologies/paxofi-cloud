@@ -9,7 +9,9 @@ use Paxofi\Core\Contracts\Repository;
 use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Checkout\NewOrder;
 use PaxofiCloud\Application\Contracts\DuplicateIdempotencyKey;
+use PaxofiCloud\Application\Contracts\Ledger;
 use PaxofiCloud\Application\Contracts\OrderStore;
+use PaxofiCloud\Domain\Ledger\Postings;
 use PaxofiCloud\Domain\Orders\DocumentNumber;
 use PaxofiCloud\Domain\Orders\InvoiceStatus;
 use PaxofiCloud\Domain\Orders\OrderStatus;
@@ -19,8 +21,9 @@ use PaxofiCloud\Infrastructure\Persistence\Row;
  * MySQL orders and invoices (migration 0024; commerce threat model CD-24,
  * CD-26). One transaction writes everything; numbers come from a row-locked
  * per-year sequence, so they are gap-free (INV-002), and the same
- * transaction locks the account's billing currency (CD-21). Reads always
- * filter by account in SQL.
+ * transaction locks the account's billing currency (CD-21) and posts the
+ * invoice's issue entry to the ledger (PY-13), so an invoice never exists
+ * without its receivable. Reads always filter by account in SQL.
  *
  * @phpstan-import-type OrderRow from OrderStore
  * @phpstan-import-type OrderLineRow from OrderStore
@@ -34,7 +37,7 @@ final readonly class MysqlOrderStore implements OrderStore
             i.number AS invoice_number, i.status AS invoice_status
         FROM orders o JOIN invoices i ON i.order_id = o.id AND i.account_id = o.account_id';
 
-    public function __construct(private Connection $connection, private Repository $repository, private TransactionManager $transactions)
+    public function __construct(private Connection $connection, private Repository $repository, private TransactionManager $transactions, private Ledger $ledger)
     {
     }
 
@@ -159,6 +162,15 @@ final readonly class MysqlOrderStore implements OrderStore
                         ],
                     );
                 }
+                $this->ledger->postInCurrentTransaction(Postings::invoiceIssued(
+                    bin2hex(random_bytes(16)),
+                    $order->invoiceId,
+                    $order->accountId,
+                    $order->currency,
+                    $subtotal,
+                    $tax,
+                    $order->placedAt,
+                ));
                 // The first invoice fixes the billing currency (PRC-003).
                 $this->connection->execute(
                     'UPDATE account_billing_details SET currency_locked_at = COALESCE(currency_locked_at, :at) WHERE account_id = :account',
