@@ -32,6 +32,10 @@ final readonly class RuntimeGrants
         'order_lines' => ['SELECT', 'INSERT'],
         'invoices' => ['SELECT', 'INSERT', 'UPDATE (status, status_changed_at)'],
         'invoice_lines' => ['SELECT', 'INSERT'],
+        // Ledger (payments PY-13, LED-002): append-only journal; the chart of accounts is fixed by migration.
+        'ledger_accounts' => ['SELECT'],
+        'journal_entries' => ['SELECT', 'INSERT'],
+        'journal_lines' => ['SELECT', 'INSERT'],
         // Append-only: events can be written and read, never changed or removed (T-39).
         'audit_events' => ['SELECT', 'INSERT'],
         // The single head row only moves forward.

@@ -97,6 +97,17 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         $app->exec("INSERT INTO tax_rates (country, tax_name, rate_bp, effective_from, created_by) VALUES ('NG', 'VAT', 800, '2099-01-01 00:00:00', 'grants-test')");
         self::assertDenied($app, "DELETE FROM tax_rates WHERE created_by = 'grants-test'");
 
+        // The ledger is append-only (PY-13, LED-002): entries and lines are written once; the chart of accounts is read-only.
+        $app->exec("INSERT INTO journal_entries (id, source_key, kind, currency, posted_at) VALUES (REPEAT('a', 32), 'payment:grants-test', 'payment', 'NGN', NOW(6))");
+        $app->exec("INSERT INTO journal_lines (entry_id, line_no, account_code, customer_account_id, debit_minor, credit_minor)
+                    VALUES (REPEAT('a', 32), 1, 'clearing_paystack', NULL, 100, 0), (REPEAT('a', 32), 2, 'receivable', REPEAT('d', 32), 0, 100)");
+        self::assertDenied($app, "UPDATE journal_lines SET debit_minor = 1 WHERE entry_id = REPEAT('a', 32)");
+        self::assertDenied($app, "DELETE FROM journal_lines WHERE entry_id = REPEAT('a', 32)");
+        self::assertDenied($app, "UPDATE journal_entries SET currency = 'USD' WHERE id = REPEAT('a', 32)");
+        self::assertDenied($app, "DELETE FROM journal_entries WHERE id = REPEAT('a', 32)");
+        self::assertDenied($app, "INSERT INTO ledger_accounts (code, name, normal_side, per_customer) VALUES ('owner_drawings', 'X', 'debit', 0)");
+        self::assertDenied($app, "UPDATE ledger_accounts SET normal_side = 'credit' WHERE code = 'receivable'");
+
         // Ordinary tables keep full row access.
         self::scalar($app, 'SELECT COUNT(*) FROM identities');
         $app->exec("DELETE FROM email_outbox WHERE id = 'none'");
