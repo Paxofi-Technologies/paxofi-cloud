@@ -24,7 +24,7 @@ final class ProviderRequestTest extends TestCase
         yield 'encoded slash' => ['/servers/1%2F..'];
         yield 'relative' => ['servers'];
         yield 'empty' => [''];
-        yield 'uppercase or spaces' => ['/Servers/1 2'];
+        yield 'spaces' => ['/servers/1 2'];
     }
 
     #[DataProvider('unsafePaths')]
@@ -39,6 +39,7 @@ final class ProviderRequestTest extends TestCase
     {
         self::assertSame('/servers/42/actions/poweron', ProviderRequest::post('/servers/42/actions/poweron', [])->path);
         self::assertSame('/instances/cb676a46-66fd-4dfb-b839-443f2e6c0b60', ProviderRequest::delete('/instances/cb676a46-66fd-4dfb-b839-443f2e6c0b60')->path);
+        self::assertSame('/transaction/verify/PXC-01JB8Z5X3R2Q4M6N8P0S2T4V6W', ProviderRequest::get('/transaction/verify/PXC-01JB8Z5X3R2Q4M6N8P0S2T4V6W')->path);
     }
 
     public function testDottedSegmentsAreAllowedButNeverTraversal(): void
