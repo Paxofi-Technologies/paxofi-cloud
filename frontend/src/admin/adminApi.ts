@@ -744,3 +744,59 @@ export const revokeOtherStaffSessions = (csrfToken: string, code: string, fetchI
 /** T-58: a staff manager signs another member out on every device. */
 export const endStaffMemberSessions = (csrfToken: string, staffId: string, code: string, fetchImpl: typeof fetch = fetch) =>
   postJson(`${ADMIN_API}/staff/sessions/end`, { staff_id: staffId, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** One rate on the Tax rates page (commerce threat model CD-28). */
+export interface TaxRateEntry {
+  taxName: string;
+  rateBp: number;
+  starts: string;
+}
+
+export interface TaxRates {
+  canManage: boolean;
+  countries: { country: string; countryName: string; current: TaxRateEntry | null; scheduled: TaxRateEntry[] }[];
+  history: (TaxRateEntry & { country: string; addedBy: string })[];
+  countryOptions: { code: string; name: string }[];
+}
+
+function taxEntry(value: unknown): TaxRateEntry | null {
+  const e = obj(value);
+  const rateBp = minor(e?.rate_bp);
+  if (!e || typeof e.tax_name !== 'string' || rateBp === null || typeof e.starts !== 'string') return null;
+  return { taxName: e.tax_name, rateBp, starts: e.starts };
+}
+
+export async function fetchTaxRates(fetchImpl: typeof fetch = fetch): Promise<{ kind: 'ok'; data: TaxRates } | { kind: 'failed' }> {
+  const result = await getJson(`${ADMIN_API}/tax-rates`, fetchImpl);
+  const body = obj(result?.data);
+  if (result === null || result.status !== 200 || !body || !Array.isArray(body.countries)) return { kind: 'failed' };
+  const countries: TaxRates['countries'] = [];
+  for (const raw of body.countries) {
+    const c = obj(raw);
+    if (!c || typeof c.country !== 'string') continue;
+    const scheduled: TaxRateEntry[] = [];
+    for (const s of Array.isArray(c.scheduled) ? c.scheduled : []) {
+      const entry = taxEntry(s);
+      if (entry) scheduled.push(entry);
+    }
+    countries.push({ country: c.country, countryName: typeof c.country_name === 'string' ? c.country_name : c.country, current: taxEntry(c.current), scheduled });
+  }
+  const history: TaxRates['history'] = [];
+  for (const raw of Array.isArray(body.history) ? body.history : []) {
+    const h = obj(raw);
+    const entry = taxEntry(raw);
+    if (h && entry && typeof h.country === 'string') history.push({ ...entry, country: h.country, addedBy: typeof h.added_by === 'string' ? h.added_by : '' });
+  }
+  const countryOptions: TaxRates['countryOptions'] = [];
+  for (const raw of Array.isArray(body.country_options) ? body.country_options : []) {
+    const o = obj(raw);
+    if (o && typeof o.code === 'string' && typeof o.name === 'string') countryOptions.push({ code: o.code, name: o.name });
+  }
+  return { kind: 'ok', data: { canManage: body.can_manage === true, countries, history, countryOptions } };
+}
+
+export const saveTaxRate = (
+  csrfToken: string,
+  body: { country: string; tax_name: string; rate_bp: number; starts: string; code: string },
+  fetchImpl: typeof fetch = fetch,
+) => postJson(`${ADMIN_API}/tax-rates`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });

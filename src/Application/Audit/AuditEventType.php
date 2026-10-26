@@ -71,6 +71,8 @@ final class AuditEventType
     public const string STAFF_SESSION_CHANGE_REFUSED = 'staff.session_change.refused';
     public const string BILLING_DETAILS_SAVED = 'billing.details_saved';
     public const string ORDER_PLACED = 'order.placed';
+    public const string TAX_RATE_CHANGED = 'tax_rate.changed';
+    public const string TAX_RATE_CHANGE_REFUSED = 'tax_rate.change_refused';
 
     private function __construct()
     {

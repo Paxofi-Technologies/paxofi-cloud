@@ -108,7 +108,7 @@ final class CommerceProvider implements Provider
         $container->singleton(BillingDetailsController::class, static fn (Container $c): BillingDetailsController => new BillingDetailsController(
             new BillingDetailsService(
                 new MysqlBillingStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
-                new MysqlTaxRateStore(Resolve::get($c, Repository::class)),
+                new MysqlTaxRateStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 Resolve::get($c, AuditTrail::class),
                 new SystemClock(),
@@ -127,7 +127,7 @@ final class CommerceProvider implements Provider
                 $quotes,
                 new RegistrarCheck($quotes, $redis, $limiter),
                 new MysqlBillingStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
-                new MysqlTaxRateStore(Resolve::get($c, Repository::class)),
+                new MysqlTaxRateStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 new MysqlOrderStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class), Resolve::get($c, TransactionManager::class)),
                 $redis,
                 $limiter,

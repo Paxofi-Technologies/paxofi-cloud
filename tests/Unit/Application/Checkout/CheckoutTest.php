@@ -11,6 +11,7 @@ use PaxofiCloud\Application\Checkout\Checkout;
 use PaxofiCloud\Application\Checkout\CheckoutRefused;
 use PaxofiCloud\Application\Domains\RegistrarCheck;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
+use PaxofiCloud\Domain\Billing\TaxRate;
 use PaxofiCloud\Domain\Money\BasisPoints;
 use PaxofiCloud\Domain\Money\Currency;
 use PaxofiCloud\Domain\Pricing\DecimalRate;
@@ -52,6 +53,7 @@ final class CheckoutTest extends TestCase
     private InMemoryAuditLog $audit;
     private ScriptedRateLimiter $limiter;
     private MutableClock $clock;
+    private InMemoryTaxRateStore $taxes;
     /** @var array<string, int> */
     private array $costs = ['com' => 1000, 'ng' => 900];
 
@@ -66,6 +68,7 @@ final class CheckoutTest extends TestCase
         $this->orders = new InMemoryOrderStore();
         $this->orders->billing = $this->billing;
         $this->audit = new InMemoryAuditLog();
+        $this->taxes = new InMemoryTaxRateStore();
         $this->clock = new MutableClock(new \DateTimeImmutable('2026-10-25T12:00:00Z'));
         $this->billTo(self::ALICE, 'NG');
     }
@@ -93,7 +96,7 @@ final class CheckoutTest extends TestCase
             $quotes,
             new RegistrarCheck($quotes, $this->redis, $this->limiter),
             $this->billing,
-            new InMemoryTaxRateStore(),
+            $this->taxes,
             $this->orders,
             $this->redis,
             $this->limiter,
@@ -238,6 +241,22 @@ final class CheckoutTest extends TestCase
         try {
             $this->checkout()->place(self::ALICE_ID, self::ALICE, $id, true, false, self::KEY, AuditFixtures::client());
             self::fail('a changed price must stop the order');
+        } catch (CheckoutRefused $e) {
+            self::assertSame(CheckoutRefused::PRICE_CHANGED, $e->reason);
+        }
+        self::assertSame([], $this->orders->orders);
+    }
+
+    public function testAVatChangeAfterTheReviewStopsTheOrder(): void
+    {
+        $this->cart(self::ALICE, 'paxofi-test.com');
+        $id = $this->readyReview();
+        // Staff raise Nigerian VAT from now on (CD-28): the open review no longer matches.
+        $this->taxes->add(new TaxRate('NG', 'VAT', new BasisPoints(1000)), $this->clock->now(), 'staff');
+
+        try {
+            $this->checkout()->place(self::ALICE_ID, self::ALICE, $id, true, false, self::KEY, AuditFixtures::client());
+            self::fail('a changed tax must stop the order');
         } catch (CheckoutRefused $e) {
             self::assertSame(CheckoutRefused::PRICE_CHANGED, $e->reason);
         }

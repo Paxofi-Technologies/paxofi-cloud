@@ -24,8 +24,8 @@ final readonly class RuntimeGrants
         'accounts' => self::CRUD,
         // Billing details (commerce CD-21): saved in place, never deleted (invoices snapshot them).
         'account_billing_details' => ['SELECT', 'INSERT', 'UPDATE'],
-        // Tax table (CD-22): append-only and read-only for the runtime user until the Sprint 3 editor.
-        'tax_rates' => ['SELECT'],
+        // Tax table (CD-22, CD-28): append-only; the admin editor adds rows, nothing is updated or deleted.
+        'tax_rates' => ['SELECT', 'INSERT'],
         // Orders and invoices (CD-24): lines are written once; on the headers only the status may change.
         'document_sequences' => ['SELECT', 'INSERT', 'UPDATE'],
         'orders' => ['SELECT', 'INSERT', 'UPDATE (status, status_changed_at)'],
