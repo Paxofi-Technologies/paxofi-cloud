@@ -34,11 +34,14 @@ final readonly class DomainCheckController implements Controller
             if ($request->method() === 'POST') {
                 $body = JsonBody::object($request);
                 $domains = $body['domains'] ?? null;
-                if ($body === null || array_keys($body) !== ['domains'] || !is_array($domains)) {
+                $ideas = $body['ideas'] ?? [];
+                $keys = $body === null ? [] : array_keys($body);
+                sort($keys);
+                if ($body === null || ($keys !== ['domains'] && $keys !== ['domains', 'ideas']) || !is_array($domains) || !is_array($ideas)) {
                     return ProblemDetails::response(400, DomainSearchRefused::INVALID_NAME, RequestId::of($request));
                 }
 
-                return self::json(202, ['id' => $this->check->request(RequestClient::of($request)->ip, $domains)]);
+                return self::json(202, ['id' => $this->check->request(RequestClient::of($request)->ip, $domains, $ideas)]);
             }
             $id = $request->query()['id'] ?? null;
             if (!is_string($id)) {

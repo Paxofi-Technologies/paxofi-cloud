@@ -7,6 +7,7 @@ namespace PaxofiCloud\Tests\Unit\Application\Domains;
 use PaxofiCloud\Application\Contracts\DomainLookup;
 use PaxofiCloud\Application\Contracts\RdapDirectory;
 use PaxofiCloud\Application\Domains\DomainSearch;
+use PaxofiCloud\Application\Domains\RdapAvailability;
 use PaxofiCloud\Application\Domains\DomainSearchRefused;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Application\Extensions\ExtensionSettings;
@@ -28,7 +29,7 @@ use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-/** THREAT-MODEL-DOMAIN-SEARCH.md DS-1 to DS-10 / DS-T1 to DS-T5. Test numbers only. */
+/** THREAT-MODEL-DOMAIN-SEARCH.md DS-1 to DS-10, DS-22 to DS-24 / DS-T1 to DS-T5, DS-T21. Test numbers only. */
 final class DomainSearchTest extends TestCase
 {
     private InMemoryRedis $redis;
@@ -74,7 +75,7 @@ final class DomainSearchTest extends TestCase
             }
         };
 
-        return new DomainSearch($quotes, $directory, $lookup, $this->redis, $this->limiter);
+        return new DomainSearch($quotes, new RdapAvailability($directory, $lookup, $this->redis, $this->limiter), $this->limiter);
     }
 
     /** @return 'available'|'taken'|'unknown' */
@@ -165,6 +166,38 @@ final class DomainSearchTest extends TestCase
             self::assertSame(DomainSearchRefused::TOO_MANY, $e->reason);
         }
         self::assertLessThanOrEqual(DomainSearch::SERVER_PER_10_SECONDS, count(array_filter($this->lookups, static fn (array $l): bool => $l[1] === 'https://rdap.nic.net.ng')), 'per-server cap');
+    }
+
+    public function testOffersPricedNameIdeasThatAreNotAlreadyShownWithoutCheckingThem(): void
+    {
+        $result = $this->search()->search('203.0.113.9', 'acme', 'ng');
+        $shown = array_column($result['results'], 'domain');
+        $ideas = array_column($result['ideas'], 'domain');
+
+        self::assertNotSame([], $ideas);
+        self::assertSame([], array_intersect($ideas, $shown), 'an idea is never a name already shown');
+        self::assertContains('acme.xyz', $ideas, 'same label in another extension on sale');
+        self::assertContains('getacme.com', $ideas, 'prefix idea in .com');
+        self::assertContains('acmehq.ng', $ideas, 'suffix idea in the requested extension');
+        foreach ($result['ideas'] as $idea) {
+            self::assertSame(['domain', 'tld', 'label', 'register', 'renew'], array_keys($idea), 'DS-9: selling prices only, no status');
+        }
+        self::assertSame([], array_filter($this->lookups, static fn (array $l): bool => in_array($l[0], $ideas, true)), 'ideas are confirmed by the worker, not here');
+        self::assertLessThanOrEqual(DomainSearch::MAX_IDEAS, count($ideas));
+    }
+
+    public function testOnlyTheFirstNamesAreCheckedNowAndTheRestComeFromTheCache(): void
+    {
+        foreach (['com' => 6, 'org' => 7, 'xyz' => 8, 'net' => 9] as $tld => $order) {
+            $this->settings->save(new ExtensionSettings(new TldName($tld), featuredOrder: $order), 'x', new \DateTimeImmutable());
+        }
+        $this->search()->search('203.0.113.9', 'acme', 'ng');
+
+        self::assertLessThanOrEqual(DomainSearch::CHECK_NOW, count($this->lookups));
+        $this->redis->set('pc:domain_search:' . hash('sha256', 'acme.xyz'), 'taken');
+        $result = $this->search()->search('203.0.113.9', 'acme', 'ng');
+        $byDomain = array_column($result['results'], 'status', 'domain');
+        self::assertSame('taken', $byDomain['acme.xyz'], 'a name past the first six still shows its cached answer');
     }
 
     public function testNothingIsOfferedUntilPricesExist(): void

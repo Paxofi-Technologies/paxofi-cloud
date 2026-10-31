@@ -191,9 +191,11 @@ final class RegistrarCheckTest extends TestCase
     public function testRefusesBadInputUnsoldExtensionsAndFloodsAndOddIds(): void
     {
         $web = $this->web();
-        foreach ([[], ['a.com', 'b.com', 'c.com', 'd.com', 'e.com', 'f.com', 'g.com'], ['-bad.com'], ['nodot'], [42], ['x' => 'a.com']] as $bad) {
+        $tooMany = array_map(static fn (int $i): string => "n{$i}.com", range(1, RegistrarCheck::MAX_DOMAINS + 1));
+        $tooManyIdeas = array_map(static fn (int $i): string => "i{$i}.com", range(1, RegistrarCheck::MAX_IDEAS + 1));
+        foreach ([[[], []], [$tooMany, []], [['a.com'], $tooManyIdeas], [['-bad.com'], []], [['nodot'], []], [[42], []], [['x' => 'a.com'], []], [['a.com'], ['-bad.com']], [['a.com'], ['x' => 'b.com']]] as [$bad, $ideas]) {
             try {
-                $web->request('203.0.113.9', $bad);
+                $web->request('203.0.113.9', $bad, $ideas);
                 self::fail('expected a refusal');
             } catch (DomainSearchRefused $e) {
                 self::assertSame(DomainSearchRefused::INVALID_NAME, $e->reason);
@@ -220,6 +222,33 @@ final class RegistrarCheckTest extends TestCase
 
         $this->expectExceptionObject(new DomainSearchRefused(DomainSearchRefused::INVALID_NAME));
         $web->result('../../etc');
+    }
+
+    public function testIdeasAreCheckedWithoutTheRegistrarAndAfterTheSearchedNames(): void
+    {
+        $web = $this->web();
+        $id = $web->request('203.0.113.9', ['paxofi.ng', 'paxofi.com'], ['getpaxofi.com', 'paxofihq.ng', 'paxofi.ng']);
+
+        $this->worker(
+            ['paxofi.ng' => new AvailabilityAnswer('available'), 'paxofi.com' => new AvailabilityAnswer('taken')],
+            dns: self::dns(['paxofihq.ng']),
+            whois: $this->whois(['getpaxofi.com' => "No match for GETPAXOFI.COM\n"]),
+        )->runOnce();
+
+        self::assertSame([['paxofi.ng', 'paxofi.com']], $this->asked, 'DS-23: ideas never go to the registrar');
+        $statuses = array_column($web->result($id)['results'], 'status', 'domain');
+        self::assertSame(['paxofi.ng' => 'available', 'paxofi.com' => 'taken', 'getpaxofi.com' => 'available', 'paxofihq.ng' => 'taken'], $statuses, 'a repeated name is checked once');
+    }
+
+    public function testTheRegistrarIsAskedInBatchesOfSix(): void
+    {
+        $web = $this->web();
+        $names = array_map(static fn (int $i): string => "n{$i}.com", range(1, 13));
+        $web->request('203.0.113.9', $names);
+
+        $this->worker([])->runOnce();
+
+        self::assertSame([6, 6, 1], array_map('count', $this->asked));
     }
 
     public function testAnExpiredOrUnknownJobSaysExpired(): void

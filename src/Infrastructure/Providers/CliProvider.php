@@ -285,6 +285,7 @@ final readonly class CliProvider implements Provider
                     new SystemClock(),
                     new SystemDnsProbe(),
                     self::whoisAvailability($c),
+                    CommerceProvider::rdapAvailability(Resolve::get($c, RedisClient::class)),
                 );
             };
             $registry->register(new PricesSyncCommand($syncFor, $console));
