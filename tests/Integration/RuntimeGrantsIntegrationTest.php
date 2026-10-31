@@ -128,6 +128,12 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         self::assertDenied($app, "UPDATE payment_attempts SET reference = 'PXC-01JBTEST0000000000000000AC' WHERE id = REPEAT('p', 32)");
         self::assertDenied($app, "DELETE FROM payment_attempts WHERE id = REPEAT('p', 32)");
 
+        // Gateway webhook events (PY-7): written once, never edited or removed.
+        $app->exec("INSERT INTO gateway_events (id, gateway, event_key, event, reference, payload_sha256, received_at)
+                    VALUES (REPEAT('g', 32), 'paystack', REPEAT('a', 64), 'charge.success', 'PXC-01JBTEST0000000000000000AB', REPEAT('b', 64), NOW(6))");
+        self::assertDenied($app, "UPDATE gateway_events SET event = 'charge.failed' WHERE id = REPEAT('g', 32)");
+        self::assertDenied($app, "DELETE FROM gateway_events WHERE id = REPEAT('g', 32)");
+
         // Gateway keys (PY-3): saved and re-encrypted, never deleted by the app.
         $app->exec("INSERT INTO payment_gateway_credentials (id, provider, environment, access_level, envelope, key_id, review_due_on) VALUES ('paystack-dev', 'paystack', 'dev', 'read-write', 'x', 'k1', '2027-01-01')");
         $app->exec("UPDATE payment_gateway_credentials SET envelope = 'y' WHERE id = 'paystack-dev'");

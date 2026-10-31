@@ -9,6 +9,7 @@ use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Http\HttpRuntime;
 use PaxofiCloud\Http\RequestFactory;
 use PaxofiCloud\Http\Middleware\SecurityHeadersMiddleware;
+use PaxofiCloud\Infrastructure\Secrets\KeyRing;
 
 /** Boots the real application (PCF kernel, providers, MySQL, Redis) without a web server. */
 final class HttpIntegrationTest extends IntegrationTestCase
@@ -43,6 +44,32 @@ final class HttpIntegrationTest extends IntegrationTestCase
         $wrongMethod = $this->get('/health/live', ['REQUEST_METHOD' => 'POST']);
         self::assertSame(405, $wrongMethod->status());
         self::assertStringContainsString('"code":"method_not_allowed"', $wrongMethod->body());
+    }
+
+    public function testTheWebTierDoesNotServeWebhooks(): void
+    {
+        self::assertSame(404, $this->get('/webhooks/paystack', ['REQUEST_METHOD' => 'POST'])->status());
+    }
+
+    public function testPaymentsWebServesOnlyTheTwoWebhookPaths(): void
+    {
+        $saved = [getenv('APP_ROLE'), getenv('PAYMENTS_CREDENTIAL_KEYS'), getenv('PAYMENTS_CREDENTIAL_ACTIVE_KEY')];
+        putenv('APP_ROLE=payments-web');
+        putenv('PAYMENTS_CREDENTIAL_KEYS=' . KeyRing::generateEntry('itest'));
+        putenv('PAYMENTS_CREDENTIAL_ACTIVE_KEY=itest');
+        try {
+            // PY-7: unsigned → 401 before anything is read; every other path is 404, including the health and customer API.
+            self::assertSame(401, $this->get('/webhooks/paystack', ['REQUEST_METHOD' => 'POST'])->status());
+            self::assertSame(401, $this->get('/webhooks/flutterwave', ['REQUEST_METHOD' => 'POST'])->status());
+            self::assertSame(405, $this->get('/webhooks/paystack')->status());
+            foreach (['/health/live', '/api/v1/auth/session', '/admin-api/v1/auth/session', '/webhooks/stripe'] as $path) {
+                self::assertSame(404, $this->get($path)->status(), $path);
+            }
+        } finally {
+            foreach (['APP_ROLE', 'PAYMENTS_CREDENTIAL_KEYS', 'PAYMENTS_CREDENTIAL_ACTIVE_KEY'] as $i => $name) {
+                putenv($saved[$i] === false ? $name : $name . '=' . $saved[$i]);
+            }
+        }
     }
 
     /** @param array<string, string> $server */

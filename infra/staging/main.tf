@@ -148,6 +148,31 @@ resource "cloudflare_zero_trust_access_application" "web" {
   ]
 }
 
+# Gateway webhooks (payments threat model PY-7, PY-18): Paystack and
+# Flutterwave cannot sign in to Access, so exactly these two paths bypass it.
+# Nothing else on the host does (a more specific path wins in Access). The
+# app checks the gateway's signature before reading the body; nginx accepts
+# only POST up to 64 KiB there and sends it to payments-web alone.
+resource "cloudflare_zero_trust_access_policy" "webhooks" {
+  account_id = local.account_id
+  name       = "${local.name}-webhooks-bypass"
+  decision   = "bypass"
+  include    = [{ everyone = {} }]
+}
+
+resource "cloudflare_zero_trust_access_application" "webhooks" {
+  for_each             = toset(["paystack", "flutterwave"])
+  account_id           = local.account_id
+  name                 = "${local.name}-webhook-${each.key}"
+  type                 = "self_hosted"
+  domain               = "${local.web_host}/webhooks/${each.key}"
+  session_duration     = "15m"
+  app_launcher_visible = false
+  policies = [
+    { id = cloudflare_zero_trust_access_policy.webhooks.id, precedence = 1 },
+  ]
+}
+
 # The staff admin console: the same viewers, then a passkey sign-in in the app.
 resource "cloudflare_zero_trust_access_application" "admin" {
   account_id           = local.account_id

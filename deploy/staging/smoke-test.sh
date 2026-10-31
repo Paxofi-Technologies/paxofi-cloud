@@ -174,8 +174,24 @@ grep -qE '^PAYMENTS_' <<<"$mail_env" && fail "payments keys present in the mail 
 payments_env="$("${compose[@]}" run --rm -T payments-worker env)"
 grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_|TURNSTILE_|MFA_|EMAIL_OUTBOX_SECRET_KEY|SMTP_|POSTMARK_)' <<<"$payments_env" && fail "provider, web or mail secrets present in the payments worker"
 
+echo "== payments web"
+# PY-7: exactly two webhook paths, POST only, answered by payments-web; the signature is checked before anything else.
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "$base/webhooks/paystack")" = 401 || fail "unsigned Paystack webhook not refused"
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "$base/webhooks/flutterwave")" = 401 || fail "unsigned Flutterwave webhook not refused"
+# Signed, but no gateway key is stored in this throwaway database: 503, so the gateway retries (key ring and DB are wired).
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'x-paystack-signature: 00' --data '{}' "$base/webhooks/paystack")" = 503 || fail "payments-web cannot load gateway keys"
+test "$(curl -s -o /dev/null -w '%{http_code}' "$base/webhooks/paystack")" = 403 || fail "webhook path accepts GET"
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST --data '{}' "$base/webhooks/stripe")" = 404 || fail "an unknown webhook path is routed"
+test "$(head -c 70000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' --data-binary @- "$base/webhooks/paystack")" = 413 || fail "webhook body limit not enforced"
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST --data '{}' "${admin[@]}" "$base/webhooks/paystack")" = 403 || fail "webhooks served on the admin host"
+payments_web_env="$("${compose[@]}" exec -T payments-web env)"
+grep -q '^APP_ROLE=payments-web$' <<<"$payments_web_env" || fail "payments-web role not set"
+grep -q '^PAYMENTS_CREDENTIAL_KEYS=.' <<<"$payments_web_env" || fail "payments-web lacks the payments key ring"
+grep -qE '^(PAYMENTS_INTAKE_|CREDENTIAL_INTAKE_|PROVIDER_CREDENTIAL_|TURNSTILE_|MFA_|EMAIL_OUTBOX_|SMTP_|POSTMARK_)' <<<"$payments_web_env" && fail "payments-web holds secrets it does not need"
+grep -q '^APP_ROLE=' <<<"$web_env" && fail "the web tier runs with a role"
+
 echo "== hardening"
-for service in php nginx redis provider-worker payments-worker; do
+for service in php nginx redis provider-worker payments-worker payments-web; do
   id="$("${compose[@]}" ps -q "$service")"
   test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$id")" = true || fail "$service root filesystem is writable"
   docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$id" | grep -q 'no-new-privileges:true' || fail "$service lacks no-new-privileges"
@@ -186,7 +202,7 @@ test "$("${compose[@]}" exec -T redis id -u)" != 0 || fail "redis runs as root"
 "${compose[@]}" exec -T php env | grep -q '^PROVIDER_CREDENTIAL' && fail "KEK present in the php container"
 # P-5/D-04: secret values live only in env files. They must never appear in a
 # container's command, entrypoint or labels (visible to `docker inspect`).
-for service in php nginx mysql redis provider-worker payments-worker; do
+for service in php nginx mysql redis provider-worker payments-worker payments-web; do
   id="$("${compose[@]}" ps -q "$service")"
   config="$(docker inspect -f '{{json .Config.Cmd}}{{json .Config.Entrypoint}}{{json .Config.Labels}}' "$id")"
   test -n "$config" || fail "cannot inspect $service"

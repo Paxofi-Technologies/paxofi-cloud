@@ -79,6 +79,7 @@ final class AuditEventType
     public const string PAYMENT_CREDITED = 'payment.credited';
     public const string PAYMENT_AMOUNT_MISMATCH = 'payment.amount_mismatch';
     public const string PAYMENT_ABANDONED = 'payment.abandoned';
+    public const string PAYMENT_WEBHOOK_REJECTED = 'payment.webhook_rejected';
     public const string TAX_RATE_CHANGED = 'tax_rate.changed';
     public const string TAX_RATE_CHANGE_REFUSED = 'tax_rate.change_refused';
 
