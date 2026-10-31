@@ -73,6 +73,8 @@ final class CheckoutStarterTest extends TestCase
         self::assertSame('pending', $this->attempts->attempts[self::ATTEMPT]['state']);
         self::assertSame('https://checkout.paystack.com/test-page', $this->attempts->find(self::ACCOUNT, self::ATTEMPT)['checkout_url'] ?? null);
         self::assertSame([AuditEventType::PAYMENT_CHECKOUT_READY], $this->audit->types());
+        // PY-11: the first gateway check is two minutes after the attempt was created.
+        self::assertEquals(new \DateTimeImmutable('2026-10-31T10:02:00Z'), $this->attempts->attempts[self::ATTEMPT]['next']);
     }
 
     public function testEachAttemptIsStartedOnce(): void

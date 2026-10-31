@@ -97,7 +97,8 @@ final readonly class CheckoutStarter
 
             return;
         }
-        if ($this->attempts->markCheckoutReady($attempt->id, $checkout->url, $this->clock->now())) {
+        $firstCheck = $attempt->createdAt->modify('+' . PaymentVerifier::SCHEDULE_SECONDS[0] . ' seconds');
+        if ($this->attempts->markCheckoutReady($attempt->id, $checkout->url, $this->clock->now(), $firstCheck)) {
             $this->audit->record(AuditEventType::PAYMENT_CHECKOUT_READY, AuditEvent::SUCCESS, ClientContext::ip('0.0.0.0'), accountId: $attempt->accountId, details: [
                 'payment' => $attempt->id,
                 'gateway' => $attempt->gateway->value,

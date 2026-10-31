@@ -6,11 +6,16 @@ namespace PaxofiCloud\Infrastructure\Payments;
 
 use Paxofi\Core\Contracts\Connection;
 use Paxofi\Core\Contracts\Repository;
+use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Contracts\DuplicateIdempotencyKey;
+use PaxofiCloud\Application\Contracts\Ledger;
 use PaxofiCloud\Application\Contracts\PaymentAttemptStore;
 use PaxofiCloud\Application\Payments\AttemptToStart;
+use PaxofiCloud\Application\Payments\AttemptToVerify;
+use PaxofiCloud\Application\Payments\GatewayVerification;
 use PaxofiCloud\Application\Payments\NewPaymentAttempt;
 use PaxofiCloud\Application\Payments\PayableInvoice;
+use PaxofiCloud\Domain\Ledger\Postings;
 use PaxofiCloud\Domain\Money\Money;
 use PaxofiCloud\Domain\Orders\InvoiceStatus;
 use PaxofiCloud\Domain\Payments\Gateway;
@@ -28,8 +33,12 @@ final readonly class MysqlPaymentAttemptStore implements PaymentAttemptStore
     private const string TIME_FORMAT = 'Y-m-d H:i:s.u';
     private const string REASON = '/^[a-z][a-z_]{1,31}$/';
 
-    public function __construct(private Connection $connection, private Repository $repository)
-    {
+    public function __construct(
+        private Connection $connection,
+        private Repository $repository,
+        private TransactionManager $transactions,
+        private Ledger $ledger,
+    ) {
     }
 
     public function payableInvoice(string $accountId, string $orderId): ?PayableInvoice
@@ -196,15 +205,21 @@ final readonly class MysqlPaymentAttemptStore implements PaymentAttemptStore
         return null;
     }
 
-    public function markCheckoutReady(string $attemptId, string $checkoutUrl, \DateTimeImmutable $now): bool
+    public function markCheckoutReady(string $attemptId, string $checkoutUrl, \DateTimeImmutable $now, \DateTimeImmutable $firstCheckAt): bool
     {
         if (!str_starts_with($checkoutUrl, 'https://') || strlen($checkoutUrl) > 512) {
             throw new \InvalidArgumentException('A checkout URL is a plain https URL.');
         }
 
         return $this->connection->execute(
-            "UPDATE payment_attempts SET state = :state, checkout_url = :url, state_changed_at = :at WHERE id = :id AND state = 'initiated'",
-            ['state' => PaymentAttemptState::Initiated->to(PaymentAttemptState::Pending)->value, 'url' => $checkoutUrl, 'at' => self::utc($now), 'id' => $attemptId],
+            "UPDATE payment_attempts SET state = :state, checkout_url = :url, state_changed_at = :at, next_check_at = :next WHERE id = :id AND state = 'initiated'",
+            [
+                'state' => PaymentAttemptState::Initiated->to(PaymentAttemptState::Pending)->value,
+                'url' => $checkoutUrl,
+                'at' => self::utc($now),
+                'next' => self::utc($firstCheckAt),
+                'id' => $attemptId,
+            ],
         ) === 1;
     }
 
@@ -218,6 +233,142 @@ final readonly class MysqlPaymentAttemptStore implements PaymentAttemptStore
             "UPDATE payment_attempts SET state = :state, failure_reason = :reason, state_changed_at = :at WHERE id = :id AND state = 'initiated'",
             ['state' => PaymentAttemptState::Initiated->to(PaymentAttemptState::Failed)->value, 'reason' => $reason, 'at' => self::utc($now), 'id' => $attemptId],
         ) === 1;
+    }
+
+    public function dueForCheck(\DateTimeImmutable $now, int $limit): array
+    {
+        $due = [];
+        foreach ($this->repository->fetchAll(
+            "SELECT id, account_id, reference, gateway, amount_minor, currency, state, checks, created_at FROM payment_attempts
+             WHERE state IN ('pending', 'unknown') AND next_check_at IS NOT NULL AND next_check_at <= :now
+             ORDER BY next_check_at, id LIMIT " . max(1, min(100, $limit)),
+            ['now' => self::utc($now)],
+        ) as $row) {
+            $due[] = new AttemptToVerify(
+                Row::string($row, 'id'),
+                Row::string($row, 'account_id'),
+                PaymentReference::fromString(Row::string($row, 'reference')),
+                Gateway::from(Row::string($row, 'gateway')),
+                Money::of(Row::int($row, 'amount_minor'), Row::string($row, 'currency')),
+                PaymentAttemptState::from(Row::string($row, 'state')),
+                Row::int($row, 'checks'),
+                self::time(Row::string($row, 'created_at')),
+            );
+        }
+
+        return $due;
+    }
+
+    public function rescheduled(string $attemptId, int $checksSeen, \DateTimeImmutable $nextCheckAt, bool $unknown, \DateTimeImmutable $now): bool
+    {
+        // pending → unknown when the gateway could not answer; unknown stays unknown until an answer settles it.
+        return $this->connection->execute(
+            "UPDATE payment_attempts SET checks = checks + 1, next_check_at = :next,
+                 state = IF(:unknown = 1, 'unknown', state),
+                 state_changed_at = IF(:unknown2 = 1 AND state <> 'unknown', :at, state_changed_at)
+             WHERE id = :id AND checks = :checks AND state IN ('pending', 'unknown')",
+            ['next' => self::utc($nextCheckAt), 'unknown' => $unknown ? 1 : 0, 'unknown2' => $unknown ? 1 : 0, 'at' => self::utc($now), 'id' => $attemptId, 'checks' => $checksSeen],
+        ) === 1;
+    }
+
+    public function close(string $attemptId, int $checksSeen, PaymentAttemptState $final, \DateTimeImmutable $now): bool
+    {
+        if ($final !== PaymentAttemptState::Failed && $final !== PaymentAttemptState::Abandoned) {
+            throw new \InvalidArgumentException('Only failed or abandoned closes an attempt.');
+        }
+
+        return $this->connection->execute(
+            "UPDATE payment_attempts SET state = :state, checks = checks + 1, next_check_at = NULL, state_changed_at = :at
+             WHERE id = :id AND checks = :checks AND state IN ('pending', 'unknown')",
+            ['state' => PaymentAttemptState::Pending->to($final)->value, 'at' => self::utc($now), 'id' => $attemptId, 'checks' => $checksSeen],
+        ) === 1;
+    }
+
+    public function recordSuccess(string $attemptId, GatewayVerification $verification, \DateTimeImmutable $now): ?string
+    {
+        $paid = $verification->amount ?? throw new \InvalidArgumentException('A success names its amount.');
+
+        // The conditional UPDATE in settle() is the single winner; the columns read here never change.
+        /** @var 'applied'|'credited'|null */
+        return $this->transactions->transaction(function () use ($attemptId, $verification, $paid, $now): ?string {
+            $row = $this->repository->fetchAll(
+                "SELECT a.account_id, a.invoice_id, a.gateway, i.order_id FROM payment_attempts a JOIN invoices i ON i.id = a.invoice_id
+                 WHERE a.id = :id AND a.state IN ('initiated', 'pending', 'unknown')",
+                ['id' => $attemptId],
+            )[0] ?? null;
+            if ($row === null || !$this->settle($attemptId, PaymentAttemptState::Succeeded, $verification, $now)) {
+                return null;
+            }
+            $account = Row::string($row, 'account_id');
+            $gateway = Gateway::from(Row::string($row, 'gateway'));
+            $at = self::utc($now);
+            $applied = $this->connection->execute(
+                "UPDATE invoices SET status = 'paid', status_changed_at = :at WHERE id = :id AND status = 'unpaid'",
+                ['at' => $at, 'id' => Row::string($row, 'invoice_id')],
+            ) === 1;
+            if ($applied) {
+                $this->connection->execute(
+                    "UPDATE orders SET status = 'paid', status_changed_at = :at WHERE id = :id AND status = 'pending_payment'",
+                    ['at' => $at, 'id' => Row::string($row, 'order_id')],
+                );
+                $this->ledger->postInCurrentTransaction(Postings::payment(self::entryId(), $attemptId, $account, $gateway, $paid, $now));
+            } else {
+                $this->ledger->postInCurrentTransaction(Postings::overpayment(self::entryId(), $attemptId, $account, $gateway, $paid, $now));
+            }
+            $fee = $verification->fee;
+            if ($fee !== null && $fee->minorUnits > 0 && $fee->currency === $paid->currency) {
+                $this->ledger->postInCurrentTransaction(Postings::gatewayFee(self::entryId(), $attemptId, $gateway, $fee, $now));
+            }
+
+            return $applied ? 'applied' : 'credited';
+        });
+    }
+
+    public function recordMismatch(string $attemptId, GatewayVerification $verification, \DateTimeImmutable $now): bool
+    {
+        $paid = $verification->amount;
+
+        return (bool) $this->transactions->transaction(function () use ($attemptId, $verification, $paid, $now): bool {
+            $row = $this->repository->fetchAll(
+                "SELECT gateway FROM payment_attempts WHERE id = :id AND state IN ('initiated', 'pending', 'unknown')",
+                ['id' => $attemptId],
+            )[0] ?? null;
+            if ($row === null || !$this->settle($attemptId, PaymentAttemptState::AmountMismatch, $verification, $now)) {
+                return false;
+            }
+            if ($paid !== null && $paid->minorUnits > 0) {
+                $this->ledger->postInCurrentTransaction(Postings::unallocated(self::entryId(), $attemptId, Gateway::from(Row::string($row, 'gateway')), $paid, $now));
+            }
+
+            return true;
+        });
+    }
+
+    private function settle(string $attemptId, PaymentAttemptState $state, GatewayVerification $verification, \DateTimeImmutable $now): bool
+    {
+        $paid = $verification->amount;
+        $fee = $verification->fee !== null && $paid !== null && $verification->fee->currency === $paid->currency ? $verification->fee->minorUnits : null;
+
+        return $this->connection->execute(
+            "UPDATE payment_attempts SET state = :state, gateway_transaction_id = :tx, paid_minor = :paid, paid_currency = :currency,
+                 fee_minor = :fee, paid_at = :paid_at, next_check_at = NULL, state_changed_at = :at
+             WHERE id = :id AND state IN ('initiated', 'pending', 'unknown')",
+            [
+                'state' => $state->value,
+                'tx' => $verification->gatewayTransactionId,
+                'paid' => $paid !== null && $paid->minorUnits > 0 ? $paid->minorUnits : null,
+                'currency' => $paid !== null && $paid->minorUnits > 0 ? $paid->currency->value : null,
+                'fee' => $fee,
+                'paid_at' => self::utc($verification->paidAt ?? $now),
+                'at' => self::utc($now),
+                'id' => $attemptId,
+            ],
+        ) === 1;
+    }
+
+    private static function entryId(): string
+    {
+        return bin2hex(random_bytes(16));
     }
 
     private static function utc(\DateTimeImmutable $time): string

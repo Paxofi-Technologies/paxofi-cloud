@@ -11,14 +11,18 @@ use PaxofiCloud\Application\Billing\BillingDetails;
 use PaxofiCloud\Application\Checkout\NewOrder;
 use PaxofiCloud\Application\Checkout\NewOrderLine;
 use PaxofiCloud\Application\Contracts\DuplicateIdempotencyKey;
+use PaxofiCloud\Application\Payments\GatewayVerification;
 use PaxofiCloud\Application\Payments\NewPaymentAttempt;
+use PaxofiCloud\Application\Payments\PaymentOutcome;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Domain\Billing\TaxRate;
 use PaxofiCloud\Domain\Money\BasisPoints;
+use PaxofiCloud\Domain\Ledger\LedgerAccount;
 use PaxofiCloud\Domain\Money\Currency;
 use PaxofiCloud\Domain\Money\Money;
 use PaxofiCloud\Domain\Orders\InvoiceStatus;
 use PaxofiCloud\Domain\Payments\Gateway;
+use PaxofiCloud\Domain\Payments\PaymentAttemptState;
 use PaxofiCloud\Domain\Payments\PaymentReference;
 use PaxofiCloud\Infrastructure\Billing\MysqlBillingStore;
 use PaxofiCloud\Infrastructure\Container\Resolve;
@@ -38,6 +42,7 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
     private const string BOB = 'd1000000000000000000000000000002';
 
     private MysqlPaymentAttemptStore $attempts;
+    private MysqlLedger $ledger;
     private string $orderId;
     private string $invoiceId;
     private \DateTimeImmutable $now;
@@ -84,7 +89,8 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         $invoiceId = self::column("SELECT id FROM invoices WHERE order_id = '{$this->orderId}'");
         self::assertIsString($invoiceId);
         $this->invoiceId = $invoiceId;
-        $this->attempts = new MysqlPaymentAttemptStore($connection, $repository);
+        $this->ledger = new MysqlLedger($connection, $repository, $transactions);
+        $this->attempts = new MysqlPaymentAttemptStore($connection, $repository, $transactions, $this->ledger);
     }
 
     private function attempt(string $key = 'pay-key-00000000001', ?\DateTimeImmutable $at = null): NewPaymentAttempt
@@ -167,10 +173,10 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         $this->attempts->create($ready);
         $this->attempts->create($failed);
 
-        self::assertTrue($this->attempts->markCheckoutReady($ready->id, 'https://checkout.paystack.com/abc', $this->now));
+        self::assertTrue($this->attempts->markCheckoutReady($ready->id, 'https://checkout.paystack.com/abc', $this->now, $this->now->modify('+2 minutes')));
         self::assertFalse($this->attempts->markFailed($ready->id, 'transport', $this->now), 'a pending attempt is not failed by the start step');
         self::assertTrue($this->attempts->markFailed($failed->id, 'key_mode_mismatch', $this->now));
-        self::assertFalse($this->attempts->markCheckoutReady($failed->id, 'https://checkout.paystack.com/late', $this->now));
+        self::assertFalse($this->attempts->markCheckoutReady($failed->id, 'https://checkout.paystack.com/late', $this->now, $this->now->modify('+2 minutes')));
 
         self::assertSame('https://checkout.paystack.com/abc', $this->attempts->find(self::ALICE, $ready->id)['checkout_url'] ?? null);
         $row = $this->attempts->find(self::ALICE, $failed->id);
@@ -198,6 +204,115 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         $this->attempts->create($this->attempt());
         $this->expectException(PDOException::class);
         self::pdo()->exec("UPDATE payment_attempts SET checkout_url = 'http://checkout.paystack.com/x'");
+    }
+
+    private function pendingAttempt(string $key, Gateway $gateway = Gateway::Paystack): NewPaymentAttempt
+    {
+        $attempt = new NewPaymentAttempt(
+            bin2hex(random_bytes(16)), PaymentReference::generate($this->now), self::ALICE, $this->invoiceId, self::ALICE_ID, $gateway,
+            Money::of(1_773_750, 'NGN'), $key, hash('sha256', $key), $this->now,
+        );
+        $this->attempts->create($attempt);
+        self::assertTrue($this->attempts->markCheckoutReady($attempt->id, 'https://checkout.paystack.com/abc', $this->now, $this->now->modify('+120 seconds')));
+
+        return $attempt;
+    }
+
+    private static function success(NewPaymentAttempt $attempt, int $minor, string $currency = 'NGN', string $tx = '4099260516', ?int $fee = 26_606): GatewayVerification
+    {
+        return new GatewayVerification(
+            $attempt->reference,
+            PaymentOutcome::Succeeded,
+            Money::of($minor, $currency),
+            $tx,
+            new \DateTimeImmutable('2026-10-31 10:01:30 UTC'),
+            $fee === null ? null : Money::of($fee, $currency),
+        );
+    }
+
+    public function testAConfirmedPaymentPaysTheInvoiceAndOrderAndPostsOnce(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000010');
+
+        self::assertSame('applied', $this->attempts->recordSuccess($attempt->id, self::success($attempt, 1_773_750), $this->now));
+
+        self::assertSame('paid', self::column("SELECT status FROM invoices WHERE id = '{$this->invoiceId}'"));
+        self::assertSame('paid', self::column("SELECT status FROM orders WHERE id = '{$this->orderId}'"));
+        self::assertSame('succeeded', $this->attempts->find(self::ALICE, $attempt->id)['state'] ?? null);
+        self::assertSame('4099260516', self::column("SELECT gateway_transaction_id FROM payment_attempts WHERE id = '{$attempt->id}'"));
+        self::assertSame(0, $this->ledger->balance(LedgerAccount::Receivable, Currency::NGN, self::ALICE), 'the invoice receivable is cleared');
+        self::assertSame(1_773_750 - 26_606, $this->ledger->balance(LedgerAccount::ClearingPaystack, Currency::NGN));
+        self::assertSame(26_606, $this->ledger->balance(LedgerAccount::GatewayFees, Currency::NGN));
+        $entries = self::column('SELECT COUNT(*) FROM journal_entries');
+
+        // PT-06: a second confirmation (webhook, return page, schedule) changes nothing.
+        self::assertNull($this->attempts->recordSuccess($attempt->id, self::success($attempt, 1_773_750), $this->now));
+        self::assertSame($entries, self::column('SELECT COUNT(*) FROM journal_entries'));
+        self::assertSame([], $this->ledger->verify()->problems);
+    }
+
+    public function testASecondPaymentForThePaidInvoiceIsCustomerCredit(): void
+    {
+        $first = $this->pendingAttempt('pay-key-00000000011');
+        $second = $this->pendingAttempt('pay-key-00000000012', Gateway::Flutterwave);
+        $this->attempts->recordSuccess($first->id, self::success($first, 1_773_750), $this->now);
+
+        self::assertSame('credited', $this->attempts->recordSuccess($second->id, self::success($second, 1_773_750, tx: '5000001', fee: null), $this->now));
+
+        self::assertSame(-1_773_750, $this->ledger->balance(LedgerAccount::CustomerCredit, Currency::NGN, self::ALICE));
+        self::assertSame(1_773_750, $this->ledger->balance(LedgerAccount::ClearingFlutterwave, Currency::NGN));
+        self::assertSame([], $this->ledger->verify()->problems);
+    }
+
+    public function testAMismatchLeavesTheInvoiceUnpaidAndTheMoneyUnallocated(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000013');
+
+        self::assertTrue($this->attempts->recordMismatch($attempt->id, self::success($attempt, 1_000, fee: null), $this->now));
+
+        self::assertSame('unpaid', self::column("SELECT status FROM invoices WHERE id = '{$this->invoiceId}'"));
+        self::assertSame('amount_mismatch', $this->attempts->find(self::ALICE, $attempt->id)['state'] ?? null);
+        self::assertSame(-1_000, $this->ledger->balance(LedgerAccount::UnallocatedReceipts, Currency::NGN));
+        self::assertNull($this->attempts->recordSuccess($attempt->id, self::success($attempt, 1_773_750), $this->now), 'a mismatch is never turned into paid');
+        self::assertSame([], $this->ledger->verify()->problems);
+    }
+
+    public function testAGatewayTransactionIsCreditedToOneAttemptOnly(): void
+    {
+        $first = $this->pendingAttempt('pay-key-00000000014');
+        $second = $this->pendingAttempt('pay-key-00000000015');
+        $this->attempts->recordSuccess($first->id, self::success($first, 1_773_750), $this->now);
+        $entries = self::column('SELECT COUNT(*) FROM journal_entries');
+
+        try {
+            $this->attempts->recordSuccess($second->id, self::success($second, 1_773_750), $this->now);
+            self::fail('The same gateway transaction was credited twice.');
+        } catch (\RuntimeException) {
+        }
+        self::assertSame('pending', $this->attempts->find(self::ALICE, $second->id)['state'] ?? null, 'rolled back');
+        self::assertSame($entries, self::column('SELECT COUNT(*) FROM journal_entries'));
+    }
+
+    public function testChecksComeDueAndAreCountedOnce(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000016');
+
+        self::assertSame([], $this->attempts->dueForCheck($this->now->modify('+119 seconds'), 10));
+        $due = $this->attempts->dueForCheck($this->now->modify('+120 seconds'), 10);
+        self::assertCount(1, $due);
+        self::assertSame($attempt->id, $due[0]->id);
+        self::assertSame(0, $due[0]->checks);
+        self::assertSame(PaymentAttemptState::Pending, $due[0]->state);
+
+        self::assertTrue($this->attempts->rescheduled($attempt->id, 0, $this->now->modify('+600 seconds'), true, $this->now));
+        self::assertFalse($this->attempts->rescheduled($attempt->id, 0, $this->now->modify('+600 seconds'), true, $this->now), 'a check is counted once');
+        self::assertSame('unknown', $this->attempts->find(self::ALICE, $attempt->id)['state'] ?? null);
+        self::assertSame([], $this->attempts->dueForCheck($this->now->modify('+599 seconds'), 10));
+        self::assertCount(1, $this->attempts->dueForCheck($this->now->modify('+600 seconds'), 10));
+
+        self::assertTrue($this->attempts->close($attempt->id, 1, PaymentAttemptState::Abandoned, $this->now));
+        self::assertSame('abandoned', $this->attempts->find(self::ALICE, $attempt->id)['state'] ?? null);
+        self::assertSame([], $this->attempts->dueForCheck($this->now->modify('+2 days'), 10));
     }
 
     private static function column(string $sql): mixed

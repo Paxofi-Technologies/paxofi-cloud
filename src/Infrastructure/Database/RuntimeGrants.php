@@ -32,8 +32,8 @@ final readonly class RuntimeGrants
         'order_lines' => ['SELECT', 'INSERT'],
         'invoices' => ['SELECT', 'INSERT', 'UPDATE (status, status_changed_at)'],
         'invoice_lines' => ['SELECT', 'INSERT'],
-        // Payment attempts (payments PY-5, PY-6): amounts and references are written once; only the state columns move.
-        'payment_attempts' => ['SELECT', 'INSERT', 'UPDATE (state, checkout_url, failure_reason, claimed_at, state_changed_at)'],
+        // Payment attempts (payments PY-5, PY-6, PY-9): amounts and references are written once; only state and settlement columns move.
+        'payment_attempts' => ['SELECT', 'INSERT', 'UPDATE (state, checkout_url, failure_reason, claimed_at, state_changed_at, gateway_transaction_id, paid_minor, paid_currency, fee_minor, paid_at, checks, next_check_at)'],
         // Ledger (payments PY-13, LED-002): append-only journal; the chart of accounts is fixed by migration.
         'ledger_accounts' => ['SELECT'],
         'journal_entries' => ['SELECT', 'INSERT'],

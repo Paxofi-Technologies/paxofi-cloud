@@ -21,4 +21,9 @@ final class MutableClock implements Clock
     {
         $this->now = $this->now->modify($modifier);
     }
+
+    public function setTo(\DateTimeImmutable $now): void
+    {
+        $this->now = $now;
+    }
 }
