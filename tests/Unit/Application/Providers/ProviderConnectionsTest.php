@@ -163,7 +163,8 @@ final class ProviderConnectionsTest extends TestCase
         $payload = json_decode(SealedBox::forOpening($this->paymentKeys['public'], $this->paymentKeys['secret'], 'PAYMENTS_INTAKE')->open($row['sealed']), true);
         self::assertIsArray($payload);
         self::assertSame('paystack-staging', $payload['credential_id']);
-        self::assertSame(['secret_key' => $key], json_decode((string) $payload['secret'], true), 'gateway secrets are always the JSON object GatewayCredential reads');
+        self::assertIsString($payload['secret']);
+        self::assertSame(['secret_key' => $key], json_decode($payload['secret'], true), 'gateway secrets are always the JSON object GatewayCredential reads');
         self::assertStringNotContainsString($key, serialize($this->f->audit->events));
     }
 

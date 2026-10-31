@@ -108,6 +108,11 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         self::assertDenied($app, "INSERT INTO ledger_accounts (code, name, normal_side, per_customer) VALUES ('owner_drawings', 'X', 'debit', 0)");
         self::assertDenied($app, "UPDATE ledger_accounts SET normal_side = 'credit' WHERE code = 'receivable'");
 
+        // Gateway keys (PY-3): saved and re-encrypted, never deleted by the app.
+        $app->exec("INSERT INTO payment_gateway_credentials (id, provider, environment, access_level, envelope, key_id, review_due_on) VALUES ('paystack-dev', 'paystack', 'dev', 'read-write', 'x', 'k1', '2027-01-01')");
+        $app->exec("UPDATE payment_gateway_credentials SET envelope = 'y' WHERE id = 'paystack-dev'");
+        self::assertDenied($app, "DELETE FROM payment_gateway_credentials WHERE id = 'paystack-dev'");
+
         // Ordinary tables keep full row access.
         self::scalar($app, 'SELECT COUNT(*) FROM identities');
         $app->exec("DELETE FROM email_outbox WHERE id = 'none'");

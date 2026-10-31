@@ -56,16 +56,20 @@ owner_secret="$(sed -n 's/^DB_PASSWORD=//p' "$root/etc/paxoficloud/owner.env")"
 grep -qF -- "$owner_secret" "$root/etc/paxoficloud/app.env" && fail "the owner password is in app.env"
 grep -qF -- "$owner_secret" "$root/var/log/paxoficloud/deploy.log" && fail "the owner password reached the deploy log"
 grep -q 'Runtime grants applied' "$root/var/log/paxoficloud/deploy.log" || fail "db:grants did not run"
-for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env credential-intake-public.env credential-intake-secret.env provider-credential-keys.env; do
+for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env credential-intake-public.env credential-intake-secret.env provider-credential-keys.env payments-intake-public.env payments-intake-secret.env payments-credential-keys.env; do
   [ "$(stat -c %a "$root/etc/paxoficloud/$f")" = 600 ] || fail "$f is not 0600"
 done
 grep -qE '^CREDENTIAL_INTAKE_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/credential-intake-public.env" || fail "credential intake public key not generated"
 grep -qE '^PROVIDER_CREDENTIAL_KEYS=k1:[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/provider-credential-keys.env" || fail "provider credential KEK not generated"
-for f in credential-intake-secret.env provider-credential-keys.env; do
+grep -qE '^PAYMENTS_INTAKE_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/payments-intake-public.env" || fail "payments intake public key not generated"
+grep -qE '^PAYMENTS_CREDENTIAL_KEYS=k1:[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/payments-credential-keys.env" || fail "payments key ring not generated"
+cmp -s "$root/etc/paxoficloud/payments-credential-keys.env" "$root/etc/paxoficloud/provider-credential-keys.env" && fail "payments and provider key rings are the same"
+for f in credential-intake-secret.env provider-credential-keys.env payments-intake-secret.env payments-credential-keys.env; do
   value="$(head -n1 "$root/etc/paxoficloud/$f" | cut -d= -f2-)"
   grep -qF -- "${value#k1:}" "$root/var/log/paxoficloud/deploy.log" && fail "a value from $f reached the deploy log"
 done
 docker ps --format '{{.Names}}' | grep -q provider-worker || fail "provider worker did not start"
+docker ps --format '{{.Names}}' | grep -q payments-worker || fail "payments worker did not start"
 grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/outbox-public.env" || fail "outbox public key not generated"
 grep -qE '^MFA_SECRET_KEYS=k1:[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA key ring not generated"
 grep -qE '^MFA_RECOVERY_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA recovery key not generated"

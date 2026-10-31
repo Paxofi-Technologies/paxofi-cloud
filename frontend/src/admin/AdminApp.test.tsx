@@ -476,6 +476,16 @@ describe('API providers (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
         review_due_on: '2027-10-20',
         pending_since: null,
       },
+      {
+        provider: 'paystack',
+        label: 'Paystack (payments)',
+        category: 'payments',
+        credential_id: 'paystack-staging',
+        fields: [{ name: 'secret_key', label: 'Secret key', secret: true, hint: 'Staging takes the TEST secret key (sk_test_…).' }],
+        configured_at: null,
+        review_due_on: null,
+        pending_since: null,
+      },
     ],
   };
   const base = {
@@ -533,6 +543,29 @@ describe('API providers (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(screen.getByLabelText('Authenticator code')).toHaveValue('');
   });
 
+  it('lists payment gateways on their own page and explains a key of the wrong mode (PY-4)', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      ...base,
+      'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
+      'POST /admin-api/v1/provider-connections': { status: 422, body: { code: 'wrong_key_mode', errors: { secret_key: 'wrong_key_mode' } } },
+    });
+    render(<AdminApp path="/api-providers/payment-gateways" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Payment gateways' })).toBeInTheDocument();
+    expect(screen.getByText('Paystack (payments)')).toBeInTheDocument();
+    expect(screen.queryByText('Hetzner Cloud (servers)')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Set credential' }));
+    expect(screen.getByLabelText('Secret key')).toHaveAttribute('type', 'password');
+    await user.type(screen.getByLabelText('Secret key'), 'live-looking-value');
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Save credential' }));
+
+    expect(await screen.findByText(/Staging takes TEST secret keys only/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Secret key')).toHaveValue('');
+    expect(document.body.innerHTML).not.toContain('live-looking-value');
+  });
+
   it('checks the form before sending anything', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
@@ -556,7 +589,7 @@ describe('API providers (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(await screen.findByText('DomainNameAPI (domain registrar)')).toBeInTheDocument();
     const menu = screen.getByRole('navigation', { name: 'Main' });
     const group = within(menu).getByRole('list', { name: 'API providers' });
-    expect(Array.from(group.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Domain registrars', 'Server providers']);
+    expect(Array.from(group.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Domain registrars', 'Server providers', 'Payment gateways']);
     expect(within(group).getByRole('button', { name: 'Domain registrars' })).toHaveAttribute('aria-current', 'page');
 
     await user.click(within(group).getByRole('button', { name: 'Server providers' }));
@@ -907,6 +940,7 @@ describe('Admin navigation', () => {
       '/staff',
       '/api-providers/domain-registrars',
       '/api-providers/server-providers',
+      '/api-providers/payment-gateways',
       '/domain-extensions',
       '/domain-costs',
       '/tax-rates',
