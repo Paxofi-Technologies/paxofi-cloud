@@ -61,6 +61,7 @@ final readonly class AdminProviderConnectionsController
             ProviderConnectionRefused::STEP_UP => ProblemDetails::response(401, $e->reason, $id),
             ProviderConnectionRefused::UNKNOWN_PROVIDER => ProblemDetails::response(404, $e->reason, $id),
             ProviderConnectionRefused::UNAVAILABLE => ProblemDetails::response(503, $e->reason, $id),
+            ProviderConnectionRefused::WRONG_KEY_MODE => ProblemDetails::response(422, $e->reason, $id, errors: ['secret_key' => 'wrong_key_mode']),
             default => ProblemDetails::response(422, $e->reason, $id, errors: [$e->field ?? 'fields' => 'invalid']),
         };
     }

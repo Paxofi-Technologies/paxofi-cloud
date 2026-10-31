@@ -18,11 +18,11 @@ final class SealedBox implements CredentialSealer
 {
     private readonly ?string $keyPair;
 
-    private function __construct(private readonly string $publicKey, #[\SensitiveParameter] ?string $secretKey)
+    private function __construct(private readonly string $publicKey, #[\SensitiveParameter] ?string $secretKey, string $prefix = 'CREDENTIAL_INTAKE')
     {
         if ($secretKey !== null) {
             if (sodium_crypto_box_publickey_from_secretkey($secretKey) !== $publicKey) {
-                throw new \InvalidArgumentException('CREDENTIAL_INTAKE_SECRET_KEY does not match the public key.');
+                throw new \InvalidArgumentException($prefix . '_SECRET_KEY does not match the public key.');
             }
             $this->keyPair = sodium_crypto_box_keypair_from_secretkey_and_publickey($secretKey, $publicKey);
         } else {
@@ -30,14 +30,16 @@ final class SealedBox implements CredentialSealer
         }
     }
 
-    public static function forSealing(string $publicKeyBase64): self
+    /** @param 'CREDENTIAL_INTAKE'|'PAYMENTS_INTAKE' $prefix which key pair, for error messages only (PY-3) */
+    public static function forSealing(string $publicKeyBase64, string $prefix = 'CREDENTIAL_INTAKE'): self
     {
-        return new self(self::decode($publicKeyBase64, 'CREDENTIAL_INTAKE_PUBLIC_KEY'), null);
+        return new self(self::decode($publicKeyBase64, $prefix . '_PUBLIC_KEY'), null, $prefix);
     }
 
-    public static function forOpening(string $publicKeyBase64, #[\SensitiveParameter] string $secretKeyBase64): self
+    /** @param 'CREDENTIAL_INTAKE'|'PAYMENTS_INTAKE' $prefix */
+    public static function forOpening(string $publicKeyBase64, #[\SensitiveParameter] string $secretKeyBase64, string $prefix = 'CREDENTIAL_INTAKE'): self
     {
-        return new self(self::decode($publicKeyBase64, 'CREDENTIAL_INTAKE_PUBLIC_KEY'), self::decode($secretKeyBase64, 'CREDENTIAL_INTAKE_SECRET_KEY'));
+        return new self(self::decode($publicKeyBase64, $prefix . '_PUBLIC_KEY'), self::decode($secretKeyBase64, $prefix . '_SECRET_KEY'), $prefix);
     }
 
     /** @return array{public: string, secret: string} base64 key pair for the environment */

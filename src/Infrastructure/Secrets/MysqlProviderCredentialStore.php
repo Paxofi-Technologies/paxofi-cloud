@@ -23,6 +23,7 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
         private readonly Connection $connection,
         private readonly Repository $repository,
         private readonly SecretCipher $cipher,
+        private readonly CredentialTable $table = CredentialTable::Providers,
     ) {
     }
 
@@ -40,9 +41,9 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
 
         $envelope = $this->cipher->encrypt($secret, $credential->associatedData());
         $this->connection->execute(
-            'INSERT INTO provider_credentials (id, provider, environment, access_level, envelope, key_id, review_due_on)
+            $this->sql('INSERT INTO {table} (id, provider, environment, access_level, envelope, key_id, review_due_on)
              VALUES (:id, :provider, :environment, :access_level, :envelope, :key_id, :review_due_on)
-             ON DUPLICATE KEY UPDATE envelope = VALUES(envelope), key_id = VALUES(key_id), review_due_on = VALUES(review_due_on)',
+             ON DUPLICATE KEY UPDATE envelope = VALUES(envelope), key_id = VALUES(key_id), review_due_on = VALUES(review_due_on)'),
             [
                 'id' => $credential->id,
                 'provider' => $credential->provider,
@@ -73,7 +74,7 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
     public function reencryptAll(): int
     {
         $count = 0;
-        foreach ($this->repository->fetchAll('SELECT id, provider, environment, access_level, envelope FROM provider_credentials ORDER BY id') as $row) {
+        foreach ($this->repository->fetchAll($this->sql('SELECT id, provider, environment, access_level, envelope FROM {table} ORDER BY id')) as $row) {
             $envelope = Row::string($row, 'envelope');
             if (!$this->cipher->needsReencryption($envelope)) {
                 continue;
@@ -81,7 +82,7 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
             $aad = self::toMetadata($row)->associatedData();
             $fresh = $this->cipher->encrypt($this->cipher->decrypt($envelope, $aad), $aad);
             $count += $this->connection->execute(
-                'UPDATE provider_credentials SET envelope = :fresh, key_id = :key_id WHERE id = :id AND envelope = :old',
+                $this->sql('UPDATE {table} SET envelope = :fresh, key_id = :key_id WHERE id = :id AND envelope = :old'),
                 ['fresh' => $fresh, 'key_id' => SecretCipher::keyIdOf($fresh), 'id' => Row::string($row, 'id'), 'old' => $envelope],
             );
         }
@@ -93,7 +94,7 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
     public function summaries(): array
     {
         $summaries = [];
-        foreach ($this->repository->fetchAll('SELECT id, provider, environment, access_level, key_id, review_due_on FROM provider_credentials ORDER BY id') as $row) {
+        foreach ($this->repository->fetchAll($this->sql('SELECT id, provider, environment, access_level, key_id, review_due_on FROM {table} ORDER BY id')) as $row) {
             $reviewDueOn = \DateTimeImmutable::createFromFormat('!Y-m-d', Row::string($row, 'review_due_on'));
             if ($reviewDueOn === false) {
                 throw new \UnexpectedValueException(sprintf('Credential "%s" has an invalid review date.', Row::string($row, 'id')));
@@ -120,7 +121,7 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
     private function row(string $credentialId): ?array
     {
         $rows = $this->repository->fetchAll(
-            'SELECT id, provider, environment, access_level, envelope FROM provider_credentials WHERE id = :id',
+            $this->sql('SELECT id, provider, environment, access_level, envelope FROM {table} WHERE id = :id'),
             ['id' => $credentialId],
         );
 
@@ -131,5 +132,11 @@ final class MysqlProviderCredentialStore implements ProviderCredentialSource, Pr
     private static function toMetadata(array $row): StoredCredential
     {
         return new StoredCredential(Row::string($row, 'id'), Row::string($row, 'provider'), Row::string($row, 'environment'), Row::string($row, 'access_level'));
+    }
+
+    /** Fills in this store's table; the name comes only from CredentialTable, never from input. */
+    private function sql(string $template): string
+    {
+        return strtr($template, ['{table}' => $this->table->value]);
     }
 }

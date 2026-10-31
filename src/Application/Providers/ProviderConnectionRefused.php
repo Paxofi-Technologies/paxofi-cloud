@@ -12,6 +12,8 @@ final class ProviderConnectionRefused extends \RuntimeException
     public const string STEP_UP = 'code_invalid';
     public const string THROTTLED = 'too_many_attempts';
     public const string UNAVAILABLE = 'intake_unavailable';
+    /** A payment gateway key of the wrong mode: test keys on staging, live keys in production (PY-4). */
+    public const string WRONG_KEY_MODE = 'wrong_key_mode';
 
     public function __construct(public readonly string $reason, public readonly ?string $field = null, public readonly int $retryAfter = 0)
     {

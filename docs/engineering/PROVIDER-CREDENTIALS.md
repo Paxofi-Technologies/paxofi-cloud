@@ -40,6 +40,22 @@ both the Namecheap account username (not the email address). See
 4. Within seconds the `provider-worker` container opens the box, checks it, encrypts the secret under the KEK into `provider_credentials`, and deletes the sealed row.
 5. Every staff manager receives a "A provider credential was changed" email naming the provider and time. If nobody expected the change, re-enter the correct credential at once.
 
+### Payment gateways (Paystack, Flutterwave)
+
+**API providers → Payment gateways** (`/api-providers/payment-gateways`) takes the gateways' **secret** keys
+(never the public keys). It works like the other pages, with three differences (payments threat model PY-2…PY-4):
+
+- The web tier seals the key to a **different** public key, the payments intake key. Only the `payments-worker`
+  container can open it; the provider worker cannot.
+- The payments worker stores it in `payment_gateway_credentials`, encrypted under the **payments key ring**
+  (`PAYMENTS_CREDENTIAL_KEYS` / `PAYMENTS_CREDENTIAL_ACTIVE_KEY`), which no other container holds.
+- The key's mode is checked when it is entered: staging accepts only **test** keys (`sk_test_…`,
+  `FLWSECK_TEST-…`); production accepts only **live** keys. A key of the wrong mode is refused with
+  "That key is for the wrong mode" and nothing is stored. The adapters check the mode again before every call.
+
+For Flutterwave also enter the **webhook secret hash**: a long random value (32+ characters) you choose and
+enter in the same place in Flutterwave (Settings → Webhooks → Secret hash). Generate it with a password manager.
+
 The page is visible only to staff with `provider_credentials.manage` (Security Admin).
 Each provider shows one of these statuses:
 

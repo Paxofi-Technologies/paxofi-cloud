@@ -59,7 +59,7 @@ random_secret() { head -c 32 /dev/urandom | base64 | tr -d '/+=\n' | head -c 40;
 ensure_secrets() {
   local version="$1" f keys
   install -d -m 0700 "$ENV_DIR"
-  for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env credential-intake-public.env credential-intake-secret.env provider-credential-keys.env; do
+  for f in outbox-public.env outbox-secret.env mail-providers.env web.env identity-keys.env credential-intake-public.env credential-intake-secret.env provider-credential-keys.env payments-intake-public.env payments-intake-secret.env payments-credential-keys.env; do
     [ -e "$ENV_DIR/$f" ] || install -m 0600 /dev/null "$ENV_DIR/$f"
   done
   if [ ! -s "$ENV_DIR/app.env" ]; then
@@ -111,6 +111,22 @@ ensure_secrets() {
     grep '^CREDENTIAL_INTAKE_SECRET_KEY=' <<<"$keys" > "$ENV_DIR/credential-intake-secret.env"
     grep '^CREDENTIAL_INTAKE_PUBLIC_KEY=' <<<"$keys" > "$ENV_DIR/credential-intake-public.env"
     log "generated credential intake key pair (values not logged)"
+  fi
+  if [ ! -s "$ENV_DIR/payments-credential-keys.env" ]; then
+    # Payments key ring (PY-3): 32 random bytes, payments worker only.
+    printf 'PAYMENTS_CREDENTIAL_KEYS=k1:%s\nPAYMENTS_CREDENTIAL_ACTIVE_KEY=k1\n' "$(head -c 32 /dev/urandom | base64 -w0)" > "$ENV_DIR/payments-credential-keys.env"
+    log "generated payments credential key (value not logged)"
+  fi
+  if [ ! -s "$ENV_DIR/payments-intake-public.env" ]; then
+    # Payments intake key pair (PY-3): the web tier gets the public half only.
+    keys="$(compose "$version" run --rm -T --no-deps --entrypoint php php -r \
+      '$k = sodium_crypto_box_keypair(); echo "PAYMENTS_INTAKE_PUBLIC_KEY=", base64_encode(sodium_crypto_box_publickey($k)), "\n", "PAYMENTS_INTAKE_SECRET_KEY=", base64_encode(sodium_crypto_box_secretkey($k)), "\n"; sodium_memzero($k);' \
+      2>>"$LOG_FILE")" || die "release: could not generate the payments intake keys"
+    grep -Eq '^PAYMENTS_INTAKE_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' <<<"$keys" && grep -Eq '^PAYMENTS_INTAKE_SECRET_KEY=[A-Za-z0-9+/]{43}=$' <<<"$keys" \
+      || die "release: unexpected payments intake key output"
+    grep '^PAYMENTS_INTAKE_SECRET_KEY=' <<<"$keys" > "$ENV_DIR/payments-intake-secret.env"
+    grep '^PAYMENTS_INTAKE_PUBLIC_KEY=' <<<"$keys" > "$ENV_DIR/payments-intake-public.env"
+    log "generated payments intake key pair (values not logged)"
   fi
 }
 

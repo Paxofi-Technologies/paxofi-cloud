@@ -25,6 +25,11 @@ use PaxofiCloud\Domain\Staff\StaffRole;
  * nothing about who wrote it, PC-T8), stores the secret under the KEK and
  * deletes the row. Every stored credential is announced to all active staff
  * managers, so a forged row cannot be stored silently.
+ *
+ * The same worker runs in two lanes: the provider worker (registrars, server
+ * providers; main KEK) and the payments worker (payment gateways; payments
+ * key ring, THREAT-MODEL-PAYMENTS.md PY-3). Each reads only its own rows and
+ * refuses a payload for the other lane.
  */
 final readonly class CredentialIntakeWorker
 {
@@ -42,6 +47,7 @@ final readonly class CredentialIntakeWorker
         private AuditTrail $audit,
         private Clock $clock,
         private Logger $logger,
+        private bool $paymentGateways = false,
     ) {
     }
 
@@ -49,7 +55,7 @@ final readonly class CredentialIntakeWorker
     public function runOnce(): int
     {
         $handled = 0;
-        foreach ($this->intake->oldest(self::BATCH) as $row) {
+        foreach ($this->intake->oldest(self::BATCH, $this->paymentGateways) as $row) {
             $handled++;
             try {
                 $payload = $this->box->open($row['sealed']);
@@ -96,7 +102,7 @@ final readonly class CredentialIntakeWorker
             throw new \InvalidArgumentException('malformed');
         }
         $provider = ProviderConnection::tryFrom(is_string($data['provider'] ?? null) ? $data['provider'] : '');
-        if ($provider === null || $provider->value !== $row['provider']) {
+        if ($provider === null || $provider->value !== $row['provider'] || $provider->isPaymentGateway() !== $this->paymentGateways) {
             throw new \InvalidArgumentException('provider_mismatch');
         }
         $expectedId = $provider->credentialId($this->environment);

@@ -48,11 +48,12 @@ final readonly class MysqlCredentialIntake implements CredentialIntake
         return $pending;
     }
 
-    public function oldest(int $limit): array
+    public function oldest(int $limit, bool $paymentGateways = false): array
     {
-        $rows = $this->repository->fetchAll(
-            'SELECT credential_id, provider, sealed, submitted_by FROM provider_credential_intake ORDER BY submitted_at, credential_id LIMIT 20',
-        );
+        // Two fixed statements, one per lane (PY-3); the gateway list matches ProviderConnection::isPaymentGateway().
+        $rows = $this->repository->fetchAll($paymentGateways
+            ? "SELECT credential_id, provider, sealed, submitted_by FROM provider_credential_intake WHERE provider IN ('paystack', 'flutterwave') ORDER BY submitted_at, credential_id LIMIT 20"
+            : "SELECT credential_id, provider, sealed, submitted_by FROM provider_credential_intake WHERE provider NOT IN ('paystack', 'flutterwave') ORDER BY submitted_at, credential_id LIMIT 20");
 
         return array_map(static fn (array $row): array => [
             'credential_id' => Row::string($row, 'credential_id'),

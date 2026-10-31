@@ -28,6 +28,7 @@ use PaxofiCloud\Cli\Console;
 use PaxofiCloud\Cli\DbGrantsCommand;
 use PaxofiCloud\Cli\FxStatusCommand;
 use PaxofiCloud\Cli\FxUpdateCommand;
+use PaxofiCloud\Cli\PaymentsWorkCommand;
 use PaxofiCloud\Cli\ProvidersWorkCommand;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
 use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
@@ -56,6 +57,7 @@ use PaxofiCloud\Application\Contracts\EmailOutbox;
 use PaxofiCloud\Application\Contracts\StaffDirectory;
 use PaxofiCloud\Domain\Providers\ProviderConnection;
 use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
+use PaxofiCloud\Infrastructure\Secrets\CredentialTable;
 use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
 use PaxofiCloud\Infrastructure\Secrets\SealedBox;
 use Paxofi\Core\Contracts\TransactionManager;
@@ -301,6 +303,33 @@ final readonly class CliProvider implements Provider
                     Resolve::get($c, Logger::class),
                 );
             }, $console, null, $activeSyncs, $activeSpaceshipCheck, static fn (): FxRateUpdater => Resolve::get($c, FxRateUpdater::class), $registrarCheck));
+            // Payments worker (THREAT-MODEL-PAYMENTS.md PY-3): the only process with the payments
+            // intake secret key and the payments key ring; it cannot read provider credentials.
+            $registry->register(new PaymentsWorkCommand(static function () use ($c): CredentialIntakeWorker {
+                $public = getenv('PAYMENTS_INTAKE_PUBLIC_KEY');
+                $secret = getenv('PAYMENTS_INTAKE_SECRET_KEY');
+                if (!is_string($public) || !is_string($secret) || $public === '' || $secret === '') {
+                    throw new \InvalidArgumentException('PAYMENTS_INTAKE_PUBLIC_KEY and PAYMENTS_INTAKE_SECRET_KEY must be set.');
+                }
+                $ring = KeyRing::fromNamedProcessEnvironment('PAYMENTS_CREDENTIAL_KEYS', 'PAYMENTS_CREDENTIAL_ACTIVE_KEY', '(payments worker only)')
+                    ?? throw new \InvalidArgumentException('PAYMENTS_CREDENTIAL_KEYS and PAYMENTS_CREDENTIAL_ACTIVE_KEY must be set.');
+                $env = Resolve::get($c, Configuration::class)->get('app.env');
+                $connection = Resolve::get($c, Connection::class);
+                $repository = Resolve::get($c, Repository::class);
+
+                return new CredentialIntakeWorker(
+                    ProviderConnection::environmentFor(is_string($env) ? $env : ''),
+                    new MysqlCredentialIntake($connection, $repository, Resolve::get($c, TransactionManager::class)),
+                    SealedBox::forOpening($public, $secret, 'PAYMENTS_INTAKE'),
+                    new MysqlProviderCredentialStore($connection, $repository, new SecretCipher($ring), CredentialTable::PaymentGateways),
+                    Resolve::get($c, StaffDirectory::class),
+                    Resolve::get($c, EmailOutbox::class),
+                    Resolve::get($c, AuditTrail::class),
+                    new SystemClock(),
+                    Resolve::get($c, Logger::class),
+                    paymentGateways: true,
+                );
+            }, $console));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

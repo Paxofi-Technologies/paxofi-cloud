@@ -49,6 +49,11 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
   printf 'CREDENTIAL_INTAKE_PUBLIC_KEY=%s\n' "${intake% *}" > "$env_dir/credential-intake-public.env"
   printf 'CREDENTIAL_INTAKE_SECRET_KEY=%s\n' "${intake#* }" > "$env_dir/credential-intake-secret.env"
   printf 'PROVIDER_CREDENTIAL_KEYS=k1:%s\nPROVIDER_CREDENTIAL_ACTIVE_KEY=k1\n' "$(openssl rand -base64 32)" > "$env_dir/provider-credential-keys.env"
+  # Payments (PY-3): its own intake key pair and key ring.
+  payments="$(docker run --rm --entrypoint php "paxoficloud-php:$APP_VERSION" -r '$k = sodium_crypto_box_keypair(); echo base64_encode(sodium_crypto_box_publickey($k)), " ", base64_encode(sodium_crypto_box_secretkey($k));')"
+  printf 'PAYMENTS_INTAKE_PUBLIC_KEY=%s\n' "${payments% *}" > "$env_dir/payments-intake-public.env"
+  printf 'PAYMENTS_INTAKE_SECRET_KEY=%s\n' "${payments#* }" > "$env_dir/payments-intake-secret.env"
+  printf 'PAYMENTS_CREDENTIAL_KEYS=k1:%s\nPAYMENTS_CREDENTIAL_ACTIVE_KEY=k1\n' "$(openssl rand -base64 32)" > "$env_dir/payments-credential-keys.env"
 )
 
 echo "== start"
@@ -156,9 +161,21 @@ grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' <<<"$web
 provider_env="$("${compose[@]}" run --rm -T provider-worker env)"
 grep -qE '^(TURNSTILE_|MFA_|EMAIL_OUTBOX_SECRET_KEY|SMTP_|POSTMARK_)' <<<"$provider_env" && fail "web or mail secrets present in the provider worker"
 test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/admin-api/v1/provider-connections")" = 401 || fail "provider connections reachable without a staff session"
+grep -qE '^PAYMENTS_' <<<"$provider_env" && fail "payments keys present in the provider worker"
+
+echo "== payments worker"
+# PY-3: it boots with the payments intake secret key and key ring, and drains an empty payments lane.
+"${compose[@]}" run --rm -T payments-worker php bin/paxoficloud payments:work --once | grep -q 'Handled 0 gateway credential submission(s).' || fail "payments worker does not start"
+grep -q '^PAYMENTS_INTAKE_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the payments intake public key"
+grep -qE '^(PAYMENTS_INTAKE_SECRET_KEY|PAYMENTS_CREDENTIAL_[A-Z_]+)=' <<<"$web_env" && fail "payments intake secret key or key ring present in the php container"
+# Captured first: under pipefail an early `grep -q` exit could hide a match.
+mail_env="$("${compose[@]}" run --rm -T mail-worker env)"
+grep -qE '^PAYMENTS_' <<<"$mail_env" && fail "payments keys present in the mail worker"
+payments_env="$("${compose[@]}" run --rm -T payments-worker env)"
+grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_|TURNSTILE_|MFA_|EMAIL_OUTBOX_SECRET_KEY|SMTP_|POSTMARK_)' <<<"$payments_env" && fail "provider, web or mail secrets present in the payments worker"
 
 echo "== hardening"
-for service in php nginx redis provider-worker; do
+for service in php nginx redis provider-worker payments-worker; do
   id="$("${compose[@]}" ps -q "$service")"
   test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$id")" = true || fail "$service root filesystem is writable"
   docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$id" | grep -q 'no-new-privileges:true' || fail "$service lacks no-new-privileges"
@@ -169,14 +186,14 @@ test "$("${compose[@]}" exec -T redis id -u)" != 0 || fail "redis runs as root"
 "${compose[@]}" exec -T php env | grep -q '^PROVIDER_CREDENTIAL' && fail "KEK present in the php container"
 # P-5/D-04: secret values live only in env files. They must never appear in a
 # container's command, entrypoint or labels (visible to `docker inspect`).
-for service in php nginx mysql redis provider-worker; do
+for service in php nginx mysql redis provider-worker payments-worker; do
   id="$("${compose[@]}" ps -q "$service")"
   config="$(docker inspect -f '{{json .Config.Cmd}}{{json .Config.Entrypoint}}{{json .Config.Labels}}' "$id")"
   test -n "$config" || fail "cannot inspect $service"
   while IFS='=' read -r _ value; do
     [ -n "$value" ] || continue
     grep -qF -- "$value" <<<"$config" && fail "a secret value appears in the $service container definition"
-  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=|^TURNSTILE_SECRET_KEY=|^MFA_(SECRET_KEYS|RECOVERY_KEY)=|^CREDENTIAL_INTAKE_SECRET_KEY=|^PROVIDER_CREDENTIAL_KEYS=" "$env_dir"/*.env)
+  done < <(grep -hE "^(DB|MYSQL|REDIS)_PASSWORD=|^EMAIL_OUTBOX_SECRET_KEY=|^POSTMARK_SERVER_TOKEN=|^SMTP_PASSWORD_B64=|^TURNSTILE_SECRET_KEY=|^MFA_(SECRET_KEYS|RECOVERY_KEY)=|^CREDENTIAL_INTAKE_SECRET_KEY=|^PROVIDER_CREDENTIAL_KEYS=|^PAYMENTS_INTAKE_SECRET_KEY=|^PAYMENTS_CREDENTIAL_KEYS=" "$env_dir"/*.env)
 done
 # Code inside the image is not writable by the PHP user.
 "${compose[@]}" exec -T php sh -c 'test ! -w /app/src && test ! -w /app/vendor' || fail "application code is writable"

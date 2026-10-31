@@ -14,19 +14,22 @@ use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
 use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
+use PaxofiCloud\Infrastructure\Secrets\CredentialTable;
+use PaxofiCloud\Infrastructure\Secrets\DecryptionFailed;
 use PaxofiCloud\Infrastructure\Secrets\KeyRing;
 use PaxofiCloud\Infrastructure\Secrets\MysqlCredentialIntake;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStatus;
 use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStore;
 use PaxofiCloud\Infrastructure\Secrets\SealedBox;
 use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
+use PaxofiCloud\Infrastructure\Secrets\StoredCredential;
 use PaxofiCloud\Tests\Support\AuditFixtures;
 use PaxofiCloud\Tests\Support\InMemoryStaffDirectory;
 use PaxofiCloud\Tests\Support\MutableClock;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
 use PDOException;
 
-/** Migration 0012 and the intake → worker → encrypted store path on MySQL 8.4 (PC-1, PC-5). */
+/** Migrations 0012 and 0026 and the intake → worker → encrypted store path on MySQL 8.4 (PC-1, PC-5, PY-3). */
 final class ProviderConnectionsIntegrationTest extends IntegrationTestCase
 {
     private const string STAFF = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1';
@@ -81,6 +84,55 @@ final class ProviderConnectionsIntegrationTest extends IntegrationTestCase
         self::assertStringNotContainsString(self::SECRET, (string) json_encode($dump->fetchAll()));
     }
 
+    public function testGatewayKeysGoOnlyThroughThePaymentsLaneIntoTheirOwnTable(): void
+    {
+        $providerKeys = SealedBox::generateKeyPair();
+        $paymentKeys = SealedBox::generateKeyPair();
+        $secret = '{"secret_key":"integration-gateway-key-not-real"}';
+        $this->intake->replace('paystack-dev', 'paystack', SealedBox::forSealing($paymentKeys['public'], 'PAYMENTS_INTAKE')->seal((string) json_encode([
+            'v' => 1, 'credential_id' => 'paystack-dev', 'provider' => 'paystack', 'environment' => 'dev',
+            'access_level' => 'read-write', 'secret' => $secret, 'submitted_by' => self::STAFF,
+        ])), self::STAFF, new \DateTimeImmutable('2026-10-20T10:00:00Z'));
+        $this->intake->replace('vultr-dev', 'vultr', str_repeat('A', 80), self::STAFF, new \DateTimeImmutable('2026-10-20T10:00:01Z'));
+
+        self::assertSame(['vultr-dev'], array_column($this->intake->oldest(10), 'credential_id'), 'provider lane');
+        self::assertSame(['paystack-dev'], array_column($this->intake->oldest(10, true), 'credential_id'), 'payments lane');
+
+        $providerRing = new SecretCipher(KeyRing::fromEnvironment(KeyRing::generateEntry('k1'), 'k1'));
+        $paymentsStore = new MysqlProviderCredentialStore($this->connection, $this->repository, new SecretCipher(KeyRing::fromEnvironment(KeyRing::generateEntry('k1'), 'k1')), CredentialTable::PaymentGateways);
+        $worker = new CredentialIntakeWorker(
+            'dev',
+            $this->intake,
+            SealedBox::forOpening($paymentKeys['public'], $paymentKeys['secret'], 'PAYMENTS_INTAKE'),
+            $paymentsStore,
+            new InMemoryStaffDirectory(),
+            new RecordingOutbox(),
+            AuditFixtures::trail(),
+            new MutableClock(new \DateTimeImmutable('2026-10-20T10:00:05Z')),
+            Resolve::get(AppFactory::create(self::basePath())->container(), Logger::class),
+            paymentGateways: true,
+        );
+
+        self::assertSame(1, $worker->runOnce());
+        self::assertSame($secret, $paymentsStore->load('paystack-dev')->reveal());
+        self::assertSame(['vultr-dev'], array_column($this->intake->oldest(10), 'credential_id'), 'the provider row is untouched');
+        self::assertEquals(0, self::scalar("SELECT COUNT(*) FROM provider_credentials WHERE provider = 'paystack'"));
+        self::assertArrayHasKey('paystack-dev', (new MysqlProviderCredentialStatus($this->repository))->configured(), 'the admin overview sees both tables');
+
+        // The provider key ring cannot read the gateway row, and the provider store never lists it.
+        $row = self::scalar("SELECT envelope FROM payment_gateway_credentials WHERE id = 'paystack-dev'");
+        self::assertIsString($row);
+        self::assertStringNotContainsString('integration-gateway-key', $row);
+        $this->expectException(DecryptionFailed::class);
+        $providerRing->decrypt($row, (new StoredCredential('paystack-dev', 'paystack', 'dev', 'read-write'))->associatedData());
+    }
+
+    public function testThePaymentGatewayTableRefusesOtherProviders(): void
+    {
+        $this->expectException(PDOException::class);
+        self::pdo()->exec("INSERT INTO payment_gateway_credentials (id, provider, environment, access_level, envelope, key_id, review_due_on) VALUES ('vultr-dev', 'vultr', 'dev', 'read-write', 'x', 'k1', '2027-01-01')");
+    }
+
     public function testRemovingKeepsANewerSubmission(): void
     {
         $this->intake->replace('hetzner-dev', 'hetzner', str_repeat('A', 80), self::STAFF, new \DateTimeImmutable());
@@ -113,5 +165,13 @@ final class ProviderConnectionsIntegrationTest extends IntegrationTestCase
                 $this->addToAssertionCount(1);
             }
         }
+    }
+
+    private static function scalar(string $sql): mixed
+    {
+        $statement = self::pdo()->query($sql);
+        self::assertNotFalse($statement);
+
+        return $statement->fetchColumn();
     }
 }
