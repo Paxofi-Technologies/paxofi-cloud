@@ -19,6 +19,8 @@
 #   the payments intake secret key; the web tier gets the payments intake
 #   PUBLIC key only, and the provider worker gets nothing payment-related, so
 #   no other process can read a gateway key (payments threat model PY-3).
+# - payments-web serves only the two gateway webhook paths and holds only the
+#   payments key ring, to check webhook signatures (PY-7).
 
 name: paxoficloud
 
@@ -114,6 +116,33 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
 
+  # Gateway webhooks only (payments threat model PY-3, PY-7): the same image as
+  # php, but APP_ROLE=payments-web routes exactly POST /webhooks/paystack and
+  # /webhooks/flutterwave and nothing else. It holds the payments key ring (to
+  # check signatures with the gateway key) and nothing else secret: no intake
+  # keys, no provider KEK, no web or mail secrets. No egress: it never calls a
+  # gateway; it only records the event and brings the payments worker's next
+  # check forward.
+  payments-web:
+    <<: *hardening
+    image: paxoficloud-php:${APP_VERSION:?APP_VERSION is required}
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/payments-credential-keys.env"
+    environment:
+      <<: *app-environment
+      APP_ROLE: payments-web
+    tmpfs: [/tmp]
+    networks: [edge, data]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 9000) ? 0 : 1);'"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   nginx:
     <<: *hardening
     image: paxoficloud-nginx:${APP_VERSION:?APP_VERSION is required}
@@ -124,6 +153,7 @@ services:
     networks: [edge]
     depends_on:
       php: {condition: service_healthy}
+      payments-web: {condition: service_healthy}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/live || exit 1"]
       interval: 5s
