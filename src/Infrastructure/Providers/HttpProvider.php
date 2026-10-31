@@ -19,6 +19,7 @@ use PaxofiCloud\Http\Controllers\BillingDetailsController;
 use PaxofiCloud\Http\Controllers\CartController;
 use PaxofiCloud\Http\Controllers\CheckoutController;
 use PaxofiCloud\Http\Controllers\OrdersController;
+use PaxofiCloud\Http\Controllers\PaymentsController;
 use PaxofiCloud\Http\Controllers\CatalogueController;
 use PaxofiCloud\Http\Controllers\DomainCheckController;
 use PaxofiCloud\Http\Controllers\DomainPricesController;
@@ -102,6 +103,10 @@ final class HttpProvider implements Provider
             $router->get('/api/v1/orders', static fn (HttpRequest $r): HttpResponse => $orders()->list($r));
             $router->get('/api/v1/orders/detail', static fn (HttpRequest $r): HttpResponse => $orders()->detail($r));
             $router->get('/api/v1/orders/invoice', static fn (HttpRequest $r): HttpResponse => $orders()->invoice($r));
+            $payments = static fn (): PaymentsController => Resolve::get($c, PaymentsController::class);
+            $router->get('/api/v1/payments/options', static fn (HttpRequest $r): HttpResponse => $payments()->options($r));
+            $router->post('/api/v1/payments', static fn (HttpRequest $r): HttpResponse => $payments()->start($r));
+            $router->get('/api/v1/payments/detail', static fn (HttpRequest $r): HttpResponse => $payments()->detail($r));
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('GET', '/api/v1/catalogue', CatalogueController::class, $dispatcher);
             $router->controller('GET', '/api/v1/domains/search', DomainSearchController::class, $dispatcher);
