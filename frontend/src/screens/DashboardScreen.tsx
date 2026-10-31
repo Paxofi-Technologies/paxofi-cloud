@@ -52,28 +52,30 @@ export function DashboardScreen({ onFindDomain, fullName = sampleCustomer.name, 
 
       <div className="pc-grid-2">
         <Card title="Your services" actions={<Button variant="ghost" size="sm">View all</Button>}>
-          <table className="pc-table">
-            <thead>
-              <tr>
-                <th scope="col">Service</th>
-                <th scope="col">Type</th>
-                <th scope="col">Status</th>
-                <th scope="col">Renews</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sampleServices.map((service) => (
-                <tr key={service.name}>
-                  <td className="pc-table__primary">{service.name}</td>
-                  <td>{service.kind}</td>
-                  <td>
-                    <Badge tone={service.status.tone}>{service.status.label}</Badge>
-                  </td>
-                  <td>{service.renews}</td>
+          <div className="pc-table-scroll">
+            <table className="pc-table">
+              <thead>
+                <tr>
+                  <th scope="col">Service</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Renews</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sampleServices.map((service) => (
+                  <tr key={service.name}>
+                    <td className="pc-table__primary">{service.name}</td>
+                    <td>{service.kind}</td>
+                    <td>
+                      <Badge tone={service.status.tone}>{service.status.label}</Badge>
+                    </td>
+                    <td>{service.renews}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
 
         <Card title="Next invoice">
