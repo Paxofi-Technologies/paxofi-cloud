@@ -29,6 +29,10 @@ use PaxofiCloud\Cli\DbGrantsCommand;
 use PaxofiCloud\Cli\FxStatusCommand;
 use PaxofiCloud\Cli\FxUpdateCommand;
 use PaxofiCloud\Cli\PaymentsWorkCommand;
+use PaxofiCloud\Application\Payments\CheckoutStarter;
+use PaxofiCloud\Domain\Payments\GatewayMode;
+use PaxofiCloud\Infrastructure\Payments\ConfiguredPaymentGateways;
+use PaxofiCloud\Infrastructure\Payments\MysqlPaymentAttemptStore;
 use PaxofiCloud\Cli\ProvidersWorkCommand;
 use PaxofiCloud\Application\Registrar\DomainCostSync;
 use PaxofiCloud\Application\Registrar\RegistrarWriteGuard;
@@ -329,7 +333,30 @@ final readonly class CliProvider implements Provider
                     Resolve::get($c, Logger::class),
                     paymentGateways: true,
                 );
-            }, $console));
+            }, $console, null, static function () use ($c): CheckoutStarter {
+                // PY-6: only this process can decrypt gateway keys, so only it starts hosted checkouts.
+                $ring = KeyRing::fromNamedProcessEnvironment('PAYMENTS_CREDENTIAL_KEYS', 'PAYMENTS_CREDENTIAL_ACTIVE_KEY', '(payments worker only)')
+                    ?? throw new \InvalidArgumentException('PAYMENTS_CREDENTIAL_KEYS and PAYMENTS_CREDENTIAL_ACTIVE_KEY must be set.');
+                $configuration = Resolve::get($c, Configuration::class);
+                $env = $configuration->get('app.env');
+                $env = is_string($env) ? $env : '';
+                $appUrl = $configuration->get('app.url');
+                $connection = Resolve::get($c, Connection::class);
+                $repository = Resolve::get($c, Repository::class);
+
+                return new CheckoutStarter(
+                    new MysqlPaymentAttemptStore($connection, $repository),
+                    new ConfiguredPaymentGateways(
+                        new MysqlProviderCredentialStore($connection, $repository, new SecretCipher($ring), CredentialTable::PaymentGateways),
+                        ProviderConnection::environmentFor($env),
+                        GatewayMode::forEnvironment($env),
+                    ),
+                    is_string($appUrl) ? $appUrl : '',
+                    Resolve::get($c, AuditTrail::class),
+                    new SystemClock(),
+                    Resolve::get($c, Logger::class),
+                );
+            }));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

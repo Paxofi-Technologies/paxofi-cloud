@@ -109,7 +109,7 @@ services:
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/payments-credential-keys.env"
     environment: *app-environment
     tmpfs: [/tmp]
-    # data: MySQL; egress: HTTPS to the allow-listed gateway APIs (next step).
+    # data: MySQL; egress: HTTPS to the allow-listed gateway APIs (hosted checkout, PY-6).
     networks: [data, egress]
     depends_on:
       mysql: {condition: service_healthy}

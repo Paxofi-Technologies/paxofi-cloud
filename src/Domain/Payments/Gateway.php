@@ -22,6 +22,17 @@ enum Gateway: string
     }
 
     /**
+     * Whether we take payments in this currency through the gateway (PY-17).
+     * NGN only for now: Paystack USD waits on the merchant account (PA-5) and
+     * Flutterwave USD hosted checkout is not yet proven (R-2). The staff
+     * on/off switch per gateway and currency comes with the settings screen.
+     */
+    public function collects(Currency $currency): bool
+    {
+        return $currency === Currency::NGN;
+    }
+
+    /**
      * The smallest amount the gateway accepts in a currency, in minor units
      * (Paystack: NGN 50.00, USD 2.00). Null when the gateway publishes none;
      * its own refusal then applies.

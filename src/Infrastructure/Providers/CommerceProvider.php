@@ -29,6 +29,10 @@ use PaxofiCloud\Http\Controllers\BillingDetailsController;
 use PaxofiCloud\Application\Checkout\Checkout;
 use PaxofiCloud\Http\Controllers\CheckoutController;
 use PaxofiCloud\Http\Controllers\OrdersController;
+use PaxofiCloud\Http\Controllers\PaymentsController;
+use PaxofiCloud\Application\Payments\InvoicePayments;
+use PaxofiCloud\Domain\Providers\ProviderConnection;
+use PaxofiCloud\Infrastructure\Payments\MysqlPaymentAttemptStore;
 use PaxofiCloud\Infrastructure\Ledger\MysqlLedger;
 use PaxofiCloud\Infrastructure\Orders\MysqlOrderStore;
 use Paxofi\Core\Contracts\Configuration;
@@ -153,6 +157,19 @@ final class CommerceProvider implements Provider
             Resolve::get($c, MysqlOrderStore::class),
             Resolve::get($c, Sessions::class),
         ));
+        // Paying invoices (payments PY-5, PY-6, PY-17): the web tier records attempts; the payments worker starts checkouts.
+        $container->singleton(PaymentsController::class, static function (Container $c): PaymentsController {
+            $env = Resolve::get($c, Configuration::class)->get('app.env');
+
+            return new PaymentsController(new InvoicePayments(
+                new MysqlPaymentAttemptStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+                new MysqlBillingStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                Resolve::get($c, AuditTrail::class),
+                new SystemClock(),
+                ProviderConnection::environmentFor(is_string($env) ? $env : ''),
+            ), Resolve::get($c, Sessions::class));
+        });
         // Public price list (DS-11): selling prices only, cacheable.
         $container->singleton(DomainPricesController::class, static fn (Container $c): DomainPricesController => new DomainPricesController(new DomainPriceList(
             Resolve::get($c, ExtensionQuotes::class),
