@@ -78,7 +78,7 @@ test that keeps it that way.
 | DS-16 | **The port-43 client** (new `WhoisClient`). It runs only in the provider worker, never in the web tier: names are queued exactly as in DS-13 (Redis, random job ID, 2-minute TTL), so the web tier gains no new egress. The worker resolves the host with its own resolver and connects only to a public IP (the same pinning rules as `ProviderHttpClient`): 3 s connect, 5 s total, 32 KiB read cap. It sends exactly `<domain>\r\n`, where the domain is built by us from a validated label and an extension we sell (DS-4). The response is never stored, logged or shown. |
 | DS-17 | **Reading a WHOIS reply.** `available` only when the reply contains a known "no match" phrase. A built-in list holds the common ones (e.g. "No match for", "NOT FOUND", "No Data Found", "No entries found", "Status: free", "Domain not found"). Staff may add one plain-text phrase per extension (no regular expressions, so no ReDoS; 3–100 printable characters; case-insensitive substring). A known rate-limit or error phrase ("limit exceeded", "try again", "quota"), an empty reply or a timeout gives `unknown`. Any other non-empty reply gives `taken`. A wrong guess therefore errs towards "taken", never towards "available". |
 | DS-18 | **Registrar check by extension.** The DS-13 job asks the registrar that would sell each name, the cheapest healthy one or the pinned one (DX-2/DX-3), with one bulk call per registrar per job, through each adapter's `AvailabilityChecker`. A registrar without an availability call (or one that is paused, e.g. go54 until its docs arrive) falls back to DomainNameAPI when that registrar sells the extension; otherwise the result is `unknown`. |
-| DS-19 | **Limits.** All DS-6/DS-13 per-IP limits are unchanged. For each WHOIS server: at most 1 query per second and 30 per minute across all users (Redis); over that, `unknown` with no call. For `whois.iana.org`: at most 10 discovery queries per hour. At most 6 names per job (DS-5) and at most 10 jobs per worker loop. Results are cached exactly as in DS-7 (hashed keys, 10 min / 1 min). |
+| DS-19 | **Limits.** All DS-6/DS-13 per-IP limits are unchanged. For each WHOIS server: at most 4 queries per second and 30 per minute across all users (Redis); over that, `unknown` with no call. For `whois.iana.org`: at most 10 discovery queries per hour. At most 6 names per job (DS-5) and at most 10 jobs per worker loop. Results are cached exactly as in DS-7 (hashed keys, 10 min / 1 min). |
 | DS-20 | **Privacy (DS-8 extended).** WHOIS replies are not kept. Neither the names nor the replies are logged; logs carry only fixed codes (`whois.timeout`, `whois.no_server`, `whois.rate_limited`) and the server host. Staff see per-server counts of the last 24 h on Domain costs ("Lookup sources"). |
 | DS-21 | **Admin and audit.** The lookup mode and WHOIS phrase need `catalogue.manage`; a fixed WHOIS server needs Super Admin. Every change is audited (`extension.lookup_changed`, old and new value). The admin page shows, per extension, the source that answered last ("RDAP", "WHOIS whois.nic.net.ng", "Registrar") and when. |
 
@@ -121,14 +121,16 @@ instead of after the slowest lookup.
 |---|---|
 | DS-27 | **Nobody left out: coverage report.** Admin "Lookup coverage" lists every extension on sale from all registrars. For each one it shows the working sources: DNS (always), RDAP server (from IANA bootstrap, else from the IANA root record learned with the WHOIS referral), WHOIS server, and registrar check (the selling registrar supports it). It also shows the source that answered last and when. An extension whose only source is DNS is flagged red: it can show "taken" but never "available", so it is sold only after the registrar check at checkout. A daily worker job checks one known-registered name per extension (the registry's own `nic.<tld>` where it exists) through each source and records which ones work, so the report stays true without staff action. |
 
-**Infrastructure.** The provider worker needs outbound TCP 43. Its egress is currently HTTPS only
-(Hetzner firewall and container network), so this adds one firewall rule through IaC: port 43, any
-destination, provider worker host only. The web tier and the payments containers are unchanged.
+**Infrastructure.** The provider worker needs outbound TCP 43. On staging the Vultr firewall filters
+inbound traffic only, and the worker's `egress` network has no port filter, because "HTTPS to allow-listed
+hosts" is enforced in code (`ProviderHttpClient`). Port 43 therefore needs no infra change. It is
+enforced the same way: `WhoisClient` connects only to a vetted public address of a validated WHOIS host,
+on port 43 only. The web tier and the payments containers do not get the WHOIS code.
 
 **Build order:**
 1. `WhoisClient`, the reply parser and IANA discovery, with tests (library only, not wired).
 2. Worker job: the lookup chain (RDAP, WHOIS, registrar) with per-registrar routing (DS-18), progressive
-   results (DS-24) and the lookup budget (DS-25). Firewall rule for TCP 43.
+   results (DS-24) and the lookup budget (DS-25).
 3. Name ideas (DS-23) and the search-extensions setting (DS-22).
 4. Admin: lookup mode, WHOIS phrase and fixed server, search extensions, idea settings, "Test a lookup"
    and lookup health (DS-21, DS-26); migration for the settings.
@@ -147,6 +149,7 @@ destination, provider worker host only. The web tier and the payments containers
 
 | Date | Change |
 |---|---|
+| 31 Oct 2026 | Step 2: the worker job answers each name by DNS (NS = taken), then the registrar (one bulk call, authoritative, premium), then WHOIS for names still unknown. The registrar comes before WHOIS inside the job because it is one call and the only premium source, which also spares the per-server WHOIS budget. WHOIS gets 12 s per worker run. Per-server limit raised to 4/s (30/min) because `.ng` and `.com.ng` share one server and a search often checks both. No firewall change needed (egress filtered in code, not by network). |
 | 31 Oct 2026 | §7: DNS first in the lookup order (taken only), DS-27 coverage report and daily self-test; research notes on the 2025 gTLD WHOIS sunset and ccTLD WHOIS. Build step 1 (WHOIS client, reply reader, IANA discovery) added, not wired. |
 | 31 Oct 2026 | §7 DS-22 to DS-26, DS-T20 to DS-T23: search extensions chosen from all registrars, built-in name ideas (up to 20, available only), progressive results, lookup budget, staff test and health tools (CEO screenshots of WHMCS lookup provider and namespinning; "not a must we follow WHMCS"). |
 | 31 Oct 2026 | §7 DS-14 to DS-21, DS-T13 to DS-T19, R-4: multi-source lookup (RDAP, port-43 WHOIS, registrar per extension), proposed before code at the CEO's request. Notes that the extension list is already the union of all synced registrars. |

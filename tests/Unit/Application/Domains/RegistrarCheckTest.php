@@ -9,6 +9,11 @@ use PaxofiCloud\Application\Domains\DomainSearchRefused;
 use PaxofiCloud\Application\Domains\RegistrarCheck;
 use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
+use PaxofiCloud\Application\Contracts\DnsProbe;
+use PaxofiCloud\Application\Contracts\WhoisLookup;
+use PaxofiCloud\Application\Domains\WhoisAvailability;
+use PaxofiCloud\Application\Domains\WhoisServerDirectory;
+use PaxofiCloud\Application\Domains\WhoisUnavailable;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Application\Registrar\RegistrarUnavailable;
 use PaxofiCloud\Domain\Money\BasisPoints;
@@ -30,7 +35,7 @@ use PaxofiCloud\Tests\Support\ScriptedPriceFeed;
 use PaxofiCloud\Tests\Support\ScriptedRateLimiter;
 use PHPUnit\Framework\TestCase;
 
-/** THREAT-MODEL-DOMAIN-SEARCH.md DS-13 / DS-T10 to DS-T12. Test numbers only. */
+/** THREAT-MODEL-DOMAIN-SEARCH.md DS-13, DS-14 / DS-T10 to DS-T12, DS-T14. Test numbers only. */
 final class RegistrarCheckTest extends TestCase
 {
     private InMemoryRedis $redis;
@@ -38,6 +43,8 @@ final class RegistrarCheckTest extends TestCase
     private InMemoryFxRateStore $rates;
     /** @var list<list<string>> */
     public array $asked = [];
+    /** @var list<string> */
+    public array $whoisAsked = [];
 
     protected function setUp(): void
     {
@@ -58,7 +65,7 @@ final class RegistrarCheckTest extends TestCase
     }
 
     /** @param array<string, AvailabilityAnswer>|null $answers null: registrar not connected */
-    private function worker(?array $answers, bool $fail = false, ?RegistrarCheckHealth $health = null): RegistrarCheckWorker
+    private function worker(?array $answers, bool $fail = false, ?RegistrarCheckHealth $health = null, ?DnsProbe $dns = null, ?WhoisAvailability $whois = null): RegistrarCheckWorker
     {
         $checker = $answers === null ? null : new class ($this, $answers, $fail) implements AvailabilityChecker {
             /** @param array<string, AvailabilityAnswer> $answers */
@@ -77,7 +84,75 @@ final class RegistrarCheckTest extends TestCase
             }
         };
 
-        return new RegistrarCheckWorker($this->redis, static fn (): ?AvailabilityChecker => $checker, $this->settings, $this->rates, $health, new MutableClock(new \DateTimeImmutable('2026-10-25T12:00:00Z')));
+        return new RegistrarCheckWorker($this->redis, static fn (): ?AvailabilityChecker => $checker, $this->settings, $this->rates, $health, new MutableClock(new \DateTimeImmutable('2026-10-25T12:00:00Z')), $dns, $whois);
+    }
+
+    /** @param list<string> $withNameservers */
+    private static function dns(array $withNameservers): DnsProbe
+    {
+        return new class ($withNameservers) implements DnsProbe {
+            /** @param list<string> $names */
+            public function __construct(private array $names)
+            {
+            }
+
+            public function hasNameservers(string $domain): bool
+            {
+                return in_array($domain, $this->names, true);
+            }
+        };
+    }
+
+    /** @param array<string, string> $replies domain => WHOIS reply */
+    private function whois(array $replies): WhoisAvailability
+    {
+        $lookup = new class ($this, $replies) implements WhoisLookup {
+            /** @param array<string, string> $replies */
+            public function __construct(private RegistrarCheckTest $test, private array $replies)
+            {
+            }
+
+            public function query(string $server, string $query): string
+            {
+                if ($server === WhoisServerDirectory::IANA) {
+                    return "whois: whois.nic.test.example\n";
+                }
+                $this->test->whoisAsked[] = $query;
+
+                return $this->replies[$query] ?? throw new WhoisUnavailable(WhoisUnavailable::TIMEOUT);
+            }
+        };
+        $limiter = new ScriptedRateLimiter();
+
+        return new WhoisAvailability($lookup, new WhoisServerDirectory($lookup, $this->redis, $limiter), $limiter);
+    }
+
+    public function testDnsAnswersTakenFirstAndWhoisFillsWhatTheRegistrarDidNotAnswer(): void
+    {
+        $web = $this->web();
+        $id = $web->request('203.0.113.9', ['cars.com', 'paxofi.ng', 'paxofi.com.ng', 'busy.ng']);
+
+        $this->worker(
+            ['paxofi.ng' => new AvailabilityAnswer('available')],
+            dns: self::dns(['cars.com']),
+            whois: $this->whois(["paxofi.com.ng" => "No match for paxofi.com.ng\n", 'busy.ng' => "Domain Name: busy.ng\n"]),
+        )->runOnce();
+
+        self::assertSame([['paxofi.ng', 'paxofi.com.ng', 'busy.ng']], $this->asked, 'a name with NS records never reaches the registrar');
+        self::assertSame(['paxofi.com.ng', 'busy.ng'], $this->whoisAsked, 'WHOIS only for names the registrar did not answer');
+        $statuses = array_column($web->result($id)['results'], 'status', 'domain');
+        self::assertSame(['cars.com' => 'taken', 'paxofi.ng' => 'available', 'paxofi.com.ng' => 'available', 'busy.ng' => 'taken'], $statuses);
+    }
+
+    public function testWithoutARegistrarWhoisAloneAnswersAndAFailureStaysUnknown(): void
+    {
+        $web = $this->web();
+        $id = $web->request('203.0.113.9', ['paxofi.ng', 'paxofi.com']);
+
+        $this->worker(null, dns: self::dns([]), whois: $this->whois(['paxofi.ng' => "% NOT FOUND\n"]))->runOnce();
+
+        $statuses = array_column($web->result($id)['results'], 'status', 'domain');
+        self::assertSame(['paxofi.ng' => 'available', 'paxofi.com' => 'unknown'], $statuses, 'a WHOIS failure is unknown, never available');
     }
 
     public function testQueuedNamesAreAnsweredByTheWorkerWithPremiumSellingPrices(): void

@@ -7,6 +7,7 @@ namespace PaxofiCloud\Application\Domains;
 use Paxofi\Core\Contracts\RedisClient;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\AvailabilityChecker;
+use PaxofiCloud\Application\Contracts\DnsProbe;
 use PaxofiCloud\Application\Contracts\ExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\FxRateStore;
 use PaxofiCloud\Application\Extensions\ExtensionPrices;
@@ -16,15 +17,22 @@ use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Domain\Registrar\TldName;
 
 /**
- * The worker side of the registrar availability check (DS-13): takes queued
- * jobs, asks the registrar (DomainNameAPI, registrar #1) and writes back the
- * status, the premium flag and, for a premium name with a price, our selling
- * price from the same markup, rounding and floor as everything else. Any
- * failure answers `unknown`, never available. Names are not logged.
+ * The worker side of the availability check (DS-13, DS-14): takes queued
+ * jobs and answers each name from the first conclusive source:
+ *  1. DNS: a name with NS records is taken (no call to anyone else);
+ *  2. the registrar (DomainNameAPI, one bulk call): authoritative, and the
+ *     only source of premium and reserved;
+ *  3. port-43 WHOIS for names the registrar did not answer, within a time
+ *     budget per run so other worker tasks never wait long.
+ * A premium name with a price gets our selling price from the same markup,
+ * rounding and floor as everything else. Any failure answers `unknown`,
+ * never available. Names are not logged.
  */
 final readonly class RegistrarCheckWorker
 {
     public const int MAX_JOBS_PER_RUN = 10;
+    /** WHOIS time per run (DS-16 allows 5 s per query); the page polls for 15 s. */
+    public const int WHOIS_BUDGET_MS = 12_000;
 
     /** @param \Closure(): ?AvailabilityChecker $checker null while the registrar is not connected */
     public function __construct(
@@ -34,6 +42,8 @@ final readonly class RegistrarCheckWorker
         private FxRateStore $rates,
         private ?RegistrarCheckHealth $health = null,
         private ?Clock $clock = null,
+        private ?DnsProbe $dns = null,
+        private ?WhoisAvailability $whois = null,
     ) {
     }
 
@@ -43,6 +53,7 @@ final readonly class RegistrarCheckWorker
         $handled = 0;
         $checker = null;
         $loaded = false;
+        $whoisDeadline = hrtime(true) + self::WHOIS_BUDGET_MS * 1_000_000;
         while ($handled < self::MAX_JOBS_PER_RUN) {
             $id = $this->redis->popRight(RegistrarCheck::QUEUE);
             if ($id === null) {
@@ -64,9 +75,16 @@ final readonly class RegistrarCheckWorker
             }
             $answers = [];
             $outcome = 'not_connected';
-            if ($checker !== null) {
+            $registered = [];
+            foreach ($domains as $domain) {
+                if ($this->dns?->hasNameservers($domain) === true) {
+                    $registered[$domain] = new AvailabilityAnswer('taken');
+                }
+            }
+            $toRegistrar = array_values(array_diff($domains, array_keys($registered)));
+            if ($checker !== null && $toRegistrar !== []) {
                 try {
-                    $answers = $checker->checkAvailability($domains);
+                    $answers = $checker->checkAvailability($toRegistrar);
                     $outcome = 'answered';
                 } catch (RegistrarUnavailable $e) {
                     $answers = [];
@@ -76,8 +94,22 @@ final readonly class RegistrarCheckWorker
                     $outcome = 'malformed';
                 }
             }
-            if ($this->health !== null && $this->clock !== null) {
-                $this->health->record($outcome, count($domains), count(array_intersect_key($answers, array_flip($domains))), $this->clock->now());
+            if ($this->health !== null && $this->clock !== null && $toRegistrar !== []) {
+                $this->health->record($outcome, count($toRegistrar), count(array_intersect_key($answers, array_flip($toRegistrar))), $this->clock->now());
+            }
+            $answers = $registered + $answers;
+            foreach ($domains as $domain) {
+                $current = $answers[$domain] ?? null;
+                if ($current !== null && $current->status !== 'unknown') {
+                    continue;
+                }
+                if ($this->whois === null || hrtime(true) >= $whoisDeadline) {
+                    continue;
+                }
+                $status = $this->whois->check($domain);
+                if ($status !== 'unknown') {
+                    $answers[$domain] = new AvailabilityAnswer($status);
+                }
             }
             $results = [];
             foreach ($domains as $domain) {

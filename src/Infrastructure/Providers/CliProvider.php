@@ -9,6 +9,11 @@ use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\AvailabilityChecker;
 use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
+use PaxofiCloud\Application\Domains\WhoisAvailability;
+use PaxofiCloud\Application\Domains\WhoisServerDirectory;
+use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
+use PaxofiCloud\Integration\Dns\SystemDnsProbe;
+use PaxofiCloud\Integration\Whois\WhoisClient;
 use Paxofi\Core\Application;
 use Paxofi\Core\CLI\CommandRegistry;
 use Paxofi\Core\Contracts\Connection;
@@ -278,6 +283,8 @@ final readonly class CliProvider implements Provider
                     Resolve::get($c, FxRateStore::class),
                     new RegistrarCheckHealth(Resolve::get($c, RedisClient::class)),
                     new SystemClock(),
+                    new SystemDnsProbe(),
+                    self::whoisAvailability($c),
                 );
             };
             $registry->register(new PricesSyncCommand($syncFor, $console));
@@ -362,6 +369,16 @@ final readonly class CliProvider implements Provider
 
             return $registry;
         });
+    }
+
+    /** Port-43 WHOIS for the availability check (DS-15 to DS-19); provider worker only. */
+    private static function whoisAvailability(Container $c): WhoisAvailability
+    {
+        $redis = Resolve::get($c, RedisClient::class);
+        $limiter = new RedisRateLimiter($redis);
+        $whois = new WhoisClient();
+
+        return new WhoisAvailability($whois, new WhoisServerDirectory($whois, $redis, $limiter), $limiter);
     }
 
     /**
