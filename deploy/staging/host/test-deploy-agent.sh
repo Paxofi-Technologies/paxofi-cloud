@@ -133,9 +133,10 @@ grep -q 'invitation queued' <<<"$bootstrap_out" || fail "staff-bootstrap did not
 # While the first admin has not finished setup, a re-run re-issues the invitation to the same member.
 reissue_out="$(printf 'EMAIL=first-admin@example.invalid\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>&1)" || fail "a second bootstrap did not re-issue the pending invitation"
 grep -q 'invitation queued' <<<"$reissue_out" || fail "the re-issued bootstrap did not report the invitation"
-first_id="$(grep -o 'staff_id=[0-9a-f]*' <<<"$bootstrap_out" || true)"
-reissue_id="$(grep -o 'staff_id=[0-9a-f]*' <<<"$reissue_out" || true)"
-[ -n "$first_id" ] && [ "$first_id" = "$reissue_id" ] || fail "the re-issued bootstrap created a different staff member"
+# The staff_id lines are written to the deploy log, not to the agent's output.
+staff_ids="$(grep -o 'staff_id=[0-9a-f]*' "$root/var/log/paxoficloud/deploy.log" || true)"
+[ "$(wc -l <<<"$staff_ids")" = 2 ] || fail "expected two bootstrap invitations in the deploy log"
+[ "$(sort -u <<<"$staff_ids" | wc -l)" = 1 ] || fail "the re-issued bootstrap created a different staff member"
 grep -qF 'first-admin@example.invalid' <<<"$reissue_out" && fail "the re-issued bootstrap printed the email address"
 grep -qF 'first-admin@example.invalid' <<<"$bootstrap_out" && fail "staff-bootstrap printed the email address"
 grep -qF 'first-admin@example.invalid' "$root/var/log/paxoficloud/deploy.log" && fail "the email address reached the deploy log"
