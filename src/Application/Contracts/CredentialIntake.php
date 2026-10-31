@@ -15,8 +15,13 @@ interface CredentialIntake
     /** @return array<string, \DateTimeImmutable> credential ID => submitted at */
     public function pending(): array;
 
-    /** @return list<array{credential_id: string, provider: string, sealed: string, submitted_by: string}> oldest first */
-    public function oldest(int $limit): array;
+    /**
+     * Oldest first, for one worker's lane: payment gateway rows go only to the
+     * payments worker, every other row only to the provider worker (PY-3).
+     *
+     * @return list<array{credential_id: string, provider: string, sealed: string, submitted_by: string}>
+     */
+    public function oldest(int $limit, bool $paymentGateways = false): array;
 
     public function remove(string $credentialId, string $sealed): void;
 }

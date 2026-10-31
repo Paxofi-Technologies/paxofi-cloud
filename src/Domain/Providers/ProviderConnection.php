@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Domain\Providers;
 
+use PaxofiCloud\Domain\Payments\Gateway;
+
 /**
  * The providers whose API credentials staff may enter in the admin console,
  * and exactly which fields each takes (threat model PC-4). The credential ID,
@@ -17,10 +19,12 @@ enum ProviderConnection: string
     case Spaceship = 'spaceship';
     case Hetzner = 'hetzner';
     case Vultr = 'vultr';
+    case Paystack = 'paystack';
+    case Flutterwave = 'flutterwave';
 
     public const int SECRET_MAX_BYTES = 2048;
     /** How the admin console groups connections under "API providers", in display order. */
-    public const array CATEGORIES = ['domains' => 'Domain registrars', 'servers' => 'Server providers'];
+    public const array CATEGORIES = ['domains' => 'Domain registrars', 'servers' => 'Server providers', 'payments' => 'Payment gateways'];
 
     public function label(): string
     {
@@ -31,6 +35,8 @@ enum ProviderConnection: string
             self::Spaceship => 'Spaceship (domain registrar)',
             self::Hetzner => 'Hetzner Cloud (servers)',
             self::Vultr => 'Vultr (servers)',
+            self::Paystack => 'Paystack (payments)',
+            self::Flutterwave => 'Flutterwave (payments)',
         };
     }
 
@@ -40,6 +46,7 @@ enum ProviderConnection: string
         return match ($this) {
             self::DomainNameApi, self::Namecheap, self::Dynadot, self::Spaceship => 'domains',
             self::Hetzner, self::Vultr => 'servers',
+            self::Paystack, self::Flutterwave => 'payments',
         };
     }
 
@@ -70,6 +77,14 @@ enum ProviderConnection: string
             ],
             self::Hetzner => [new ConnectionField('api_token', 'API token (read & write)', true, 256, null, 'Hetzner Cloud Console: your project → Security → API tokens → Generate (Read & Write).')],
             self::Vultr => [new ConnectionField('api_key', 'API key', true, 256, null, 'Vultr: Account → API. Use a sub-user key with only the access PaxofiCloud needs.')],
+            // THREAT-MODEL-PAYMENTS.md PY-2, PY-4: secret keys only (never public keys); the key's test/live mode is checked at intake.
+            self::Paystack => [
+                new ConnectionField('secret_key', 'Secret key', true, 160, '/^sk_(test|live)_[A-Za-z0-9]{16,128}$/D', 'Paystack dashboard: Settings → API Keys & Webhooks. Staging takes the TEST secret key (sk_test_…); production takes the live one.'),
+            ],
+            self::Flutterwave => [
+                new ConnectionField('secret_key', 'Secret key', true, 160, '/^FLWSECK(_TEST)?-[A-Za-z0-9]{16,128}-X$/D', 'Flutterwave dashboard: Settings → API Keys. Staging takes the TEST secret key (FLWSECK_TEST-…); production takes the live one.'),
+                new ConnectionField('webhook_secret_hash', 'Webhook secret hash', true, 128, '/^[\x21-\x7E]{32,128}$/D', 'A long random value (32+ characters) you choose. Enter the same value under Settings → Webhooks → Secret hash in Flutterwave.'),
+            ],
         };
     }
 
@@ -77,6 +92,25 @@ enum ProviderConnection: string
     public function accessLevel(): string
     {
         return 'read-write';
+    }
+
+    /**
+     * Payment gateway keys are sealed to the payments intake key and stored
+     * under the payments key ring, which only the payments worker holds
+     * (THREAT-MODEL-PAYMENTS.md PY-3). No other worker can open them.
+     */
+    public function isPaymentGateway(): bool
+    {
+        return $this->gateway() !== null;
+    }
+
+    public function gateway(): ?Gateway
+    {
+        return match ($this) {
+            self::Paystack => Gateway::Paystack,
+            self::Flutterwave => Gateway::Flutterwave,
+            default => null,
+        };
     }
 
     /** @param 'dev'|'staging'|'prod' $environment */
@@ -115,7 +149,8 @@ enum ProviderConnection: string
             $clean[$field->name] = $value;
         }
 
-        return count($clean) === 1 ? (string) reset($clean) : json_encode($clean, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        // Payment gateway secrets are always the JSON object the gateway adapters read (GatewayCredential).
+        return count($clean) === 1 && !$this->isPaymentGateway() ? (string) reset($clean) : json_encode($clean, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     /** @return 'dev'|'staging'|'prod' */

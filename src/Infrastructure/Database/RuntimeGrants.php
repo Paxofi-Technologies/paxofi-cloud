@@ -79,6 +79,8 @@ final readonly class RuntimeGrants
         // Sealed boxes waiting for the provider worker (PC-5): replaced by delete + insert, never edited.
         'provider_credential_intake' => ['SELECT', 'INSERT', 'DELETE'],
         'provider_credentials' => self::CRUD,
+        // PY-3: gateway keys, encrypted under the payments key ring; written once and re-encrypted, never deleted by the app.
+        'payment_gateway_credentials' => ['SELECT', 'INSERT', 'UPDATE'],
         // Migration bookkeeping belongs to the owner alone.
         'schema_migrations' => [],
         'staff_invitations' => self::CRUD,
