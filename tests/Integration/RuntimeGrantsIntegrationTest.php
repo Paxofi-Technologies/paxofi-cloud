@@ -108,6 +108,26 @@ final class RuntimeGrantsIntegrationTest extends IntegrationTestCase
         self::assertDenied($app, "INSERT INTO ledger_accounts (code, name, normal_side, per_customer) VALUES ('owner_drawings', 'X', 'debit', 0)");
         self::assertDenied($app, "UPDATE ledger_accounts SET normal_side = 'credit' WHERE code = 'receivable'");
 
+        // Payment attempts (PY-5, PY-9): state and settlement columns move; amount, currency, reference and invoice never change.
+        $app->exec("INSERT INTO invoices (id, number, account_id, order_id, status, currency, subtotal_minor, tax_minor, total_minor, tax_country, tax_name, tax_rate_bp,
+                        bill_to_name, bill_to_line1, bill_to_city, bill_to_region, bill_to_country, bill_to_phone, issued_at, due_at, expires_at, status_changed_at)
+                    VALUES (REPEAT('i', 32), 'PXC-2026-000001', REPEAT('d', 32), REPEAT('o', 32), 'unpaid', 'NGN', 100, 0, 100, 'NG', 'VAT', 750,
+                        'G', '1 Test Street', 'Ikeja', 'Lagos', 'NG', '+2348000000000', NOW(6), NOW(6), NOW(6), NOW(6))");
+        $app->exec("INSERT INTO payment_attempts (id, reference, account_id, invoice_id, initiated_by, gateway, state, amount_minor, currency, idempotency_key, request_hash, created_at, state_changed_at)
+                    VALUES (REPEAT('p', 32), 'PXC-01JBTEST0000000000000000AB', REPEAT('d', 32), REPEAT('i', 32), REPEAT('e', 32), 'paystack', 'initiated', 100, 'NGN',
+                        'pay-key-0000000000001', REPEAT('h', 64), NOW(6), NOW(6))");
+        $app->exec("UPDATE payment_attempts SET claimed_at = NOW(6) WHERE id = REPEAT('p', 32) AND state = 'initiated'");
+        $app->exec("UPDATE payment_attempts SET state = 'pending', checkout_url = 'https://checkout.paystack.com/x', next_check_at = NOW(6), state_changed_at = NOW(6) WHERE id = REPEAT('p', 32)");
+        $app->exec("UPDATE payment_attempts SET checks = checks + 1, next_check_at = NOW(6) WHERE id = REPEAT('p', 32) AND checks = 0");
+        $app->exec("UPDATE payment_attempts SET state = 'succeeded', gateway_transaction_id = '4099260516', paid_minor = 100, paid_currency = 'NGN', fee_minor = 2,
+                        paid_at = NOW(6), next_check_at = NULL, state_changed_at = NOW(6) WHERE id = REPEAT('p', 32) AND state IN ('initiated', 'pending', 'unknown')");
+        $app->exec("UPDATE invoices SET status = 'paid', status_changed_at = NOW(6) WHERE id = REPEAT('i', 32) AND status = 'unpaid'");
+        self::assertDenied($app, "UPDATE payment_attempts SET amount_minor = 1 WHERE id = REPEAT('p', 32)");
+        self::assertDenied($app, "UPDATE payment_attempts SET currency = 'USD' WHERE id = REPEAT('p', 32)");
+        self::assertDenied($app, "UPDATE payment_attempts SET invoice_id = REPEAT('j', 32) WHERE id = REPEAT('p', 32)");
+        self::assertDenied($app, "UPDATE payment_attempts SET reference = 'PXC-01JBTEST0000000000000000AC' WHERE id = REPEAT('p', 32)");
+        self::assertDenied($app, "DELETE FROM payment_attempts WHERE id = REPEAT('p', 32)");
+
         // Gateway keys (PY-3): saved and re-encrypted, never deleted by the app.
         $app->exec("INSERT INTO payment_gateway_credentials (id, provider, environment, access_level, envelope, key_id, review_due_on) VALUES ('paystack-dev', 'paystack', 'dev', 'read-write', 'x', 'k1', '2027-01-01')");
         $app->exec("UPDATE payment_gateway_credentials SET envelope = 'y' WHERE id = 'paystack-dev'");

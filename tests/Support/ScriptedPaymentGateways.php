@@ -9,13 +9,15 @@ use PaxofiCloud\Application\Contracts\PaymentGateways;
 use PaxofiCloud\Application\Payments\CheckoutRequest;
 use PaxofiCloud\Application\Payments\GatewayVerification;
 use PaxofiCloud\Application\Payments\HostedCheckout;
+use PaxofiCloud\Application\Payments\PaymentOutcome;
 use PaxofiCloud\Application\Payments\WebhookHint;
 use PaxofiCloud\Domain\Payments\Gateway;
 use PaxofiCloud\Domain\Payments\PaymentReference;
 
 /**
- * Gateways whose initialise() answers from a script: a URL to return, or a
- * Throwable to throw. Every request is recorded so tests can check what was sent.
+ * Gateways whose initialise() and verify() answer from a script: a result to
+ * return, or a Throwable to throw. Every call is recorded so tests can check
+ * what was sent.
  */
 final class ScriptedPaymentGateways implements PaymentGateways
 {
@@ -23,6 +25,10 @@ final class ScriptedPaymentGateways implements PaymentGateways
     public array $requests = [];
     /** @var \Closure(CheckoutRequest): (HostedCheckout|\Throwable)|null */
     public ?\Closure $answer = null;
+    /** @var list<PaymentReference> references passed to verify() */
+    public array $verified = [];
+    /** @var \Closure(PaymentReference): (GatewayVerification|\Throwable)|null */
+    public ?\Closure $verifyAnswer = null;
 
     public function for(Gateway $gateway): PaymentGateway
     {
@@ -51,7 +57,15 @@ final class ScriptedPaymentGateways implements PaymentGateways
 
             public function verify(PaymentReference $reference): GatewayVerification
             {
-                throw new \LogicException('Not used by these tests.');
+                $this->script->verified[] = $reference;
+                $answer = $this->script->verifyAnswer !== null
+                    ? ($this->script->verifyAnswer)($reference)
+                    : new GatewayVerification($reference, PaymentOutcome::Pending);
+                if ($answer instanceof \Throwable) {
+                    throw $answer;
+                }
+
+                return $answer;
             }
 
             public function webhookHint(string $rawBody, array $headers): ?WebhookHint

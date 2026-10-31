@@ -162,7 +162,12 @@ final class CommerceProvider implements Provider
             $env = Resolve::get($c, Configuration::class)->get('app.env');
 
             return new PaymentsController(new InvoicePayments(
-                new MysqlPaymentAttemptStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+                new MysqlPaymentAttemptStore(
+                    Resolve::get($c, Connection::class),
+                    Resolve::get($c, Repository::class),
+                    Resolve::get($c, TransactionManager::class),
+                    Resolve::get($c, MysqlLedger::class),
+                ),
                 new MysqlBillingStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
                 new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 Resolve::get($c, AuditTrail::class),

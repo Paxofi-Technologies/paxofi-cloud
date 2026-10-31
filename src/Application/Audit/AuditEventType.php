@@ -75,6 +75,10 @@ final class AuditEventType
     public const string PAYMENT_STARTED = 'payment.started';
     public const string PAYMENT_CHECKOUT_READY = 'payment.checkout_ready';
     public const string PAYMENT_FAILED = 'payment.failed';
+    public const string PAYMENT_SUCCEEDED = 'payment.succeeded';
+    public const string PAYMENT_CREDITED = 'payment.credited';
+    public const string PAYMENT_AMOUNT_MISMATCH = 'payment.amount_mismatch';
+    public const string PAYMENT_ABANDONED = 'payment.abandoned';
     public const string TAX_RATE_CHANGED = 'tax_rate.changed';
     public const string TAX_RATE_CHANGE_REFUSED = 'tax_rate.change_refused';
 
