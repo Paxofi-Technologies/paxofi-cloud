@@ -130,8 +130,13 @@ printf 'EMAIL=ada@example.invalid\nROLE=super_admin\n' | run staff-bootstrap 2>/
 printf 'NAME=Ada Lovelace\n' | run staff-bootstrap 2>/dev/null && fail "staff-bootstrap ran without an email"
 bootstrap_out="$(printf 'EMAIL=first-admin@example.invalid\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>&1)" || fail "staff-bootstrap refused a valid first admin"
 grep -q 'invitation queued' <<<"$bootstrap_out" || fail "staff-bootstrap did not report the invitation"
-status=0; printf 'EMAIL=first-admin@example.invalid\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>/dev/null || status=$?
-[ "$status" = 2 ] || fail "a second bootstrap for the same address was not refused (exit $status)"
+# While the first admin has not finished setup, a re-run re-issues the invitation to the same member.
+reissue_out="$(printf 'EMAIL=first-admin@example.invalid\nNAME=Ada Lovelace\n' | run staff-bootstrap 2>&1)" || fail "a second bootstrap did not re-issue the pending invitation"
+grep -q 'invitation queued' <<<"$reissue_out" || fail "the re-issued bootstrap did not report the invitation"
+first_id="$(grep -o 'staff_id=[0-9a-f]*' <<<"$bootstrap_out" || true)"
+reissue_id="$(grep -o 'staff_id=[0-9a-f]*' <<<"$reissue_out" || true)"
+[ -n "$first_id" ] && [ "$first_id" = "$reissue_id" ] || fail "the re-issued bootstrap created a different staff member"
+grep -qF 'first-admin@example.invalid' <<<"$reissue_out" && fail "the re-issued bootstrap printed the email address"
 grep -qF 'first-admin@example.invalid' <<<"$bootstrap_out" && fail "staff-bootstrap printed the email address"
 grep -qF 'first-admin@example.invalid' "$root/var/log/paxoficloud/deploy.log" && fail "the email address reached the deploy log"
 
