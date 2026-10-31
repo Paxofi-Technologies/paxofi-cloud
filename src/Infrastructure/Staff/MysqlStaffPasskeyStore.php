@@ -25,6 +25,21 @@ final readonly class MysqlStaffPasskeyStore implements StaffPasskeyStore
         return $this->repository->fetchAll('SELECT id FROM staff_members WHERE email_lookup = :lookup', ['lookup' => $emailLookup]) !== [];
     }
 
+    public function invitedMemberWithEmailForUpdate(string $emailLookup): ?array
+    {
+        $rows = $this->repository->fetchAll(
+            "SELECT id, email FROM staff_members WHERE email_lookup = :lookup AND status = 'invited' FOR UPDATE",
+            ['lookup' => $emailLookup],
+        );
+
+        return isset($rows[0]) ? ['staff_id' => Row::string($rows[0], 'id'), 'email' => Row::string($rows[0], 'email')] : null;
+    }
+
+    public function cancelOpenInvitations(string $staffId): void
+    {
+        $this->connection->execute('DELETE FROM staff_invitations WHERE staff_id = :id AND used_at IS NULL', ['id' => $staffId]);
+    }
+
     public function createInvitedMember(string $staffId, string $email, string $emailLookup, string $fullName, string $userHandle, \DateTimeImmutable $now): void
     {
         $this->connection->execute(

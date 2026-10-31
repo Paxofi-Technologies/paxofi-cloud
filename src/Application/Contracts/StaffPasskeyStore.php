@@ -12,6 +12,16 @@ interface StaffPasskeyStore
 {
     public function staffExistsWithEmail(string $emailLookup): bool;
 
+    /**
+     * The member with this address if they were invited but never finished setting up; locked for the transaction.
+     *
+     * @return array{staff_id: string, email: string}|null the stored address, not the one asked with
+     */
+    public function invitedMemberWithEmailForUpdate(string $emailLookup): ?array;
+
+    /** Cancels every unused invitation of this member, so only the newest link works. */
+    public function cancelOpenInvitations(string $staffId): void;
+
     public function createInvitedMember(string $staffId, string $email, string $emailLookup, string $fullName, string $userHandle, \DateTimeImmutable $now): void;
 
     public function addInvitation(string $tokenHash, string $staffId, ?string $invitedBy, \DateTimeImmutable $now, \DateTimeImmutable $expiresAt): void;
