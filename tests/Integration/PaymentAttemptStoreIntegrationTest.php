@@ -33,10 +33,11 @@ use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
 use PaxofiCloud\Infrastructure\Orders\MysqlOrderStore;
 use PaxofiCloud\Infrastructure\Payments\MysqlGatewayEventStore;
+use PaxofiCloud\Infrastructure\Payments\MysqlInvoiceExpiryStore;
 use PaxofiCloud\Infrastructure\Payments\MysqlPaymentAttemptStore;
 use PDOException;
 
-/** Migration 0027 and MysqlPaymentAttemptStore on MySQL 8.4 (payments PY-5, PY-6, PY-19). */
+/** Migration 0027 and MysqlPaymentAttemptStore on MySQL 8.4 (payments PY-5, PY-6, PY-12, PY-16, PY-19). */
 final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
 {
     private const string ALICE = 'd1000000000000000000000000000001';
@@ -46,6 +47,7 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
     private MysqlPaymentAttemptStore $attempts;
     private MysqlLedger $ledger;
     private MysqlGatewayEventStore $events;
+    private MysqlInvoiceExpiryStore $expiry;
     private string $orderId;
     private string $invoiceId;
     private \DateTimeImmutable $now;
@@ -95,6 +97,7 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         $this->ledger = new MysqlLedger($connection, $repository, $transactions);
         $this->attempts = new MysqlPaymentAttemptStore($connection, $repository, $transactions, $this->ledger);
         $this->events = new MysqlGatewayEventStore($connection, $transactions);
+        $this->expiry = new MysqlInvoiceExpiryStore($connection, $repository, $transactions, $this->ledger);
     }
 
     private function attempt(string $key = 'pay-key-00000000001', ?\DateTimeImmutable $at = null): NewPaymentAttempt
@@ -359,6 +362,66 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         $this->attempts->recordSuccess($attempt->id, self::success($attempt, 1_773_750), $this->now);
         self::assertTrue($this->events->record(new WebhookHint(Gateway::Paystack, $attempt->reference, 'charge.success'), hash('sha256', 'b'), $at));
         self::assertSame([], $this->attempts->dueForCheck($at, 10));
+    }
+
+    public function testAClosedAttemptIsReopenedByAWebhookForOneLastCheck(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000022');
+        self::assertTrue($this->attempts->close($attempt->id, 0, PaymentAttemptState::Abandoned, $this->now));
+        $at = $this->now->modify('+2 days');
+
+        self::assertTrue($this->events->record(new WebhookHint(Gateway::Paystack, $attempt->reference, 'charge.success'), hash('sha256', 'late'), $at));
+
+        $due = $this->attempts->dueForCheck($at, 10);
+        self::assertCount(1, $due, 'PY-12: reopened and due now');
+        self::assertSame(PaymentAttemptState::Unknown, $due[0]->state);
+        self::assertSame(4, $due[0]->checks, 'on its last scheduled check, so a non-success closes it again');
+        self::assertTrue($this->attempts->close($attempt->id, 4, PaymentAttemptState::Abandoned, $at));
+
+        // A mismatch or success is never reopened.
+        $paid = $this->pendingAttempt('pay-key-00000000023');
+        $this->attempts->recordSuccess($paid->id, self::success($paid, 1_773_750), $this->now);
+        self::assertTrue($this->events->record(new WebhookHint(Gateway::Paystack, $paid->reference, 'charge.success'), hash('sha256', 'again'), $at));
+        self::assertSame('succeeded', $this->attempts->find(self::ALICE, $paid->id)['state'] ?? null);
+    }
+
+    public function testAnExpiredInvoiceIsCancelledOnceAndItsReceivableReversed(): void
+    {
+        $issued = $this->ledger->balance(LedgerAccount::Receivable, Currency::NGN, self::ALICE);
+        self::assertGreaterThan(0, $issued);
+        $expired = $this->now->modify('+72 hours');
+
+        self::assertSame([], $this->expiry->dueForExpiry($expired->modify('-1 second'), 10));
+        self::assertSame([['invoice_id' => $this->invoiceId, 'order_id' => $this->orderId, 'account_id' => self::ALICE]], $this->expiry->dueForExpiry($expired, 10));
+
+        self::assertTrue($this->expiry->expire($this->invoiceId, $expired));
+        self::assertFalse($this->expiry->expire($this->invoiceId, $expired), 'expired once');
+
+        self::assertSame('cancelled', self::column("SELECT status FROM invoices WHERE id = '{$this->invoiceId}'"));
+        self::assertSame('expired', self::column("SELECT status FROM orders WHERE id = '{$this->orderId}'"));
+        self::assertSame(0, $this->ledger->balance(LedgerAccount::Receivable, Currency::NGN, self::ALICE), 'the receivable is reversed');
+        self::assertSame([], $this->expiry->dueForExpiry($expired, 10));
+        self::assertSame([], $this->ledger->verify()->problems);
+    }
+
+    public function testAnInvoiceWithAnOpenAttemptIsNotExpiredAndALatePaymentIsCredit(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000024');
+        $expired = $this->now->modify('+73 hours');
+
+        self::assertSame([], $this->expiry->dueForExpiry($expired, 10), 'PY-16: a payment on its way is never thrown away');
+        self::assertFalse($this->expiry->expire($this->invoiceId, $expired));
+
+        self::assertTrue($this->attempts->close($attempt->id, 0, PaymentAttemptState::Abandoned, $expired));
+        self::assertTrue($this->expiry->expire($this->invoiceId, $expired));
+
+        // PY-12: the customer paid after all; the money is real and becomes credit, the order stays expired.
+        $this->events->record(new WebhookHint(Gateway::Paystack, $attempt->reference, 'charge.success'), hash('sha256', 'late'), $expired);
+        self::assertSame('credited', $this->attempts->recordSuccess($attempt->id, self::success($attempt, 1_773_750), $expired));
+        self::assertSame('cancelled', self::column("SELECT status FROM invoices WHERE id = '{$this->invoiceId}'"));
+        self::assertSame('expired', self::column("SELECT status FROM orders WHERE id = '{$this->orderId}'"));
+        self::assertSame(-1_773_750, $this->ledger->balance(LedgerAccount::CustomerCredit, Currency::NGN, self::ALICE));
+        self::assertSame([], $this->ledger->verify()->problems);
     }
 
     private static function column(string $sql): mixed

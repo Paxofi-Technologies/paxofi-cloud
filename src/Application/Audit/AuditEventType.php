@@ -71,6 +71,7 @@ final class AuditEventType
     public const string STAFF_SESSION_CHANGE_REFUSED = 'staff.session_change.refused';
     public const string BILLING_DETAILS_SAVED = 'billing.details_saved';
     public const string ORDER_PLACED = 'order.placed';
+    public const string ORDER_EXPIRED = 'order.expired';
     // Payment attempts (payments threat model PY-5, PY-6): references, states and fixed codes only.
     public const string PAYMENT_STARTED = 'payment.started';
     public const string PAYMENT_CHECKOUT_READY = 'payment.checkout_ready';

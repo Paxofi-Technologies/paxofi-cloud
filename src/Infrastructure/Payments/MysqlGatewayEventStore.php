@@ -7,6 +7,7 @@ namespace PaxofiCloud\Infrastructure\Payments;
 use Paxofi\Core\Contracts\Connection;
 use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Contracts\GatewayEventStore;
+use PaxofiCloud\Application\Payments\PaymentVerifier;
 use PaxofiCloud\Application\Payments\WebhookHint;
 
 /**
@@ -14,7 +15,8 @@ use PaxofiCloud\Application\Payments\WebhookHint;
  * the SHA-256 of the event name, our reference and the payload hash: a
  * gateway retry sends the same body, so it is the same key; neither gateway
  * gives an event ID of its own. The insert and the "check now" update commit
- * together, before the endpoint answers 200.
+ * together, before the endpoint answers 200. A closed attempt the event names
+ * is reopened for one last check (PY-12): a late payment is real money.
  */
 final readonly class MysqlGatewayEventStore implements GatewayEventStore
 {
@@ -51,6 +53,14 @@ final readonly class MysqlGatewayEventStore implements GatewayEventStore
                      WHERE reference = :reference AND gateway = :gateway AND state IN ('pending', 'unknown')
                        AND (next_check_at IS NULL OR next_check_at > :now2)",
                     ['now' => $at, 'now2' => $at, 'reference' => $hint->reference->value, 'gateway' => $hint->gateway->value],
+                );
+                // PY-12: an attempt already closed as failed or abandoned may still have been paid
+                // (late payment). It gets exactly one more check: unknown, due now, on its last
+                // scheduled check, so a non-success answer closes it again.
+                $this->connection->execute(
+                    "UPDATE payment_attempts SET state = 'unknown', checks = :last, next_check_at = :now, state_changed_at = :now2
+                     WHERE reference = :reference AND gateway = :gateway AND state IN ('failed', 'abandoned') AND checkout_url IS NOT NULL",
+                    ['last' => count(PaymentVerifier::SCHEDULE_SECONDS) - 1, 'now' => $at, 'now2' => $at, 'reference' => $hint->reference->value, 'gateway' => $hint->gateway->value],
                 );
 
                 return true;

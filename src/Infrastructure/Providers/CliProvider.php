@@ -30,7 +30,9 @@ use PaxofiCloud\Cli\FxStatusCommand;
 use PaxofiCloud\Cli\FxUpdateCommand;
 use PaxofiCloud\Cli\PaymentsWorkCommand;
 use PaxofiCloud\Application\Payments\CheckoutStarter;
+use PaxofiCloud\Application\Payments\InvoiceExpiry;
 use PaxofiCloud\Application\Payments\PaymentVerifier;
+use PaxofiCloud\Infrastructure\Payments\MysqlInvoiceExpiryStore;
 use PaxofiCloud\Domain\Payments\GatewayMode;
 use PaxofiCloud\Infrastructure\Payments\ConfiguredPaymentGateways;
 use PaxofiCloud\Infrastructure\Payments\MysqlPaymentAttemptStore;
@@ -334,7 +336,18 @@ final readonly class CliProvider implements Provider
                     Resolve::get($c, Logger::class),
                     paymentGateways: true,
                 );
-            }, $console, null, static fn (): CheckoutStarter => self::paymentSteps($c)[0], static fn (): PaymentVerifier => self::paymentSteps($c)[1]));
+            }, $console, null, static fn (): CheckoutStarter => self::paymentSteps($c)[0], static fn (): PaymentVerifier => self::paymentSteps($c)[1], static function () use ($c): InvoiceExpiry {
+                $connection = Resolve::get($c, Connection::class);
+                $repository = Resolve::get($c, Repository::class);
+                $transactions = Resolve::get($c, TransactionManager::class);
+
+                return new InvoiceExpiry(
+                    new MysqlInvoiceExpiryStore($connection, $repository, $transactions, new MysqlLedger($connection, $repository, $transactions)),
+                    Resolve::get($c, AuditTrail::class),
+                    new SystemClock(),
+                    Resolve::get($c, Logger::class),
+                );
+            }));
             $registry->register(new StaffBootstrapCommand(
                 static fn (): StaffInvitations => Resolve::get($c, StaffInvitations::class),
                 $console,

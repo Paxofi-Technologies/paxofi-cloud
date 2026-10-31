@@ -6,6 +6,7 @@ namespace PaxofiCloud\Cli;
 
 use Paxofi\Core\Contracts\Command;
 use PaxofiCloud\Application\Payments\CheckoutStarter;
+use PaxofiCloud\Application\Payments\InvoiceExpiry;
 use PaxofiCloud\Application\Payments\PaymentVerifier;
 use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
 
@@ -17,7 +18,8 @@ use PaxofiCloud\Infrastructure\Secrets\CredentialIntakeWorker;
  * entered in the admin console, starts hosted checkouts for new payment
  * attempts (PY-6) and checks open attempts with the gateway on their
  * schedule, marking invoices paid when the gateway confirms (PY-8, PY-9,
- * PY-11). It looks for work
+ * PY-11), and once a minute expires unpaid new-order invoices past their
+ * expiry that have no payment open (PY-16). It looks for work
  * every second while idle, so a checkout page is usually ready within two
  * seconds of the customer's click. Runs for a bounded time and exits so the
  * container restarts it fresh. A failing checkout step never stops intake.
@@ -29,6 +31,7 @@ final readonly class PaymentsWorkCommand implements Command
      * @param (\Closure(int): void)|null $sleep
      * @param (\Closure(): CheckoutStarter)|null $checkouts built lazily, like the intake
      * @param (\Closure(): PaymentVerifier)|null $verifier built lazily, like the intake
+     * @param (\Closure(): InvoiceExpiry)|null $expiry built lazily, like the intake
      */
     public function __construct(
         private \Closure $intake,
@@ -36,8 +39,11 @@ final readonly class PaymentsWorkCommand implements Command
         private ?\Closure $sleep = null,
         private ?\Closure $checkouts = null,
         private ?\Closure $verifier = null,
+        private ?\Closure $expiry = null,
     ) {
     }
+
+    public const int EXPIRY_EVERY_SECONDS = 60;
 
     public function name(): string
     {
@@ -58,6 +64,7 @@ final readonly class PaymentsWorkCommand implements Command
             $intake = ($this->intake)();
             $checkouts = $this->checkouts !== null ? ($this->checkouts)() : null;
             $verifier = $this->verifier !== null ? ($this->verifier)() : null;
+            $expiry = $this->expiry !== null ? ($this->expiry)() : null;
         } catch (\InvalidArgumentException $e) {
             $this->console->error('Payments worker is not configured: ' . $e->getMessage());
 
@@ -68,6 +75,7 @@ final readonly class PaymentsWorkCommand implements Command
             sleep($seconds);
         };
         $deadline = time() + $maxSeconds;
+        $nextExpiry = 0;
         do {
             $handled = $intake->runOnce();
             $started = 0;
@@ -83,12 +91,21 @@ final readonly class PaymentsWorkCommand implements Command
             } catch (\Throwable $e) {
                 $this->console->error('Verify step failed: ' . $e::class);
             }
+            $expired = 0;
+            if ($expiry !== null && ($once || time() >= $nextExpiry)) {
+                $nextExpiry = time() + self::EXPIRY_EVERY_SECONDS;
+                try {
+                    $expired = $expiry->runOnce();
+                } catch (\Throwable $e) {
+                    $this->console->error('Expiry step failed: ' . $e::class);
+                }
+            }
             if ($once) {
-                $this->console->line(sprintf('Handled %d gateway credential submission(s), %d payment start(s) and %d payment check(s).', $handled, $started, $checked));
+                $this->console->line(sprintf('Handled %d gateway credential submission(s), %d payment start(s), %d payment check(s) and %d expired order(s).', $handled, $started, $checked, $expired));
 
                 return 0;
             }
-            if ($handled === 0 && $started === 0 && $checked === 0) {
+            if ($handled === 0 && $started === 0 && $checked === 0 && $expired === 0) {
                 $sleep(1);
             }
         } while (time() < $deadline);
