@@ -17,13 +17,17 @@ use PaxofiCloud\Domain\Registrar\TldCost;
 use PaxofiCloud\Domain\Registrar\TldName;
 
 /**
- * The worker side of the availability check (DS-13, DS-14): takes queued
- * jobs and answers each name from the first conclusive source:
+ * The worker side of the availability check (DS-13, DS-14, DS-24): takes
+ * queued jobs and answers each name from the first conclusive source:
  *  1. DNS: a name with NS records is taken (no call to anyone else);
- *  2. the registrar (DomainNameAPI, one bulk call): authoritative, and the
- *     only source of premium and reserved;
- *  3. port-43 WHOIS for names the registrar did not answer, within a time
- *     budget per run so other worker tasks never wait long.
+ *  2. the registrar (DomainNameAPI, bulk calls of 6), searched names only:
+ *     authoritative, and the only source of premium and reserved;
+ *  3. RDAP, then port-43 WHOIS, for names still unknown, searched names
+ *     before name ideas.
+ * Each job has a 14 s budget (the page waits 20 s) and a run stops taking
+ * jobs after 15 s, so other worker tasks never wait long. Name ideas are
+ * never sent to the registrar; checkout confirms a chosen idea (premium
+ * included) with the registrar like any other name.
  * A premium name with a price gets our selling price from the same markup,
  * rounding and floor as everything else. Any failure answers `unknown`,
  * never available. Names are not logged.
@@ -31,8 +35,12 @@ use PaxofiCloud\Domain\Registrar\TldName;
 final readonly class RegistrarCheckWorker
 {
     public const int MAX_JOBS_PER_RUN = 10;
-    /** WHOIS time per run (DS-16 allows 5 s per query); the page polls for 15 s. */
-    public const int WHOIS_BUDGET_MS = 12_000;
+    /** Time for one job; the page polls for 20 s. */
+    public const int JOB_BUDGET_MS = 14_000;
+    /** A run stops taking new jobs after this. */
+    public const int RUN_BUDGET_MS = 15_000;
+    /** DomainNameAPI's bulk search takes at most 6 names per call. */
+    public const int REGISTRAR_BATCH = 6;
 
     /** @param \Closure(): ?AvailabilityChecker $checker null while the registrar is not connected */
     public function __construct(
@@ -44,6 +52,7 @@ final readonly class RegistrarCheckWorker
         private ?Clock $clock = null,
         private ?DnsProbe $dns = null,
         private ?WhoisAvailability $whois = null,
+        private ?RdapAvailability $rdap = null,
     ) {
     }
 
@@ -53,8 +62,8 @@ final readonly class RegistrarCheckWorker
         $handled = 0;
         $checker = null;
         $loaded = false;
-        $whoisDeadline = hrtime(true) + self::WHOIS_BUDGET_MS * 1_000_000;
-        while ($handled < self::MAX_JOBS_PER_RUN) {
+        $runDeadline = hrtime(true) + self::RUN_BUDGET_MS * 1_000_000;
+        while ($handled < self::MAX_JOBS_PER_RUN && hrtime(true) < $runDeadline) {
             $id = $this->redis->popRight(RegistrarCheck::QUEUE);
             if ($id === null) {
                 break;
@@ -64,53 +73,63 @@ final readonly class RegistrarCheckWorker
             }
             $raw = $this->redis->get(RegistrarCheck::jobKey($id));
             $this->redis->delete(RegistrarCheck::jobKey($id));
-            $domains = is_string($raw) ? json_decode($raw, true) : null;
-            if (!is_array($domains) || !array_is_list($domains) || $domains === [] || count($domains) > RegistrarCheck::MAX_DOMAINS) {
+            [$domains, $ideas] = self::decodeJob($raw);
+            if ($domains === []) {
                 continue;
             }
-            $domains = array_values(array_filter($domains, 'is_string'));
+            $deadline = hrtime(true) + self::JOB_BUDGET_MS * 1_000_000;
+            $all = [...$domains, ...$ideas];
             if (!$loaded) {
                 $loaded = true;
                 $checker = ($this->checker)();
             }
             $answers = [];
-            $outcome = 'not_connected';
-            $registered = [];
-            foreach ($domains as $domain) {
-                if ($this->dns?->hasNameservers($domain) === true) {
-                    $registered[$domain] = new AvailabilityAnswer('taken');
+            foreach ($all as $domain) {
+                if (hrtime(true) < $deadline && $this->dns?->hasNameservers($domain) === true) {
+                    $answers[$domain] = new AvailabilityAnswer('taken');
                 }
             }
-            $toRegistrar = array_values(array_diff($domains, array_keys($registered)));
+            $toRegistrar = array_values(array_diff($domains, array_keys($answers)));
             if ($checker !== null && $toRegistrar !== []) {
-                try {
-                    $answers = $checker->checkAvailability($toRegistrar);
-                    $outcome = 'answered';
-                } catch (RegistrarUnavailable $e) {
-                    $answers = [];
-                    $outcome = $e->reason;
-                } catch (\InvalidArgumentException) {
-                    $answers = [];
-                    $outcome = 'malformed';
+                $outcome = 'answered';
+                $answered = [];
+                foreach (array_chunk($toRegistrar, self::REGISTRAR_BATCH) as $batch) {
+                    if (hrtime(true) >= $deadline) {
+                        break;
+                    }
+                    try {
+                        $answered += array_intersect_key($checker->checkAvailability($batch), array_flip($batch));
+                    } catch (RegistrarUnavailable $e) {
+                        $outcome = $e->reason;
+                        break;
+                    } catch (\InvalidArgumentException) {
+                        $outcome = 'malformed';
+                        break;
+                    }
                 }
+                if ($this->health !== null && $this->clock !== null) {
+                    $this->health->record($outcome, count($toRegistrar), count($answered), $this->clock->now());
+                }
+                $answers += $answered;
+            } elseif ($this->health !== null && $this->clock !== null && $toRegistrar !== []) {
+                $this->health->record('not_connected', count($toRegistrar), 0, $this->clock->now());
             }
-            if ($this->health !== null && $this->clock !== null && $toRegistrar !== []) {
-                $this->health->record($outcome, count($toRegistrar), count(array_intersect_key($answers, array_flip($toRegistrar))), $this->clock->now());
-            }
-            $answers = $registered + $answers;
-            foreach ($domains as $domain) {
-                $current = $answers[$domain] ?? null;
-                if ($current !== null && $current->status !== 'unknown') {
+            foreach ([$this->rdap, $this->whois] as $source) {
+                if ($source === null) {
                     continue;
                 }
-                if ($this->whois === null || hrtime(true) >= $whoisDeadline) {
-                    continue;
-                }
-                $status = $this->whois->check($domain);
-                if ($status !== 'unknown') {
-                    $answers[$domain] = new AvailabilityAnswer($status);
+                foreach ($all as $domain) {
+                    $current = $answers[$domain] ?? null;
+                    if (($current !== null && $current->status !== 'unknown') || hrtime(true) >= $deadline) {
+                        continue;
+                    }
+                    $status = $source->check($domain);
+                    if ($status !== 'unknown') {
+                        $answers[$domain] = new AvailabilityAnswer($status);
+                    }
                 }
             }
+            $domains = $all;
             $results = [];
             foreach ($domains as $domain) {
                 $results[] = $this->result($domain, $answers[$domain] ?? AvailabilityAnswer::unknown());
@@ -120,6 +139,27 @@ final readonly class RegistrarCheckWorker
         }
 
         return $handled;
+    }
+
+    /**
+     * A job is {"domains": [...], "ideas": [...]}, or a plain list from checkout (CD-23).
+     *
+     * @return array{0: list<string>, 1: list<string>} empty names when the job is malformed
+     */
+    private static function decodeJob(?string $raw): array
+    {
+        $job = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($job) && array_is_list($job)) {
+            $job = ['domains' => $job, 'ideas' => []];
+        }
+        $domains = is_array($job) ? ($job['domains'] ?? null) : null;
+        $ideas = is_array($job) ? ($job['ideas'] ?? []) : null;
+        if (!is_array($domains) || !array_is_list($domains) || $domains === [] || count($domains) > RegistrarCheck::MAX_DOMAINS
+            || !is_array($ideas) || !array_is_list($ideas) || count($ideas) > RegistrarCheck::MAX_IDEAS) {
+            return [[], []];
+        }
+
+        return [array_values(array_filter($domains, 'is_string')), array_values(array_filter($ideas, 'is_string'))];
     }
 
     /** @return array{domain: string, status: string, premium: bool, register: ?array{usd: int, ngn: ?int}} */

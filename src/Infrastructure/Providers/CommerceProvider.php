@@ -54,6 +54,7 @@ use PaxofiCloud\Http\Controllers\DomainSearchController;
 use PaxofiCloud\Application\Domains\DomainPriceList;
 use PaxofiCloud\Application\Domains\RegistrarCheck;
 use PaxofiCloud\Application\Domains\DomainSearch;
+use PaxofiCloud\Application\Domains\RdapAvailability;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Infrastructure\Domains\CachedRdapDirectory;
 use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
@@ -101,9 +102,7 @@ final class CommerceProvider implements Provider
 
             return new DomainSearchController(new DomainSearch(
                 Resolve::get($c, ExtensionQuotes::class),
-                new CachedRdapDirectory($redis, new RdapBootstrap(new ProviderHttpClient([RdapBootstrap::endpoint()], connectTimeoutMs: 3_000, totalTimeoutMs: 8_000, maxResponseBytes: RdapBootstrap::MAX_BYTES))),
-                new RdapLookup(),
-                $redis,
+                self::rdapAvailability($redis),
                 new RedisRateLimiter($redis),
             ));
         });
@@ -224,6 +223,17 @@ final class CommerceProvider implements Provider
             new SystemClock(),
             Resolve::get($c, Logger::class),
         ));
+    }
+
+    /** The RDAP pre-check (DS-2, DS-3), shared by the web search and the provider worker. */
+    public static function rdapAvailability(RedisClient $redis): RdapAvailability
+    {
+        return new RdapAvailability(
+            new CachedRdapDirectory($redis, new RdapBootstrap(new ProviderHttpClient([RdapBootstrap::endpoint()], connectTimeoutMs: 3_000, totalTimeoutMs: 8_000, maxResponseBytes: RdapBootstrap::MAX_BYTES))),
+            new RdapLookup(),
+            $redis,
+            new RedisRateLimiter($redis),
+        );
     }
 
     public function boot(Application $application): void
