@@ -9,6 +9,8 @@ use Paxofi\Core\Contracts\Repository;
 use Paxofi\Core\Contracts\TransactionManager;
 use PaxofiCloud\Application\Contracts\Ledger;
 use PaxofiCloud\Domain\Ledger\JournalEntry;
+use PaxofiCloud\Domain\Ledger\EntryKind;
+use PaxofiCloud\Domain\Ledger\JournalLine;
 use PaxofiCloud\Domain\Ledger\LedgerAccount;
 use PaxofiCloud\Domain\Money\Currency;
 use PaxofiCloud\Infrastructure\Persistence\Row;
@@ -51,6 +53,40 @@ final readonly class MysqlLedger implements Ledger
             }
             throw $e;
         }
+    }
+
+    public function entryForSource(string $sourceKey): ?JournalEntry
+    {
+        $row = $this->repository->fetchAll(
+            'SELECT id, source_key, kind, currency, posted_at, reverses_entry_id FROM journal_entries WHERE source_key = :source',
+            ['source' => $sourceKey],
+        )[0] ?? null;
+        if ($row === null) {
+            return null;
+        }
+        $lines = [];
+        foreach ($this->repository->fetchAll(
+            'SELECT account_code, customer_account_id, debit_minor, credit_minor FROM journal_lines WHERE entry_id = :id ORDER BY line_no',
+            ['id' => Row::string($row, 'id')],
+        ) as $line) {
+            $account = LedgerAccount::from(Row::string($line, 'account_code'));
+            $customer = is_string($line['customer_account_id'] ?? null) ? $line['customer_account_id'] : null;
+            $debit = Row::int($line, 'debit_minor');
+            $lines[] = $debit > 0
+                ? JournalLine::debit($account, $debit, $customer)
+                : JournalLine::credit($account, Row::int($line, 'credit_minor'), $customer);
+        }
+        $reverses = $row['reverses_entry_id'] ?? null;
+
+        return new JournalEntry(
+            Row::string($row, 'id'),
+            Row::string($row, 'source_key'),
+            EntryKind::from(Row::string($row, 'kind')),
+            Currency::from(Row::string($row, 'currency')),
+            new \DateTimeImmutable(Row::string($row, 'posted_at'), new \DateTimeZone('UTC')),
+            $lines,
+            is_string($reverses) ? $reverses : null,
+        );
     }
 
     public function balance(LedgerAccount $account, Currency $currency, ?string $customerAccountId = null): int

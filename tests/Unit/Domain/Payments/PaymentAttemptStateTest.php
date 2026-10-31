@@ -9,7 +9,7 @@ use PaxofiCloud\Domain\Payments\PaymentAttemptState;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-/** SRS §5.2, PAY-004; THREAT-MODEL-PAYMENTS.md PY-5, PY-9. */
+/** SRS §5.2, PAY-004; THREAT-MODEL-PAYMENTS.md PY-5, PY-9, PY-12. */
 final class PaymentAttemptStateTest extends TestCase
 {
     public function testTheListedTransitionsAreAllowed(): void
@@ -22,12 +22,16 @@ final class PaymentAttemptStateTest extends TestCase
         self::assertSame(PaymentAttemptState::Succeeded, PaymentAttemptState::Unknown->to(PaymentAttemptState::Succeeded));
         self::assertSame(PaymentAttemptState::Abandoned, PaymentAttemptState::Pending->to(PaymentAttemptState::Abandoned));
         self::assertSame(PaymentAttemptState::Refunded, PaymentAttemptState::Succeeded->to(PaymentAttemptState::Refunded));
+        // PY-12: a webhook for a closed attempt reopens it for one more gateway check.
+        self::assertSame(PaymentAttemptState::Unknown, PaymentAttemptState::Failed->to(PaymentAttemptState::Unknown));
+        self::assertSame(PaymentAttemptState::Unknown, PaymentAttemptState::Abandoned->to(PaymentAttemptState::Unknown));
     }
 
     /** @return iterable<string, array{PaymentAttemptState, PaymentAttemptState}> */
     public static function refused(): iterable
     {
-        yield 'failed is final' => [PaymentAttemptState::Failed, PaymentAttemptState::Pending];
+        yield 'failed never goes straight back to pending' => [PaymentAttemptState::Failed, PaymentAttemptState::Pending];
+        yield 'a mismatch is never reopened' => [PaymentAttemptState::AmountMismatch, PaymentAttemptState::Unknown];
         yield 'a success is never undone' => [PaymentAttemptState::Succeeded, PaymentAttemptState::Failed];
         yield 'a mismatch never becomes paid' => [PaymentAttemptState::AmountMismatch, PaymentAttemptState::Succeeded];
         yield 'abandoned stays abandoned' => [PaymentAttemptState::Abandoned, PaymentAttemptState::Succeeded];

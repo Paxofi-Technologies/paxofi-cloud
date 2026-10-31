@@ -31,7 +31,9 @@ enum PaymentAttemptState: string
             self::Pending, self::Unknown => [self::Succeeded, self::Failed, self::Abandoned, self::Unknown, self::AmountMismatch],
             self::Succeeded => [self::Refunded, self::PartiallyRefunded],
             self::PartiallyRefunded => [self::Refunded],
-            self::Failed, self::Abandoned, self::AmountMismatch, self::Refunded => [],
+            // PY-12: a genuine webhook for a closed attempt reopens it for one more gateway check, because the money may be real.
+            self::Failed, self::Abandoned => [self::Unknown],
+            self::AmountMismatch, self::Refunded => [],
         };
     }
 

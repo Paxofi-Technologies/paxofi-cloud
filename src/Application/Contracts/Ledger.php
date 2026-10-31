@@ -21,6 +21,9 @@ interface Ledger
     /** Posts the entry inside the caller's open transaction, so it commits or rolls back with the business change it records. */
     public function postInCurrentTransaction(JournalEntry $entry): bool;
 
+    /** The entry posted for a source key, with its lines; null when none was posted. */
+    public function entryForSource(string $sourceKey): ?JournalEntry;
+
     /** Net balance, debits minus credits, in minor units; per-customer accounts need the customer account ID. */
     public function balance(LedgerAccount $account, Currency $currency, ?string $customerAccountId = null): int;
 }
