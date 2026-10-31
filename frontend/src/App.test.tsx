@@ -134,11 +134,37 @@ describe('App routing and session (§6.11)', () => {
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/security'));
   });
 
+  it('opens the payment return page at the address the gateway sends the customer back to (PY-10)', async () => {
+    const id = 'f'.repeat(32);
+    window.history.replaceState(null, '', `/billing/payments/${id}`);
+    const fetchImpl = vi.fn((path: string) => {
+      if (path === '/api/v1/auth/session') return Promise.resolve(json(200, SESSION));
+      if (path === '/api/v1/payments/check' || path.startsWith('/api/v1/payments/detail'))
+        return Promise.resolve(json(200, { payment: { id, gateway: 'paystack', state: 'succeeded', amount: 1000, currency: 'NGN', invoice_number: 'PXC-2026-000001', order_id: 'c'.repeat(32), checkout_url: null, failure_reason: null } }));
+      return Promise.resolve(json(200, { totp_enabled: true, recovery_codes_left: 10 }));
+    }) as unknown as typeof fetch;
+    render(<App path={`/billing/payments/${id}`} fetchImpl={fetchImpl} />);
+
+    expect(await screen.findByText(/Payment received/)).toBeInTheDocument();
+    expect(window.location.pathname).toBe(`/billing/payments/${id}`);
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('sends a signed-out customer coming back from the gateway to sign in, then back to the payment', async () => {
+    const id = 'f'.repeat(32);
+    const navigate = vi.fn();
+    const fetchImpl = vi.fn(() => Promise.resolve(json(401, {}))) as unknown as typeof fetch;
+    render(<App path={`/billing/payments/${id}`} fetchImpl={fetchImpl} navigate={navigate} />);
+
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith(`/sign-in?next=${encodeURIComponent(`/billing/payments/${id}`)}`));
+  });
+
   it('only returns to known portal pages after sign-in (no open redirect)', () => {
     expect(returnPath('?next=%2Fsecurity')).toBe('/security');
     expect(returnPath('?next=%2Fdomains')).toBe('/domains');
     expect(returnPath('')).toBe('/');
-    for (const bad of ['//evil.example', 'https://evil.example/security', '/security/../..', '/\\evil.example', 'javascript:alert(1)', '/sign-in']) {
+    expect(returnPath(`?next=${encodeURIComponent('/billing/payments/' + 'a'.repeat(32))}`)).toBe('/billing/payments/' + 'a'.repeat(32));
+    for (const bad of ['//evil.example', 'https://evil.example/security', '/security/../..', '/\\evil.example', 'javascript:alert(1)', '/sign-in', '/billing/payments/' + 'A'.repeat(32), '/billing/payments/abc', '/billing/payments/' + 'a'.repeat(32) + '/x']) {
       expect(returnPath(`?next=${encodeURIComponent(bad)}`)).toBe('/');
     }
   });

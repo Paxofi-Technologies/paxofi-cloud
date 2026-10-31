@@ -205,6 +205,17 @@ final class InMemoryPaymentAttemptStore implements PaymentAttemptStore
         return true;
     }
 
+    public function checkNow(string $accountId, string $attemptId, \DateTimeImmutable $now): bool
+    {
+        $a = $this->attempts[$attemptId] ?? null;
+        if ($a === null || $a['attempt']->accountId !== $accountId || !in_array($a['state'], ['pending', 'unknown'], true) || ($a['next'] !== null && $a['next'] <= $now)) {
+            return false;
+        }
+        $this->attempts[$attemptId]['next'] = $now;
+
+        return true;
+    }
+
     public function close(string $attemptId, int $checksSeen, PaymentAttemptState $final, \DateTimeImmutable $now): bool
     {
         $a = $this->attempts[$attemptId] ?? null;

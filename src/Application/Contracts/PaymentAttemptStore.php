@@ -77,6 +77,13 @@ interface PaymentAttemptStore
      */
     public function rescheduled(string $attemptId, int $checksSeen, \DateTimeImmutable $nextCheckAt, bool $unknown, \DateTimeImmutable $now): bool;
 
+    /**
+     * The customer is back from the gateway's page (PY-10): one of the
+     * account's pending or unknown attempts becomes due for a check now. Only
+     * ever brings a check earlier; never settles anything.
+     */
+    public function checkNow(string $accountId, string $attemptId, \DateTimeImmutable $now): bool;
+
     /** pending/unknown → failed or abandoned after the last scheduled check. */
     public function close(string $attemptId, int $checksSeen, PaymentAttemptState $final, \DateTimeImmutable $now): bool;
 

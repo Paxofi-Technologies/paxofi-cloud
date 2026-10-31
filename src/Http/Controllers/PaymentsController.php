@@ -21,6 +21,7 @@ use PaxofiCloud\Http\RequestId;
  *   GET  /api/v1/payments/options?order_id=   gateways the pay screen may offer
  *   POST /api/v1/payments {order_id, gateway} with an Idempotency-Key header
  *   GET  /api/v1/payments/detail?id=           the attempt, polled until its checkout URL is ready
+ *   POST /api/v1/payments/check {payment_id}   back from the gateway: check now (max once per 30 s)
  * Scoped by the session's account in SQL; another account's ID is 404. The
  * amount is never taken from the request.
  */
@@ -90,6 +91,24 @@ final readonly class PaymentsController
         }
         try {
             return self::json(200, ['payment' => $this->payments->status($session->accountId, $id)]);
+        } catch (PaymentRefused $e) {
+            return self::refused($request, $e);
+        }
+    }
+
+    /** POST /api/v1/payments/check {payment_id}: the return page asks for an early gateway check (PY-10). */
+    public function check(HttpRequest $request): HttpResponse
+    {
+        $session = Authenticated::session($request, $this->sessions, write: true);
+        if ($session instanceof HttpResponse) {
+            return $session;
+        }
+        $data = JsonBody::object($request);
+        if ($data === null || array_keys($data) !== ['payment_id'] || !is_string($data['payment_id']) || preg_match(self::ID, $data['payment_id']) !== 1) {
+            return ProblemDetails::response(400, 'malformed_request', RequestId::of($request));
+        }
+        try {
+            return self::json(202, ['payment' => $this->payments->checkNow($session->accountId, $data['payment_id'])]);
         } catch (PaymentRefused $e) {
             return self::refused($request, $e);
         }

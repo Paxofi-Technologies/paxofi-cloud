@@ -4,6 +4,7 @@ import { countryName } from '../lib/activity';
 import { formatRate } from '../lib/billing';
 import { fetchInvoice, INVOICE_STATUS_LABELS, type Invoice } from '../lib/invoice';
 import { formatMoney } from '../lib/money';
+import { PayPanel } from './PayPanel';
 
 const day = (iso: string): string => {
   const date = new Date(iso);
@@ -12,10 +13,20 @@ const day = (iso: string): string => {
 
 /**
  * One order's invoice (INV-001): the billing snapshot taken when the order was
- * placed, the lines, tax and totals. Text only; printable. Payment arrives with
- * the payments work, so an unpaid invoice shows when it expires.
+ * placed, the lines, tax and totals. Text only; printable. An unpaid invoice
+ * shows when it expires and how to pay it (PY-6); the pay buttons never print.
  */
-export function InvoiceView({ orderId, fetchImpl }: { orderId: string; fetchImpl?: typeof fetch | undefined }) {
+export function InvoiceView({
+  orderId,
+  csrfToken,
+  fetchImpl,
+  navigate,
+}: {
+  orderId: string;
+  csrfToken: string;
+  fetchImpl?: typeof fetch | undefined;
+  navigate?: (url: string) => void;
+}) {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -143,6 +154,8 @@ export function InvoiceView({ orderId, fetchImpl }: { orderId: string; fetchImpl
           <strong>{money(invoice.total)}</strong>
         </dd>
       </dl>
+
+      {invoice.status === 'unpaid' && <PayPanel orderId={orderId} csrfToken={csrfToken} fetchImpl={fetchImpl} {...(navigate ? { navigate } : {})} />}
 
       <div className="pc-invoice__actions">
         <Button variant="secondary" onClick={() => window.print()}>

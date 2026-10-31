@@ -109,7 +109,7 @@ export function BillingScreen({ csrfToken, fetchImpl }: BillingScreenProps) {
         </Card>
       )}
 
-      <OrdersCard fetchImpl={fetchImpl} />
+      <OrdersCard csrfToken={csrfToken} fetchImpl={fetchImpl} />
 
       <Card title="Billing details">
         {billing === null && message === null ? (
@@ -162,7 +162,7 @@ export function BillingScreen({ csrfToken, fetchImpl }: BillingScreenProps) {
 }
 
 /** The account's orders (ORD-004): snapshot totals, newest first. */
-function OrdersCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
+function OrdersCard({ csrfToken, fetchImpl }: { csrfToken: string; fetchImpl?: typeof fetch | undefined }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<Order | null>(null);
@@ -231,7 +231,7 @@ function OrdersCard({ fetchImpl }: { fetchImpl?: typeof fetch | undefined }) {
         </div>
       )}
       <Modal open={viewing !== null} title={viewing ? `Invoice ${viewing.invoiceNumber}` : 'Invoice'} size="lg" onClose={() => setViewing(null)}>
-        {viewing && <InvoiceView key={viewing.id} orderId={viewing.id} fetchImpl={fetchImpl} />}
+        {viewing && <InvoiceView key={viewing.id} orderId={viewing.id} csrfToken={csrfToken} fetchImpl={fetchImpl} />}
       </Modal>
     </Card>
   );

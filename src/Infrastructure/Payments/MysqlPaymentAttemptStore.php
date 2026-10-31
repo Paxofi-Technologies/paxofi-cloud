@@ -271,6 +271,18 @@ final readonly class MysqlPaymentAttemptStore implements PaymentAttemptStore
         ) === 1;
     }
 
+    public function checkNow(string $accountId, string $attemptId, \DateTimeImmutable $now): bool
+    {
+        $at = self::utc($now);
+
+        return $this->connection->execute(
+            "UPDATE payment_attempts SET next_check_at = :now
+             WHERE id = :id AND account_id = :account AND state IN ('pending', 'unknown')
+               AND (next_check_at IS NULL OR next_check_at > :now2)",
+            ['now' => $at, 'now2' => $at, 'id' => $attemptId, 'account' => $accountId],
+        ) === 1;
+    }
+
     public function close(string $attemptId, int $checksSeen, PaymentAttemptState $final, \DateTimeImmutable $now): bool
     {
         if ($final !== PaymentAttemptState::Failed && $final !== PaymentAttemptState::Abandoned) {
