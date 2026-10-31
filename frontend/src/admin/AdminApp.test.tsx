@@ -553,7 +553,7 @@ describe('API providers (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     render(<AdminApp path="/api-providers/payment-gateways" fetchImpl={fetchImpl} credentials={authenticator()} />);
 
     expect(await screen.findByRole('heading', { name: 'Payment gateways' })).toBeInTheDocument();
-    expect(screen.getByText('Paystack (payments)')).toBeInTheDocument();
+    expect(await screen.findByText('Paystack (payments)')).toBeInTheDocument();
     expect(screen.queryByText('Hetzner Cloud (servers)')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Set credential' }));
     expect(screen.getByLabelText('Secret key')).toHaveAttribute('type', 'password');
