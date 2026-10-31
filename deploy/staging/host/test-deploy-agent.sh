@@ -10,8 +10,6 @@ here="$(cd "$(dirname "$0")" && pwd)"
 agent="$here/paxoficloud-deploy"
 root="$(mktemp -d)"
 export PAXOFICLOUD_ROOT="$root"
-mkdir -p "$root/opt/paxoficloud"
-cp "$here/../compose.yaml" "$root/opt/paxoficloud/compose.yaml"
 
 A=$(printf 'a%.0s' {1..40}); B=$(printf 'b%.0s' {1..40}); C=$(printf 'c%.0s' {1..40})
 run() { SSH_ORIGINAL_COMMAND="$1" "$agent"; }
@@ -23,7 +21,7 @@ cleanup() {
   status=$?
   [ "$status" -ne 0 ] && tail -40 "$root/var/log/paxoficloud/deploy.log" 2>/dev/null
   APP_VERSION="$A" PAXOFICLOUD_ENV_DIR="$root/etc/paxoficloud" COMPOSE_PROFILES=mail \
-    docker compose -p paxoficloud -f "$root/opt/paxoficloud/compose.yaml" down -v >/dev/null 2>&1 || true
+    docker compose -p paxoficloud -f "$here/../compose.yaml" down -v >/dev/null 2>&1 || true
   rm -rf "$root"
   exit "$status"
 }
@@ -48,6 +46,9 @@ echo "== first release"
 run "release $A" 2>/dev/null || fail "release A failed"
 [ "$(health)" = '{"status":"healthy"}' ] || fail "A not healthy"
 [ "$(current)" = "$A" ] || fail "current is not A"
+# P-14: the release brought its own compose file, checked and kept per version.
+cmp -s "$root/var/lib/paxoficloud/compose/$A.yaml" "$here/../compose.yaml" || fail "A's compose file was not taken from its image"
+[ "$(stat -c %a "$root/var/lib/paxoficloud/compose/$A.yaml")" = 600 ] || fail "the kept compose file is not 0600"
 grep -qiE 'password=' "$root/var/log/paxoficloud/deploy.log" && fail "a password reached the deploy log"
 [ "$(stat -c %a "$root/etc/paxoficloud/app.env")" = 600 ] || fail "app.env is not 0600"
 [ "$(stat -c %a "$root/etc/paxoficloud/owner.env")" = 600 ] || fail "owner.env is not 0600"
@@ -92,6 +93,21 @@ if run "release $B" 2>/dev/null; then fail "broken release B reported success"; 
 [ "$(health)" = '{"status":"healthy"}' ] || fail "service not healthy after rollback"
 [ "$(current)" = "$A" ] || fail "current changed after a failed release"
 grep -q "rolled back to $A" "$root/var/log/paxoficloud/deploy.log" || fail "no rollback recorded"
+
+echo "== a compose file asking for host access is refused before anything starts (D-13)"
+D=$(printf 'd%.0s' {1..40})
+ctx="$(mktemp -d)"
+sed 's/^  payments-web:$/  payments-web:\n    privileged: true/' "$here/../compose.yaml" > "$ctx/compose.yaml"
+grep -q 'privileged: true' "$ctx/compose.yaml" || fail "test setup: privileged service not written"
+printf 'FROM paxoficloud-php:%s\nCOPY compose.yaml /app/deploy/compose.yaml\n' "$A" | docker build -q -t "paxoficloud-php:$D" -f - "$ctx" >/dev/null
+rm -rf "$ctx"
+docker tag "paxoficloud-nginx:$A" "paxoficloud-nginx:$D"
+if run "release $D" 2>/dev/null; then fail "a privileged compose file was accepted"; fi
+grep -q "compose file of $D asks for host-level access; refused" "$root/var/log/paxoficloud/deploy.log" || fail "no refusal recorded for the privileged compose file"
+[ -e "$root/var/lib/paxoficloud/compose/$D.yaml" ] && fail "the refused compose file was kept"
+[ "$(current)" = "$A" ] || fail "current changed after a refused compose file"
+[ "$(health)" = '{"status":"healthy"}' ] || fail "the running release was disturbed by the refused compose file"
+docker image rm "paxoficloud-php:$D" "paxoficloud-nginx:$D" >/dev/null 2>&1 || true
 
 echo "== mail secrets"
 printf 'FOO=bar\n' | run mail-secrets 2>/dev/null && fail "accepted an unknown secret name"
@@ -149,6 +165,8 @@ run "release $C" 2>/dev/null || fail "release C failed"
 [ "$(cat "$root/var/lib/paxoficloud/previous")" = "$A" ] || fail "previous is not A"
 docker image inspect "paxoficloud-nginx:$B" >/dev/null 2>&1 && fail "old image B was not pruned"
 docker image inspect "paxoficloud-php:$A" >/dev/null 2>&1 || fail "previous image A was pruned"
+[ -f "$root/var/lib/paxoficloud/compose/$A.yaml" ] && [ -f "$root/var/lib/paxoficloud/compose/$C.yaml" ] || fail "the current or previous compose file was pruned"
+[ -e "$root/var/lib/paxoficloud/compose/$B.yaml" ] && fail "the compose file of pruned release B was kept"
 worker="$(docker ps --filter name=paxoficloud-mail-worker --format '{{.Names}}' | head -n1)"
 [ -n "$worker" ] || fail "mail worker did not start once an SMTP relay was delivered"
 [ "$(docker exec "$worker" php -r 'echo base64_decode(getenv("SMTP_PASSWORD_B64"), true);')" = "$password" ] \
@@ -172,4 +190,4 @@ grep -q 'secrets predate the runtime database user' "$root/var/log/paxoficloud/d
 mv "$root/etc/paxoficloud/owner.env.bak" "$root/etc/paxoficloud/owner.env"
 [ "$(health)" = '{"status":"healthy"}' ] || fail "the running release was disturbed by the refused one"
 
-echo "OK: deploy agent refuses bad input, releases, rolls back, prunes, bootstraps the first staff admin without logging the address, wires the mail worker (SMTP) and reports mail status without values, and keeps the app on the runtime database user"
+echo "OK: deploy agent refuses bad input, releases with each release's own checked compose file (refusing host-level access), rolls back, prunes, bootstraps the first staff admin without logging the address, wires the mail worker (SMTP) and reports mail status without values, and keeps the app on the runtime database user"

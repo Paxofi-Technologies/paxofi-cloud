@@ -217,7 +217,8 @@ resource "vultr_instance" "staging" {
     cloudflared_image     = local.cloudflared_image
     deploy_ssh_public_key = trimspace(var.deploy_ssh_public_key)
     deploy_agent          = file("${path.module}/../../deploy/staging/host/paxoficloud-deploy")
-    compose_file          = file("${path.module}/../../deploy/staging/compose.yaml")
+    # The compose file ships inside each release's php image (deploy threat
+    # model P-14), so a container change is a deploy, not a new server.
   })
 
   lifecycle {

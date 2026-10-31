@@ -24,6 +24,9 @@ COPY --chown=root:root public/ public/
 COPY --chown=root:root src/ src/
 COPY --chown=root:root vendor/ vendor/
 COPY --chown=root:root composer.json composer.lock ./
+# The staging container set travels with the release (deploy threat model
+# P-14): the deploy agent copies it out of this image and checks it.
+COPY --chown=root:root deploy/staging/compose.yaml deploy/compose.yaml
 
 ARG APP_REVISION=unknown
 LABEL org.opencontainers.image.title="paxoficloud-php" \

@@ -11,7 +11,7 @@ is released by the **PaxofiCloud Staging Deploy** workflow
 
 | Resource | Purpose |
 |---|---|
-| `vultr_instance.staging` | Ubuntu 24.04 host (default plan `vhp-2c-4gb-amd`, region `jnb`; override the plan with the `staging` environment variable `STAGING_VULTR_PLAN` if a size sells out), IPv6 on, configured by `cloud-init.yaml.tftpl`: Docker, `cloudflared`, the deploy agent and the runtime `compose.yaml` |
+| `vultr_instance.staging` | Ubuntu 24.04 host (default plan `vhp-2c-4gb-amd`, region `jnb`; override the plan with the `staging` environment variable `STAGING_VULTR_PLAN` if a size sells out), IPv6 on, configured by `cloud-init.yaml.tftpl`: Docker, `cloudflared` and the deploy agent (the runtime `compose.yaml` ships inside each release's php image; deploy threat model P-14) |
 | `vultr_firewall_group.staging` | **No rules: every inbound packet is dropped.** The host only dials out. |
 | `vultr_ssh_key.admin` | Admin public key on the instance record (break-glass via the Vultr console only; sshd listens on loopback) |
 | `cloudflare_zero_trust_tunnel_cloudflared.staging` + `_config` | Outbound-only tunnel: `cloud-staging.<zone>` → Nginx on `127.0.0.1:8080`; `cloud-staging-ssh.<zone>` → sshd on `127.0.0.1:22`; everything else 404 |
@@ -87,8 +87,9 @@ GitHub → Actions → **PaxofiCloud Staging Infrastructure** → **Run workflow
 
 1. Run `plan` first and read the plan in the job log.
 2. Run `apply`. Each run waits for the environment approval. Changing the
-   cloud-init template, the agent or `deploy/staging/compose.yaml` replaces
-   the instance; staging data does not survive that, by design.
+   cloud-init template or the deploy agent replaces the instance; staging data
+   does not survive that, by design. `deploy/staging/compose.yaml` is not part
+   of the instance any more: a container change is an ordinary deploy.
 3. Release the application: Actions → **PaxofiCloud Staging Deploy** → Run
    workflow on `main`. It builds the images, smoke-tests them, streams them to
    the host and runs `release`, which migrates, starts, health-checks and rolls
