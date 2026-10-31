@@ -22,6 +22,10 @@ cleanup() {
 trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
+# Reads all of stdin before matching, so the writer never gets SIGPIPE when grep -q
+# stops at the first match; with pipefail that race failed good checks and could
+# hide a forbidden match behind "&& fail".
+has() { local input; input="$(cat)"; grep -q "$@" <<<"$input"; }
 
 # Throwaway secrets: random per run, written 0600, never printed.
 (
@@ -106,12 +110,12 @@ grep -qi '^cache-control: no-cache' <<<"$web" || fail "index.html must not be ca
 grep -q '<script>' <<<"$web" && fail "inline script in index.html breaks the CSP"
 asset="$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' <<<"$web" | head -1)"
 test -n "$asset" || fail "no script asset referenced"
-curl -s -D - -o /dev/null "$base$asset" | tr -d '\r' | grep -qi '^cache-control: public, max-age=31536000, immutable' || fail "hashed assets not cached"
+curl -s -D - -o /dev/null "$base$asset" | tr -d '\r' | has -i '^cache-control: public, max-age=31536000, immutable' || fail "hashed assets not cached"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/assets/missing.js")" = 404 || fail "missing asset must 404"
-curl -s "$base/dashboard" | grep -q '<div id="root"></div>' || fail "SPA fallback missing"
+curl -s "$base/dashboard" | has '<div id="root"></div>' || fail "SPA fallback missing"
 test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/")" = 403 || fail "web app accepts POST"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/nope")" = 404 || fail "/api is not routed to PHP"
-curl -s "$base/api/nope" | grep -q '"code":"route_not_found"' || fail "/api 404 is not the API's problem+json"
+curl -s "$base/api/nope" | has '"code":"route_not_found"' || fail "/api 404 is not the API's problem+json"
 test "$(head -c 2000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' --data-binary @- "$base/health/live")" = 413 || fail "body size limit not enforced"
 echo "== admin host"
 # §6.18/§6.19: the staff console and /admin-api answer only on the admin host.
@@ -127,21 +131,21 @@ test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/api/v1/auth/
 test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/index.html")" = 404 || fail "customer portal served on the admin host"
 test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "${admin[@]}" --data '{}' "$base/admin-api/v1/auth/passkey/options")" = 403 || fail "admin write accepted without Origin"
 curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{}' "$base/admin-api/v1/auth/passkey/options" \
-  | grep -q '"rpId":"cloud-staging-admin.paxofi.com"' || fail "passkey sign-in options not issued"
+  | has '"rpId":"cloud-staging-admin.paxofi.com"' || fail "passkey sign-in options not issued"
 # §6.20: code sign-in is wired (MFA keys, Argon2id, Redis): an unknown address gets the uniform 401, not 503.
 curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{"email":"nobody@example.test","password":"not a real password at all"}' "$base/admin-api/v1/auth/password" \
-  | grep -q '"code":"sign_in_failed"' || fail "staff password sign-in not wired"
+  | has '"code":"sign_in_failed"' || fail "staff password sign-in not wired"
 curl -s -X POST -H 'Content-Type: application/json' -H 'Origin: https://cloud-staging-admin.paxofi.com' "${admin[@]}" --data '{"token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}' "$base/admin-api/v1/enrolment/start" \
-  | grep -q '"code":"invitation_invalid"' || fail "staff sign-in setup not wired"
+  | has '"code":"invitation_invalid"' || fail "staff sign-in setup not wired"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin-api/v1/auth/session")" = 404 || fail "admin API reachable on the customer host"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/admin.html")" = 404 || fail "admin console served on the customer host"
-curl -s "$base/" | grep -q '<title>PaxofiCloud</title>' || fail "customer host does not serve the portal"
+curl -s "$base/" | has '<title>PaxofiCloud</title>' || fail "customer host does not serve the portal"
 "${compose[@]}" exec -T php php -r 'exit(ini_get("expose_php") || ini_get("opcache.validate_timestamps") ? 1 : 0);' || fail "production php.ini not applied"
 "${compose[@]}" exec -T php php -r 'exit(extension_loaded("bcmath") && extension_loaded("sodium") && extension_loaded("xmlreader") ? 0 : 1);' || fail "required PHP extensions missing"
 
 echo "== mail worker"
 # The worker boots with its keys and provider config and drains an empty queue.
-"${compose[@]}" run --rm -T mail-worker php bin/paxoficloud mail:work --once | grep -q 'Processed 0 email(s).' || fail "mail worker does not start"
+"${compose[@]}" run --rm -T mail-worker php bin/paxoficloud mail:work --once | has 'Processed 0 email(s).' || fail "mail worker does not start"
 # M-02/E-6: the web tier holds the outbox PUBLIC key only, never provider tokens or the secret key.
 web_env="$("${compose[@]}" exec -T php env)"
 grep -q '^EMAIL_OUTBOX_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the outbox public key"
@@ -149,15 +153,15 @@ grep -qE '^(EMAIL_OUTBOX_SECRET_KEY|POSTMARK_SERVER_TOKEN|RESEND_API_KEY|SMTP_[A
 # §6.12: the Turnstile secret reaches the web tier and nothing else.
 grep -q '^TURNSTILE_SECRET_KEY=.' <<<"$web_env" || fail "web tier lacks the Turnstile secret"
 grep -q '^MFA_RECOVERY_KEY=.' <<<"$web_env" || fail "web tier lacks the MFA keys"
-"${compose[@]}" run --rm -T mail-worker env | grep -qE '^(TURNSTILE_|MFA_)' && fail "web tier keys present in the mail worker"
+"${compose[@]}" run --rm -T mail-worker env | has -E '^(TURNSTILE_|MFA_)' && fail "web tier keys present in the mail worker"
 
 echo "== provider worker"
 # PC-1/PC-6: it boots with the intake secret key and the KEK, and drains an empty intake.
 # A fresh container: the long-running one may still be backing off from starting before the grants.
-"${compose[@]}" run --rm -T provider-worker php bin/paxoficloud providers:work --once | grep -q 'Handled 0 credential submission(s).' || fail "provider worker does not start"
+"${compose[@]}" run --rm -T provider-worker php bin/paxoficloud providers:work --once | has 'Handled 0 credential submission(s).' || fail "provider worker does not start"
 grep -q '^CREDENTIAL_INTAKE_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the credential intake public key"
 grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' <<<"$web_env" && fail "credential intake secret key or KEK present in the php container"
-"${compose[@]}" run --rm -T mail-worker env | grep -qE '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' && fail "credential keys present in the mail worker"
+"${compose[@]}" run --rm -T mail-worker env | has -E '^(CREDENTIAL_INTAKE_SECRET_KEY|PROVIDER_CREDENTIAL_[A-Z_]+)=' && fail "credential keys present in the mail worker"
 provider_env="$("${compose[@]}" run --rm -T provider-worker env)"
 grep -qE '^(TURNSTILE_|MFA_|EMAIL_OUTBOX_SECRET_KEY|SMTP_|POSTMARK_)' <<<"$provider_env" && fail "web or mail secrets present in the provider worker"
 test "$(curl -s -o /dev/null -w '%{http_code}' "${admin[@]}" "$base/admin-api/v1/provider-connections")" = 401 || fail "provider connections reachable without a staff session"
@@ -165,7 +169,7 @@ grep -qE '^PAYMENTS_' <<<"$provider_env" && fail "payments keys present in the p
 
 echo "== payments worker"
 # PY-3: it boots with the payments intake secret key and key ring, and drains an empty payments lane.
-"${compose[@]}" run --rm -T payments-worker php bin/paxoficloud payments:work --once | grep -q 'Handled 0 gateway credential submission(s).' || fail "payments worker does not start"
+"${compose[@]}" run --rm -T payments-worker php bin/paxoficloud payments:work --once | has 'Handled 0 gateway credential submission(s).' || fail "payments worker does not start"
 grep -q '^PAYMENTS_INTAKE_PUBLIC_KEY=.' <<<"$web_env" || fail "web tier lacks the payments intake public key"
 grep -qE '^(PAYMENTS_INTAKE_SECRET_KEY|PAYMENTS_CREDENTIAL_[A-Z_]+)=' <<<"$web_env" && fail "payments intake secret key or key ring present in the php container"
 # Captured first: under pipefail an early `grep -q` exit could hide a match.
@@ -194,12 +198,12 @@ echo "== hardening"
 for service in php nginx redis provider-worker payments-worker payments-web; do
   id="$("${compose[@]}" ps -q "$service")"
   test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$id")" = true || fail "$service root filesystem is writable"
-  docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$id" | grep -q 'no-new-privileges:true' || fail "$service lacks no-new-privileges"
+  docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$id" | has 'no-new-privileges:true' || fail "$service lacks no-new-privileges"
 done
 test "$("${compose[@]}" exec -T php id -u)" != 0 || fail "php runs as root"
 test "$("${compose[@]}" exec -T redis id -u)" != 0 || fail "redis runs as root"
 # D-07: the web tier never holds the provider-credential KEK.
-"${compose[@]}" exec -T php env | grep -q '^PROVIDER_CREDENTIAL' && fail "KEK present in the php container"
+"${compose[@]}" exec -T php env | has '^PROVIDER_CREDENTIAL' && fail "KEK present in the php container"
 # P-5/D-04: secret values live only in env files. They must never appear in a
 # container's command, entrypoint or labels (visible to `docker inspect`).
 for service in php nginx mysql redis provider-worker payments-worker payments-web; do
