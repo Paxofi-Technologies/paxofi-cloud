@@ -566,6 +566,25 @@ describe('API providers (THREAT-MODEL-PROVIDER-CONNECTIONS.md)', () => {
     expect(document.body.innerHTML).not.toContain('live-looking-value');
   });
 
+  it('says when the session ended instead of a bare "could not be saved"', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = adminApi({
+      ...base,
+      'GET /admin-api/v1/provider-connections': { status: 200, body: providers },
+      'POST /admin-api/v1/provider-connections': { status: 401, body: { code: 'not_signed_in' } },
+    });
+    render(<AdminApp path="/api-providers/payment-gateways" fetchImpl={fetchImpl} credentials={authenticator()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Set credential' }));
+    await user.type(screen.getByLabelText('Secret key'), 'test-looking-value');
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Save credential' }));
+
+    expect(await screen.findByText(/Your session has ended \(15 minutes without activity/)).toBeInTheDocument();
+    expect(screen.queryByText('The credential could not be saved.')).toBeNull();
+    expect(screen.getByLabelText('Secret key')).toHaveValue('');
+  });
+
   it('checks the form before sending anything', async () => {
     const user = userEvent.setup();
     const fetchImpl = adminApi({ ...base, 'GET /admin-api/v1/provider-connections': { status: 200, body: providers } });
