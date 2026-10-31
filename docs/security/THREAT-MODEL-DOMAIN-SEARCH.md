@@ -56,18 +56,67 @@ only: no cart, no WHOIS details, no registrar call.
 | DS-T12 | T | An odd registrar answer shows a taken or reserved name as available, or sells a premium name at the normal price | 2 | 3 | Unrecognised status is unknown; premium without a usable price is "contact us", not sellable; premium priced through the same floor; checkout re-checks | `DomainNameApiAvailabilityParserTest`, `RegistrarCheckTest` |
 | DS-T7 | S | Bootstrap fetched from a spoofed host | 1 | 3 | Fixed host, verified TLS, public-IP pinning; validation of every entry | `RdapTest` |
 
+## 7. Multi-source availability lookup (DS-14 to DS-21, proposed 31 Oct 2026)
+
+CEO request: a domain search that does not depend on one source, like WHMCS's choice of lookup
+providers, and an extension list that includes every registrar's extensions.
+
+**Today:** the pre-check uses RDAP only (DS-1). Extensions without an RDAP server in IANA's file, which
+includes most `.ng` second-level names, show "couldn't check" (R-2). The registrar check (DS-13) asks
+DomainNameAPI only, even for an extension another registrar sells.
+
+**Extension list:** the list is already the union of every registrar with a usable cost snapshot
+(`ExtensionQuotes::offers()`), and the cheapest healthy registrar sells each extension (DX-2). Staging
+lists only DomainNameAPI's extensions because only DomainNameAPI has synced costs. Once Spaceship,
+Dynadot, Namecheap or go54 costs are synced, their extensions appear with no further change. DS-21 adds a
+test that keeps it that way.
+
+| ID | Decision |
+|---|---|
+| DS-14 | **Lookup order for each extension.** Each extension has a lookup mode, set on the admin Domain extensions page: `auto` (the default) means RDAP, then port-43 WHOIS, then the registrar; `rdap`, `whois` or `registrar` uses that source only. In `auto`, a source is tried only when the one before it gave `unknown` or has no server for the extension. A source never turns `taken` into `available`. Only the registrar check (DS-13/DS-17) can mark a name premium or reserved, and checkout always re-checks with the registrar. |
+| DS-15 | **WHOIS server discovery.** The WHOIS server for an extension is learned from IANA: one port-43 query of the extension to `whois.iana.org`, reading only the `refer:` line. It is cached in Redis for 7 days, and the last good value is kept if a query fails. A Super Admin may set a fixed server for an extension instead. Every server, learned or set, must be a DNS host name (no IP literal, port, user or path) and is always contacted on port 43. Staff cannot choose a port or an IP. |
+| DS-16 | **The port-43 client** (new `WhoisClient`). It runs only in the provider worker, never in the web tier: names are queued exactly as in DS-13 (Redis, random job ID, 2-minute TTL), so the web tier gains no new egress. The worker resolves the host with its own resolver and connects only to a public IP (the same pinning rules as `ProviderHttpClient`): 3 s connect, 5 s total, 32 KiB read cap. It sends exactly `<domain>\r\n`, where the domain is built by us from a validated label and an extension we sell (DS-4). The response is never stored, logged or shown. |
+| DS-17 | **Reading a WHOIS reply.** `available` only when the reply contains a known "no match" phrase. A built-in list holds the common ones (e.g. "No match for", "NOT FOUND", "No Data Found", "No entries found", "Status: free", "Domain not found"). Staff may add one plain-text phrase per extension (no regular expressions, so no ReDoS; 3–100 printable characters; case-insensitive substring). A known rate-limit or error phrase ("limit exceeded", "try again", "quota"), an empty reply or a timeout gives `unknown`. Any other non-empty reply gives `taken`. A wrong guess therefore errs towards "taken", never towards "available". |
+| DS-18 | **Registrar check by extension.** The DS-13 job asks the registrar that would sell each name, the cheapest healthy one or the pinned one (DX-2/DX-3), with one bulk call per registrar per job, through each adapter's `AvailabilityChecker`. A registrar without an availability call (or one that is paused, e.g. go54 until its docs arrive) falls back to DomainNameAPI when that registrar sells the extension; otherwise the result is `unknown`. |
+| DS-19 | **Limits.** All DS-6/DS-13 per-IP limits are unchanged. For each WHOIS server: at most 1 query per second and 30 per minute across all users (Redis); over that, `unknown` with no call. For `whois.iana.org`: at most 10 discovery queries per hour. At most 6 names per job (DS-5) and at most 10 jobs per worker loop. Results are cached exactly as in DS-7 (hashed keys, 10 min / 1 min). |
+| DS-20 | **Privacy (DS-8 extended).** WHOIS replies are not kept. Neither the names nor the replies are logged; logs carry only fixed codes (`whois.timeout`, `whois.no_server`, `whois.rate_limited`) and the server host. Staff see per-server counts of the last 24 h on Domain costs ("Lookup sources"). |
+| DS-21 | **Admin and audit.** The lookup mode and WHOIS phrase need `catalogue.manage`; a fixed WHOIS server needs Super Admin. Every change is audited (`extension.lookup_changed`, old and new value). The admin page shows, per extension, the source that answered last ("RDAP", "WHOIS whois.nic.net.ng", "Registrar") and when. |
+
+| ID | STRIDE | Threat | L | I | Mitigation | Test |
+|---|---|---|---|---|---|---|
+| DS-T13 | T/I | SSRF through a WHOIS server: a poisoned IANA `refer:` line or a staff-entered host points at an internal address | 2 | 3 | DS-15 host-name only, fixed port 43; DS-16 own resolver, public-IP pinning, worker only | `WhoisClientTest`, `WhoisServerTest` |
+| DS-T14 | T | A WHOIS reply makes a taken name look available | 2 | 2 | DS-17 available only on a known phrase; everything unrecognised is taken or unknown; registrar re-check at checkout (DS-1, R-1) | `WhoisReplyTest` |
+| DS-T15 | D | A slow or endless WHOIS server ties up the worker | 3 | 2 | DS-16 3 s / 5 s / 32 KiB; DS-19 per-server and per-loop caps | `WhoisClientTest` |
+| DS-T16 | D | The search makes us flood a registry's WHOIS and get our IP blocked | 3 | 2 | DS-19 per-server limits, DS-7 cache, `unknown` instead of retrying | `RegistrarCheckWorkerTest` |
+| DS-T17 | I | Searched names leak through WHOIS logs or our own logs | 2 | 2 | DS-20: no names or replies logged or stored. Residual: the registry sees the query, as it already does through RDAP and the registrar (R-4). | `WhoisClientTest` (log context) |
+| DS-T18 | E | Command injection into the WHOIS query (CRLF, extra arguments) | 1 | 2 | DS-16: the query is built from a validated label and extension, and any CR, LF or space in the name is refused | `WhoisClientTest` |
+| DS-T19 | T | A staff phrase such as "a" marks every name available | 2 | 2 | DS-17 minimum length, audit (DS-21); checkout re-check | `ExtensionLookupSettingsTest` |
+
+**Infrastructure.** The provider worker needs outbound TCP 43. Its egress is currently HTTPS only
+(Hetzner firewall and container network), so this adds one firewall rule through IaC: port 43, any
+destination, provider worker host only. The web tier and the payments containers are unchanged.
+
+**Build order** (after CEO approval of this section):
+1. `WhoisClient`, the reply parser and IANA discovery, with tests.
+2. Worker job: WHOIS step plus per-registrar routing (DS-18).
+3. Admin: lookup mode, WHOIS phrase and fixed server, plus the "last source" column; migration for the
+   per-extension settings.
+4. Firewall rule, then staging test on `.ng`, `.com.ng` and `.com`.
+
 ## 5. Residual risks
 
 | ID | Risk | Owner / action |
 |---|---|---|
 | R-1 | RDAP says "available" for some reserved or premium names. | Registrar check at checkout (cart PR); the result says "available to register" and the price is confirmed at checkout. |
-| R-2 | Some extensions have no RDAP server (none in IANA's file). | They show `unknown` ("couldn't check right now"); port-43 WHOIS fallback is a later PR (DOM-017). |
+| R-2 | Some extensions have no RDAP server (none in IANA's file). | Port-43 WHOIS and the registrar check (§7, DS-14 to DS-18). |
 | R-3 | A registry rate-limits our server IP. | DS-6 per-server cap, DS-7 cache; `unknown` instead of errors. |
+| R-4 | A registry sees which names are queried (RDAP, WHOIS or registrar). Some registrars and registries have been accused of front-running searched names. | Queries come from our server IP, never with the customer's identity; we query only names the customer typed, and only extensions we sell. |
 
 ## 6. Review log
 
 | Date | Change |
 |---|---|
+| 31 Oct 2026 | §7 DS-14 to DS-21, DS-T13 to DS-T19, R-4: multi-source lookup (RDAP, port-43 WHOIS, registrar per extension), proposed before code at the CEO's request. Notes that the extension list is already the union of all synced registrars. |
 | 25 Oct 2026 | DS-11: the price list was `public, max-age=300`, so a browser kept an old featured list for up to 5 minutes after staff changed it (CEO: .xyz replaced .org at position 4 but customers still saw .org). Now `no-cache` + ETag. |
 | 25 Oct 2026 | DS-13: `.ng` names stayed "Couldn't check" on staging. The official client reads the answer list from `infos`, which the parser did not look in. Added `infos`, status `1`/`true`, `malformed` for a reply naming none of the asked domains, and the "Last availability check" line for staff. |
 | 25 Oct 2026 | DS-13, DS-T10 to DS-T12: registrar availability and premium check through the provider worker (CEO: "build all"). |
