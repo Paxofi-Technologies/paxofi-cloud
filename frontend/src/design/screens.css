@@ -70,6 +70,7 @@
 /* ---------- Security / two-step verification ---------- */
 .pc-row { display: flex; flex-wrap: wrap; gap: var(--pc-space-3); align-items: center; }
 .pc-row-between { display: flex; flex-wrap: wrap; gap: var(--pc-space-3); align-items: center; justify-content: space-between; }
+.pc-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 8rem), 1fr)); gap: var(--pc-space-2) var(--pc-space-4); max-height: 20rem; overflow-y: auto; }
 .pc-mfa-setup { display: grid; grid-template-columns: auto 1fr; gap: var(--pc-space-6); align-items: start; }
 @media (max-width: 640px) { .pc-mfa-setup { grid-template-columns: 1fr; } }
 .pc-qr { border: 1px solid var(--pc-semantic-border-default); border-radius: var(--pc-radius-md); max-width: 100%; height: auto; }

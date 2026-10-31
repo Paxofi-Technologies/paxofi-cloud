@@ -24,6 +24,7 @@ use PaxofiCloud\Http\Controllers\Admin\AdminProviderConnectionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminSessionsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainExtensionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainSearchController;
 use PaxofiCloud\Http\Controllers\Admin\AdminStaffController;
 use PaxofiCloud\Http\Controllers\Admin\AdminTaxRatesController;
 use PaxofiCloud\Http\StaffSessionCookie;
@@ -86,6 +87,9 @@ final class AdminRouteCoverageTest extends TestCase
         'GET /admin-api/v1/domain-extensions' => 'catalogue.view',
         'POST /admin-api/v1/domain-extensions/settings' => 'catalogue.manage',
         'POST /admin-api/v1/domain-pricing-settings' => 'catalogue.manage',
+        'GET /admin-api/v1/domain-search' => 'catalogue.view',
+        'POST /admin-api/v1/domain-search/settings' => 'catalogue.manage',
+        'POST /admin-api/v1/domain-search/lookup' => 'catalogue.manage',
         'GET /admin-api/v1/tax-rates' => 'catalogue.view',
         'POST /admin-api/v1/tax-rates' => 'catalogue.manage',
         'GET /admin-api/v1/audit-events' => 'audit.view',
@@ -234,6 +238,7 @@ final class AdminRouteCoverageTest extends TestCase
             static fn (): AdminSpaceshipPriceCheckController => throw new ReachedController(),
             static fn (): AdminDomainExtensionsController => throw new ReachedController(),
             static fn (): AdminTaxRatesController => throw new ReachedController(),
+            static fn (): AdminDomainSearchController => throw new ReachedController(),
         );
     }
 }

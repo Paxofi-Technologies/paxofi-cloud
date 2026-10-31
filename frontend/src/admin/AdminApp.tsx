@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Alert, AppShell, Badge, Button, Card, Logo, RecoveryCodesView, TextField, type NavItem } from '../components';
-import { GlobeIcon, HomeIcon, KeyIcon, ReceiptIcon, ServerIcon, ShieldIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
+import { GlobeIcon, HomeIcon, KeyIcon, ReceiptIcon, SearchIcon, ServerIcon, ShieldIcon, TagIcon, UserIcon, UsersIcon } from '../components/icons';
 import { QrCode } from '../components/QrCode';
 import { describeWait, type ApiResult } from '../lib/api';
 import { describeLocation, eventLabel, formatWhen } from '../lib/activity';
@@ -53,6 +53,7 @@ import {
 } from './adminApi';
 import { ConfirmWithCode, StaffDevices } from './StaffDevices';
 import { DomainExtensionsPage } from './DomainExtensions';
+import { DomainSearchPage } from './DomainSearch';
 import { TaxRatesPage } from './TaxRates';
 import { createPasskey, getPasskey, type CredentialsApi } from './webauthn';
 
@@ -599,7 +600,7 @@ function Console({ path, fetchImpl, credentials }: { path: string; fetchImpl?: t
   return <Dashboard path={path} session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
 }
 
-type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'providers-payments' | 'domain-extensions' | 'domain-costs' | 'tax-rates' | 'audit-log';
+type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'providers-payments' | 'domain-extensions' | 'domain-search' | 'domain-costs' | 'tax-rates' | 'audit-log';
 
 interface AdminPageSpec {
   id: AdminPage;
@@ -655,6 +656,7 @@ const ADMIN_PAGES: readonly AdminPageSpec[] = [
     group: 'api-providers',
   },
   { id: 'domain-extensions', path: '/domain-extensions', label: 'Domain extensions', icon: <GlobeIcon />, permission: 'catalogue.view' },
+  { id: 'domain-search', path: '/domain-search', label: 'Domain search', icon: <SearchIcon />, permission: 'catalogue.view' },
   { id: 'domain-costs', path: '/domain-costs', label: 'Domain costs', icon: <TagIcon />, permission: 'catalogue.view' },
   { id: 'tax-rates', path: '/tax-rates', label: 'Tax rates', icon: <ReceiptIcon />, permission: 'catalogue.view' },
   { id: 'audit-log', path: '/audit-log', label: 'Audit log', icon: <ShieldIcon />, permission: 'audit.view' },
@@ -756,6 +758,7 @@ function Dashboard({
         {page === 'providers-servers' && <ProviderConnections category="servers" session={session} fetchImpl={fetchImpl} />}
         {page === 'providers-payments' && <ProviderConnections category="payments" session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-extensions' && <DomainExtensionsPage session={session} fetchImpl={fetchImpl} />}
+        {page === 'domain-search' && <DomainSearchPage session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
         {page === 'tax-rates' && <TaxRatesPage session={session} fetchImpl={fetchImpl} />}
         {page === 'audit-log' && <AuditLogCard fetchImpl={fetchImpl} />}

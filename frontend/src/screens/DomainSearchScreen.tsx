@@ -1,29 +1,16 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  PromoLabel,
-  TextField,
-} from "../components";
-import { CheckIcon, SearchIcon } from "../components/icons";
-import { describeWait, postJson } from "../lib/api";
-import {
-  addDomainToCart,
-  fetchCart,
-  removeFromCart,
-  type Cart,
-  type CartResult,
-} from "../lib/cart";
-import { formatMoney } from "../lib/money";
-import { DomainPriceListView } from "./DomainPriceList";
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Alert, Badge, Button, Card, PromoLabel, TextField } from '../components';
+import { CheckIcon, SearchIcon } from '../components/icons';
+import { describeWait, postJson } from '../lib/api';
+import { addDomainToCart, fetchCart, removeFromCart, type Cart, type CartResult } from '../lib/cart';
+import { formatMoney } from '../lib/money';
+import { DomainPriceListView } from './DomainPriceList';
 
 /** One searched name with its selling price (THREAT-MODEL-DOMAIN-SEARCH.md DS-9). Minor units only. */
 export interface SearchResult {
   domain: string;
   tld: string;
-  status: "available" | "taken" | "unknown" | "unavailable";
+  status: 'available' | 'taken' | 'unknown' | 'unavailable';
   /** True once the registrar has confirmed the status (DS-13). */
   confirmed?: boolean;
   premium?: boolean;
@@ -42,62 +29,51 @@ export interface NameIdea {
   renew: { usd: number; ngn: number | null } | null;
 }
 
-type SearchOutcome =
-  | { kind: "ok"; results: SearchResult[]; ideas: NameIdea[] }
-  | { kind: "error"; message: string };
+type SearchOutcome = { kind: 'ok'; results: SearchResult[]; ideas: NameIdea[]; ideasShown: number } | { kind: 'error'; message: string };
 
-/** At most this many ideas are shown (DS-23). */
-export const MAX_IDEAS_SHOWN = 20;
+/** At most this many ideas are shown (DS-23); staff may set fewer. */
+export const MAX_IDEAS_SHOWN = 30;
 
-const isMinor = (v: unknown): v is number =>
-  typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+const isMinor = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
 /** Calls the public search and keeps only well-formed results; values are rendered as text. */
-export async function searchDomains(
-  name: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<SearchOutcome> {
+export async function searchDomains(name: string, fetchImpl: typeof fetch = fetch): Promise<SearchOutcome> {
   let response: Response;
   try {
-    response = await fetchImpl(
-      `/api/v1/domains/search?name=${encodeURIComponent(name)}`,
-      { headers: { Accept: "application/json" }, credentials: "same-origin" },
-    );
+    response = await fetchImpl(`/api/v1/domains/search?name=${encodeURIComponent(name)}`, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
   } catch {
     return {
-      kind: "error",
-      message:
-        "We could not reach PaxofiCloud. Check your connection and try again.",
+      kind: 'error',
+      message: 'We could not reach PaxofiCloud. Check your connection and try again.',
     };
   }
   if (response.status === 429) {
-    const wait = Number(response.headers.get("retry-after") ?? "60");
+    const wait = Number(response.headers.get('retry-after') ?? '60');
     return {
-      kind: "error",
+      kind: 'error',
       message: `Too many searches. Try again ${describeWait(Number.isFinite(wait) ? wait : 60)}.`,
     };
   }
   if (response.status === 422 || response.status === 400) {
-    let code = "";
+    let code = '';
     try {
       const body = (await response.json()) as { code?: unknown };
-      code = typeof body.code === "string" ? body.code : "";
+      code = typeof body.code === 'string' ? body.code : '';
     } catch {
       // keep the general message
     }
     return {
-      kind: "error",
+      kind: 'error',
       message:
-        code === "unknown_extension"
+        code === 'unknown_extension'
           ? "We don't sell that extension yet. Try .ng, .com.ng, .com or another one."
-          : "Use letters, numbers and hyphens only, like yourbusiness or yourbusiness.ng.",
+          : 'Use letters, numbers and hyphens only, like yourbusiness or yourbusiness.ng.',
     };
   }
   if (!response.ok)
     return {
-      kind: "error",
-      message:
-        "Search is not available right now. Please try again in a moment.",
+      kind: 'error',
+      message: 'Search is not available right now. Please try again in a moment.',
     };
   const body = (await response.json()) as {
     results?: unknown;
@@ -109,11 +85,9 @@ export async function searchDomains(
     const register = r.register as Record<string, unknown> | undefined;
     const renew = r.renew as Record<string, unknown> | null | undefined;
     if (
-      typeof r.domain !== "string" ||
-      typeof r.tld !== "string" ||
-      (r.status !== "available" &&
-        r.status !== "taken" &&
-        r.status !== "unknown") ||
+      typeof r.domain !== 'string' ||
+      typeof r.tld !== 'string' ||
+      (r.status !== 'available' && r.status !== 'taken' && r.status !== 'unknown') ||
       !register ||
       !isMinor(register.usd) ||
       !isMinor(register.ngn)
@@ -124,12 +98,9 @@ export async function searchDomains(
       tld: r.tld,
       status: r.status,
       featured: r.featured === true,
-      label: typeof r.label === "string" ? r.label : "none",
+      label: typeof r.label === 'string' ? r.label : 'none',
       register: { usd: register.usd, ngn: register.ngn },
-      renew:
-        renew && isMinor(renew.usd)
-          ? { usd: renew.usd, ngn: isMinor(renew.ngn) ? renew.ngn : null }
-          : null,
+      renew: renew && isMinor(renew.usd) ? { usd: renew.usd, ngn: isMinor(renew.ngn) ? renew.ngn : null } : null,
     });
   }
   const ideas: NameIdea[] = [];
@@ -137,31 +108,23 @@ export async function searchDomains(
     const r = raw as Record<string, unknown>;
     const register = r.register as Record<string, unknown> | undefined;
     const renew = r.renew as Record<string, unknown> | null | undefined;
-    if (
-      typeof r.domain !== "string" ||
-      typeof r.tld !== "string" ||
-      !register ||
-      !isMinor(register.usd) ||
-      !isMinor(register.ngn)
-    )
-      continue;
+    if (typeof r.domain !== 'string' || typeof r.tld !== 'string' || !register || !isMinor(register.usd) || !isMinor(register.ngn)) continue;
     ideas.push({
       domain: r.domain,
       tld: r.tld,
-      label: typeof r.label === "string" ? r.label : "none",
+      label: typeof r.label === 'string' ? r.label : 'none',
       register: { usd: register.usd, ngn: register.ngn },
-      renew:
-        renew && isMinor(renew.usd)
-          ? { usd: renew.usd, ngn: isMinor(renew.ngn) ? renew.ngn : null }
-          : null,
+      renew: renew && isMinor(renew.usd) ? { usd: renew.usd, ngn: isMinor(renew.ngn) ? renew.ngn : null } : null,
     });
   }
-  return { kind: "ok", results, ideas };
+  const shown = (body as { ideas_shown?: unknown }).ideas_shown;
+  const ideasShown = typeof shown === 'number' && Number.isInteger(shown) && shown >= 0 ? Math.min(shown, MAX_IDEAS_SHOWN) : 20;
+  return { kind: 'ok', results, ideas, ideasShown };
 }
 
 type RegistrarAnswer = {
   domain: string;
-  status: SearchResult["status"];
+  status: SearchResult['status'];
   premium: boolean;
   register: { usd: number; ngn: number } | null;
 };
@@ -173,55 +136,39 @@ type RegistrarAnswer = {
 export async function confirmWithRegistrar(
   domains: string[],
   fetchImpl: typeof fetch = fetch,
-  wait: (ms: number) => Promise<void> = (ms) =>
-    new Promise((r) => window.setTimeout(r, ms)),
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => window.setTimeout(r, ms)),
   ideas: string[] = [],
 ): Promise<RegistrarAnswer[]> {
   if (domains.length === 0) return [];
-  const payload =
-    ideas.length > 0
-      ? { domains: domains.slice(0, 13), ideas: ideas.slice(0, 30) }
-      : { domains: domains.slice(0, 13) };
-  const queued = await postJson("/api/v1/domains/check", payload, fetchImpl);
-  const id =
-    queued.kind === "ok"
-      ? (queued.data as { id?: unknown } | null)?.id
-      : undefined;
-  if (typeof id !== "string" || !/^[a-f0-9]{32}$/.test(id)) return [];
+  const payload = ideas.length > 0 ? { domains: domains.slice(0, 13), ideas: ideas.slice(0, 30) } : { domains: domains.slice(0, 13) };
+  const queued = await postJson('/api/v1/domains/check', payload, fetchImpl);
+  const id = queued.kind === 'ok' ? (queued.data as { id?: unknown } | null)?.id : undefined;
+  if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) return [];
   for (let attempt = 0; attempt < 20; attempt++) {
     await wait(1000);
     let body: { status?: unknown; results?: unknown };
     try {
       const response = await fetchImpl(`/api/v1/domains/check?id=${id}`, {
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
       });
       if (!response.ok) return [];
       body = (await response.json()) as typeof body;
     } catch {
       return [];
     }
-    if (body.status === "pending") continue;
-    if (body.status !== "done" || !Array.isArray(body.results)) return [];
+    if (body.status === 'pending') continue;
+    if (body.status !== 'done' || !Array.isArray(body.results)) return [];
     const out: RegistrarAnswer[] = [];
     for (const raw of body.results) {
       const r = raw as Record<string, unknown>;
       const register = r.register as Record<string, unknown> | null | undefined;
-      if (
-        typeof r.domain !== "string" ||
-        !["available", "taken", "unknown", "unavailable"].includes(
-          String(r.status),
-        )
-      )
-        continue;
+      if (typeof r.domain !== 'string' || !['available', 'taken', 'unknown', 'unavailable'].includes(String(r.status))) continue;
       out.push({
         domain: r.domain,
-        status: r.status as SearchResult["status"],
+        status: r.status as SearchResult['status'],
         premium: r.premium === true,
-        register:
-          register && isMinor(register.usd) && isMinor(register.ngn)
-            ? { usd: register.usd, ngn: register.ngn }
-            : null,
+        register: register && isMinor(register.usd) && isMinor(register.ngn) ? { usd: register.usd, ngn: register.ngn } : null,
       });
     }
     return out;
@@ -229,39 +176,33 @@ export async function confirmWithRegistrar(
   return [];
 }
 
-/** Ideas confirmed available (and not premium without a price), at most MAX_IDEAS_SHOWN, in the server's order. */
-export function availableIdeas(
-  ideas: readonly NameIdea[],
-  answers: readonly RegistrarAnswer[],
-): SearchResult[] {
+/** Ideas confirmed available (and not premium without a price), at most `limit`, in the server's order. */
+export function availableIdeas(ideas: readonly NameIdea[], answers: readonly RegistrarAnswer[], limit = 20): SearchResult[] {
   const byDomain = new Map(answers.map((a) => [a.domain, a]));
   const out: SearchResult[] = [];
   for (const idea of ideas) {
     const a = byDomain.get(idea.domain);
-    if (!a || a.status !== "available" || (a.premium && !a.register)) continue;
+    if (!a || a.status !== 'available' || (a.premium && !a.register)) continue;
     out.push({
       ...idea,
-      status: "available",
+      status: 'available',
       confirmed: true,
       premium: a.premium,
       featured: false,
       register: a.premium && a.register ? a.register : idea.register,
       renew: a.premium ? null : idea.renew,
     });
-    if (out.length >= MAX_IDEAS_SHOWN) break;
+    if (out.length >= Math.min(limit, MAX_IDEAS_SHOWN)) break;
   }
   return out;
 }
 
 /** The registrar's answer wins over RDAP; "unknown" from the registrar keeps the RDAP result. */
-export function mergeAnswers(
-  results: readonly SearchResult[],
-  answers: readonly RegistrarAnswer[],
-): SearchResult[] {
+export function mergeAnswers(results: readonly SearchResult[], answers: readonly RegistrarAnswer[]): SearchResult[] {
   const byDomain = new Map(answers.map((a) => [a.domain, a]));
   return results.map((r) => {
     const a = byDomain.get(r.domain);
-    if (!a || a.status === "unknown") return r;
+    if (!a || a.status === 'unknown') return r;
     const next: SearchResult = {
       ...r,
       status: a.status,
@@ -269,8 +210,7 @@ export function mergeAnswers(
       premium: a.premium,
     };
     if (a.premium && a.register) next.register = a.register;
-    if (a.premium && !a.register && a.status === "available")
-      next.status = "unavailable";
+    if (a.premium && !a.register && a.status === 'available') next.status = 'unavailable';
     if (a.premium) next.renew = null;
     return next;
   });
@@ -294,7 +234,7 @@ export function DomainSearchScreen({
   cartVersion?: number;
   onCartChange?: () => void;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [results, setResults] = useState<readonly SearchResult[] | null>(null);
   const [ideas, setIdeas] = useState<readonly SearchResult[]>([]);
@@ -310,7 +250,7 @@ export function DomainSearchScreen({
     let active = true;
     void fetchCart(fetchImpl).then((r) => {
       if (!active) return;
-      if (r.kind === "ok") setCart(r.cart);
+      if (r.kind === 'ok') setCart(r.cart);
       else setCartError(r.message);
     });
     return () => {
@@ -322,49 +262,40 @@ export function DomainSearchScreen({
 
   /** A card or price-list row puts that extension into the search box. */
   function pick(tld: string) {
-    const name = query.trim().toLowerCase().split(".")[0] ?? "";
-    setQuery(`${name || "yourname"}.${tld}`);
+    const name = query.trim().toLowerCase().split('.')[0] ?? '';
+    setQuery(`${name || 'yourname'}.${tld}`);
     setError(undefined);
-    top.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    top.current?.querySelector("input")?.focus();
+    top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    top.current?.querySelector('input')?.focus();
   }
 
   async function search(event: FormEvent) {
     event.preventDefault();
     const name = query.trim().toLowerCase();
-    if (name === "") {
-      setError("Type the name you want, like yourbusiness.");
+    if (name === '') {
+      setError('Type the name you want, like yourbusiness.');
       return;
     }
     setLoading(true);
     setError(undefined);
     const outcome = await searchDomains(name, fetchImpl);
     setLoading(false);
-    if (outcome.kind === "error") {
+    if (outcome.kind === 'error') {
       setError(outcome.message);
       setResults(null);
       return;
     }
     setResults(outcome.results);
     setIdeas([]);
-    const toConfirm = outcome.results
-      .filter((r) => r.status !== "taken")
-      .map((r) => r.domain);
+    const toConfirm = outcome.results.filter((r) => r.status !== 'taken').map((r) => r.domain);
     const ideaNames = outcome.ideas.map((i) => i.domain);
     if (toConfirm.length > 0) {
       setConfirming(true);
-      const answers = await confirmWithRegistrar(
-        toConfirm,
-        fetchImpl,
-        undefined,
-        ideaNames,
-      );
+      const answers = await confirmWithRegistrar(toConfirm, fetchImpl, undefined, ideaNames);
       setConfirming(false);
       if (answers.length > 0) {
-        setResults((current) =>
-          current ? mergeAnswers(current, answers) : current,
-        );
-        setIdeas(availableIdeas(outcome.ideas, answers));
+        setResults((current) => (current ? mergeAnswers(current, answers) : current));
+        setIdeas(availableIdeas(outcome.ideas, answers, outcome.ideasShown));
       }
     }
   }
@@ -374,11 +305,9 @@ export function DomainSearchScreen({
     setBusy(result.domain);
     setCartError(undefined);
     const line = inCart.get(result.domain);
-    const outcome: CartResult = line
-      ? await removeFromCart(line.id, csrfToken, fetchImpl)
-      : await addDomainToCart(result.domain, csrfToken, fetchImpl);
+    const outcome: CartResult = line ? await removeFromCart(line.id, csrfToken, fetchImpl) : await addDomainToCart(result.domain, csrfToken, fetchImpl);
     setBusy(null);
-    if (outcome.kind === "ok") {
+    if (outcome.kind === 'ok') {
       setCart(outcome.cart);
       onCartChange?.();
     } else setCartError(outcome.message);
@@ -390,48 +319,35 @@ export function DomainSearchScreen({
   function row(r: SearchResult, exact: boolean) {
     const chosen = inCart.has(r.domain);
     return (
-      <li
-        key={r.domain}
-        className={`pc-result${exact ? " pc-result--exact" : ""}`}
-      >
+      <li key={r.domain} className={`pc-result${exact ? ' pc-result--exact' : ''}`}>
         <div className="pc-result__name">
           <span className="pc-result__domain">{r.domain}</span>
-          {r.status === "available" && <Badge tone="success">Available</Badge>}
-          {r.status === "taken" && <Badge tone="neutral">Taken</Badge>}
-          {r.status === "unknown" && (
-            <Badge tone="warning">
-              {confirming ? "Checking…" : "Couldn't check"}
-            </Badge>
-          )}
-          {r.status === "unavailable" && (
-            <Badge tone="neutral">Not available</Badge>
-          )}
+          {r.status === 'available' && <Badge tone="success">Available</Badge>}
+          {r.status === 'taken' && <Badge tone="neutral">Taken</Badge>}
+          {r.status === 'unknown' && <Badge tone="warning">{confirming ? 'Checking…' : "Couldn't check"}</Badge>}
+          {r.status === 'unavailable' && <Badge tone="neutral">Not available</Badge>}
           {r.premium && <Badge tone="accent">Premium</Badge>}
           <PromoLabel label={r.label} />
-          {(r.tld === "ng" || r.tld.endsWith(".ng")) && (
-            <Badge tone="info">Nigeria</Badge>
-          )}
+          {(r.tld === 'ng' || r.tld.endsWith('.ng')) && <Badge tone="info">Nigeria</Badge>}
         </div>
-        {r.status === "available" ? (
+        {r.status === 'available' ? (
           <div className="pc-result__buy">
             <span className="pc-result__price">
-              {formatMoney({ minor: r.register.ngn, currency: "NGN" })}
+              {formatMoney({ minor: r.register.ngn, currency: 'NGN' })}
               <span className="pc-muted pc-small">/yr</span>
               <br />
               <span className="pc-muted pc-small">
-                {formatMoney({ minor: r.register.usd, currency: "USD" })}
-                {r.renew &&
-                r.renew.ngn !== null &&
-                r.renew.ngn !== r.register.ngn
-                  ? ` · renews at ${formatMoney({ minor: r.renew.ngn, currency: "NGN" })}`
-                  : ""}
+                {formatMoney({ minor: r.register.usd, currency: 'USD' })}
+                {r.renew && r.renew.ngn !== null && r.renew.ngn !== r.register.ngn
+                  ? ` · renews at ${formatMoney({ minor: r.renew.ngn, currency: 'NGN' })}`
+                  : ''}
               </span>
             </span>
             <Button
               size="sm"
-              variant={chosen ? "secondary" : "primary"}
+              variant={chosen ? 'secondary' : 'primary'}
               aria-pressed={chosen}
-              aria-label={`${chosen ? "Remove" : "Choose"} ${r.domain}`}
+              aria-label={`${chosen ? 'Remove' : 'Choose'} ${r.domain}`}
               loading={busy === r.domain}
               disabled={!csrfToken || (busy !== null && busy !== r.domain)}
               onClick={() => void toggle(r)}
@@ -442,21 +358,21 @@ export function DomainSearchScreen({
                   Chosen
                 </>
               ) : (
-                "Choose"
+                'Choose'
               )}
             </Button>
           </div>
         ) : (
           <span className="pc-small pc-muted">
-            {r.status === "taken"
-              ? "Already registered"
-              : r.status === "unavailable"
+            {r.status === 'taken'
+              ? 'Already registered'
+              : r.status === 'unavailable'
                 ? r.premium
-                  ? "Premium name: contact us for the price"
-                  : "Reserved by the registry"
+                  ? 'Premium name: contact us for the price'
+                  : 'Reserved by the registry'
                 : confirming
-                  ? "Asking the registry…"
-                  : "Try again in a minute"}
+                  ? 'Asking the registry…'
+                  : 'Try again in a minute'}
           </span>
         )}
       </li>
@@ -467,9 +383,7 @@ export function DomainSearchScreen({
     <div className="pc-stack" ref={top}>
       <div>
         <h1>Find your domain</h1>
-        <p className="pc-muted">
-          Search .ng, .com.ng, .com and more. Prices are for the first year.
-        </p>
+        <p className="pc-muted">Search .ng, .com.ng, .com and more. Prices are for the first year.</p>
       </div>
 
       <Card>
@@ -494,37 +408,17 @@ export function DomainSearchScreen({
 
       <div aria-live="polite" className="pc-stack">
         {results && (
-          <Card
-            title="Results"
-            actions={
-              <span className="pc-small pc-muted">
-                {confirming
-                  ? "Confirming with the registry…"
-                  : "Checked with the registry; confirmed again at checkout."}
-              </span>
-            }
-          >
+          <Card title="Results" actions={<span className="pc-small pc-muted">{confirming ? 'Confirming with the registry…' : 'Checked with the registry; confirmed again at checkout.'}</span>}>
             {results.length === 0 ? (
-              <p className="pc-muted">
-                No extensions are on sale yet. Please check back soon.
-              </p>
+              <p className="pc-muted">No extensions are on sale yet. Please check back soon.</p>
             ) : (
-              <ul className="pc-results">
-                {results.map((r, i) => row(r, i === 0))}
-              </ul>
+              <ul className="pc-results">{results.map((r, i) => row(r, i === 0))}</ul>
             )}
           </Card>
         )}
 
         {ideas.length > 0 && (
-          <Card
-            title="More ideas"
-            actions={
-              <span className="pc-small pc-muted">
-                Available right now; confirmed again at checkout.
-              </span>
-            }
-          >
+          <Card title="More ideas" actions={<span className="pc-small pc-muted">Available right now; confirmed again at checkout.</span>}>
             <ul className="pc-results">{ideas.map((r) => row(r, false))}</ul>
           </Card>
         )}
@@ -533,16 +427,15 @@ export function DomainSearchScreen({
         {lines.length > 0 && (
           <div className="pc-cartbar" role="status">
             <span>
-              <strong>{lines.length}</strong>{" "}
-              {lines.length === 1 ? "domain" : "domains"} in your cart ·{" "}
+              <strong>{lines.length}</strong> {lines.length === 1 ? 'domain' : 'domains'} in your cart ·{' '}
               <strong>
                 {cart?.total.ngn !== null && cart?.total.ngn !== undefined
-                  ? formatMoney({ minor: cart.total.ngn, currency: "NGN" })
+                  ? formatMoney({ minor: cart.total.ngn, currency: 'NGN' })
                   : formatMoney({
                       minor: cart?.total.usd ?? 0,
-                      currency: "USD",
+                      currency: 'USD',
                     })}
-              </strong>{" "}
+              </strong>{' '}
               before VAT
             </span>
             {onCheckout && (

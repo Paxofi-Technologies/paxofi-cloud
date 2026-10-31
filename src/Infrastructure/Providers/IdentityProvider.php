@@ -93,9 +93,13 @@ use PaxofiCloud\Infrastructure\Registrar\MysqlPriceCheckStore;
 use PaxofiCloud\Application\Registrar\SpaceshipPriceCheckAdmin;
 use PaxofiCloud\Http\Controllers\Admin\AdminSpaceshipPriceCheckController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainExtensionsController;
+use PaxofiCloud\Http\Controllers\Admin\AdminDomainSearchController;
+use PaxofiCloud\Application\Domains\DomainSearchAdmin;
+use PaxofiCloud\Infrastructure\Domains\MysqlDomainSearchSettingsStore;
 use PaxofiCloud\Http\Controllers\Admin\AdminTaxRatesController;
 use PaxofiCloud\Application\Billing\TaxRatesAdmin;
 use PaxofiCloud\Infrastructure\Billing\MysqlTaxRateStore;
+use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Application\Extensions\ExtensionsAdmin;
 use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\FxRateStore;
@@ -486,6 +490,21 @@ final class IdentityProvider implements Provider
                 new MysqlDomainCostStore($connection, $repository, Resolve::get($c, TransactionManager::class)),
                 new MysqlExtensionSettingsStore($connection, $repository),
                 Resolve::get($c, FxRateStore::class),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                static fn (string $staffId, string $code): bool => $secondFactor !== null && $secondFactor->verifyCode($staffId, $code),
+                new SystemClock(),
+                Resolve::get($c, AuditTrail::class),
+            ));
+        });
+
+        // Domain search (DS-21 to DS-23): search extensions, name ideas and per-extension lookups.
+        $container->singleton(AdminDomainSearchController::class, static function (Container $c): AdminDomainSearchController {
+            $secondFactor = self::staffSecondFactor($c);
+
+            return new AdminDomainSearchController(new DomainSearchAdmin(
+                Resolve::get($c, StaffAuthorizer::class),
+                new MysqlDomainSearchSettingsStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
+                Resolve::get($c, ExtensionQuotes::class),
                 new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 static fn (string $staffId, string $code): bool => $secondFactor !== null && $secondFactor->verifyCode($staffId, $code),
                 new SystemClock(),

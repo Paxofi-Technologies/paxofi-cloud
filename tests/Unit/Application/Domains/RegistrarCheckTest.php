@@ -11,7 +11,9 @@ use PaxofiCloud\Application\Domains\RegistrarCheckHealth;
 use PaxofiCloud\Application\Domains\RegistrarCheckWorker;
 use PaxofiCloud\Application\Contracts\DnsProbe;
 use PaxofiCloud\Application\Contracts\WhoisLookup;
+use PaxofiCloud\Application\Domains\LookupSettings;
 use PaxofiCloud\Application\Domains\WhoisAvailability;
+use PaxofiCloud\Tests\Support\InMemoryDomainSearchSettingsStore;
 use PaxofiCloud\Application\Domains\WhoisServerDirectory;
 use PaxofiCloud\Application\Domains\WhoisUnavailable;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
@@ -45,6 +47,8 @@ final class RegistrarCheckTest extends TestCase
     public array $asked = [];
     /** @var list<string> */
     public array $whoisAsked = [];
+    /** @var list<string> */
+    public array $whoisServers = [];
 
     protected function setUp(): void
     {
@@ -65,7 +69,7 @@ final class RegistrarCheckTest extends TestCase
     }
 
     /** @param array<string, AvailabilityAnswer>|null $answers null: registrar not connected */
-    private function worker(?array $answers, bool $fail = false, ?RegistrarCheckHealth $health = null, ?DnsProbe $dns = null, ?WhoisAvailability $whois = null): RegistrarCheckWorker
+    private function worker(?array $answers, bool $fail = false, ?RegistrarCheckHealth $health = null, ?DnsProbe $dns = null, ?WhoisAvailability $whois = null, ?InMemoryDomainSearchSettingsStore $lookups = null): RegistrarCheckWorker
     {
         $checker = $answers === null ? null : new class ($this, $answers, $fail) implements AvailabilityChecker {
             /** @param array<string, AvailabilityAnswer> $answers */
@@ -84,7 +88,7 @@ final class RegistrarCheckTest extends TestCase
             }
         };
 
-        return new RegistrarCheckWorker($this->redis, static fn (): ?AvailabilityChecker => $checker, $this->settings, $this->rates, $health, new MutableClock(new \DateTimeImmutable('2026-10-25T12:00:00Z')), $dns, $whois);
+        return new RegistrarCheckWorker($this->redis, static fn (): ?AvailabilityChecker => $checker, $this->settings, $this->rates, $health, new MutableClock(new \DateTimeImmutable('2026-10-25T12:00:00Z')), $dns, $whois, null, $lookups);
     }
 
     /** @param list<string> $withNameservers */
@@ -118,6 +122,7 @@ final class RegistrarCheckTest extends TestCase
                     return "whois: whois.nic.test.example\n";
                 }
                 $this->test->whoisAsked[] = $query;
+                $this->test->whoisServers[] = $server . ' ' . $query;
 
                 return $this->replies[$query] ?? throw new WhoisUnavailable(WhoisUnavailable::TIMEOUT);
             }
@@ -238,6 +243,25 @@ final class RegistrarCheckTest extends TestCase
         self::assertSame([['paxofi.ng', 'paxofi.com']], $this->asked, 'DS-23: ideas never go to the registrar');
         $statuses = array_column($web->result($id)['results'], 'status', 'domain');
         self::assertSame(['paxofi.ng' => 'available', 'paxofi.com' => 'taken', 'getpaxofi.com' => 'available', 'paxofihq.ng' => 'taken'], $statuses, 'a repeated name is checked once');
+    }
+
+    public function testAnExtensionLimitedToWhoisSkipsTheRegistrarAndUsesItsFixedServerAndPhrase(): void
+    {
+        $lookups = new InMemoryDomainSearchSettingsStore();
+        $lookups->lookupRows['ng'] = new LookupSettings('ng', 'whois', 'whois.fixed.example', 'Registry says free');
+        $web = $this->web();
+        $id = $web->request('203.0.113.9', ['paxofi.ng', 'paxofi.com']);
+
+        $this->worker(
+            ['paxofi.com' => new AvailabilityAnswer('taken')],
+            dns: self::dns([]),
+            whois: $this->whois(['paxofi.ng' => "Registry says free\n"]),
+            lookups: $lookups,
+        )->runOnce();
+
+        self::assertSame([['paxofi.com']], $this->asked, 'DS-14: a whois-only extension never goes to the registrar');
+        self::assertSame(['whois.fixed.example paxofi.ng'], $this->whoisServers);
+        self::assertSame(['paxofi.ng' => 'available', 'paxofi.com' => 'taken'], array_column($web->result($id)['results'], 'status', 'domain'));
     }
 
     public function testTheRegistrarIsAskedInBatchesOfSix(): void

@@ -800,3 +800,67 @@ export const saveTaxRate = (
   body: { country: string; tax_name: string; rate_bp: number; starts: string; code: string },
   fetchImpl: typeof fetch = fetch,
 ) => postJson(`${ADMIN_API}/tax-rates`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** The Domain search page (THREAT-MODEL-DOMAIN-SEARCH.md DS-21 to DS-23). */
+export interface DomainSearchLookup {
+  tld: string;
+  inSearch: boolean;
+  featured: boolean;
+  mode: string;
+  whoisServer: string | null;
+  whoisPhrase: string | null;
+}
+
+export interface DomainSearchAdminView {
+  canManage: boolean;
+  chosen: boolean;
+  settings: { searchTlds: string[]; maxIdeas: number; prefixes: string[]; suffixes: string[] };
+  limits: { searchTlds: number; perSearch: number; maxIdeas: number; words: number };
+  modes: string[];
+  extensions: DomainSearchLookup[];
+}
+
+export async function fetchDomainSearchAdmin(fetchImpl: typeof fetch = fetch): Promise<{ kind: 'ok'; data: DomainSearchAdminView } | { kind: 'failed' }> {
+  const result = await getJson(`${ADMIN_API}/domain-search`, fetchImpl);
+  const body = obj(result?.data);
+  const settings = obj(body?.settings);
+  const limits = obj(body?.limits);
+  if (result === null || result.status !== 200 || !body || !settings || !limits || !Array.isArray(body.extensions)) return { kind: 'failed' };
+  const extensions: DomainSearchLookup[] = [];
+  for (const raw of body.extensions) {
+    const e = obj(raw);
+    if (!e || typeof e.tld !== 'string' || typeof e.mode !== 'string') continue;
+    extensions.push({
+      tld: e.tld,
+      inSearch: e.in_search === true,
+      featured: e.featured === true,
+      mode: e.mode,
+      whoisServer: typeof e.whois_server === 'string' ? e.whois_server : null,
+      whoisPhrase: typeof e.whois_phrase === 'string' ? e.whois_phrase : null,
+    });
+  }
+  const num = (v: unknown, fallback: number) => minor(v) ?? fallback;
+  return {
+    kind: 'ok',
+    data: {
+      canManage: body.can_manage === true,
+      chosen: body.chosen === true,
+      settings: { searchTlds: strings(settings.search_tlds), maxIdeas: num(settings.max_ideas, 20), prefixes: strings(settings.prefixes), suffixes: strings(settings.suffixes) },
+      limits: { searchTlds: num(limits.search_tlds, 20), perSearch: num(limits.per_search, 12), maxIdeas: num(limits.max_ideas, 30), words: num(limits.words, 12) },
+      modes: strings(body.modes),
+      extensions,
+    },
+  };
+}
+
+export const saveDomainSearchSettings = (
+  csrfToken: string,
+  body: { search_tlds: string[]; max_ideas: number; prefixes: string[]; suffixes: string[] },
+  fetchImpl: typeof fetch = fetch,
+) => postJson(`${ADMIN_API}/domain-search/settings`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+export const saveDomainLookup = (
+  csrfToken: string,
+  body: { tld: string; mode: string; whois_server: string | null; whois_phrase: string | null; code?: string },
+  fetchImpl: typeof fetch = fetch,
+) => postJson(`${ADMIN_API}/domain-search/lookup`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
