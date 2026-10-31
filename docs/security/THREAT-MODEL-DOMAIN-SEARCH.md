@@ -73,7 +73,7 @@ test that keeps it that way.
 
 | ID | Decision |
 |---|---|
-| DS-14 | **Lookup order for each extension.** Each extension has a lookup mode, set on the admin Domain extensions page: `auto` (the default) means RDAP, then port-43 WHOIS, then the registrar; `rdap`, `whois` or `registrar` uses that source only. In `auto`, a source is tried only when the one before it gave `unknown` or has no server for the extension. A source never turns `taken` into `available`. Only the registrar check (DS-13/DS-17) can mark a name premium or reserved, and checkout always re-checks with the registrar. |
+| DS-14 | **Lookup order for each extension.** Each extension has a lookup mode, set on the admin Domain extensions page: `auto` (the default) means DNS, then RDAP, then port-43 WHOIS, then the registrar. **DNS** (worker only, system resolver): an NS record for the name proves it is registered, so it answers `taken` at once and saves the slower lookups. No NS record proves nothing (a name can be registered without DNS), so the chain goes on; `rdap`, `whois` or `registrar` uses that source only. In `auto`, a source is tried only when the one before it gave `unknown` or has no server for the extension. A source never turns `taken` into `available`. Only the registrar check (DS-13/DS-17) can mark a name premium or reserved, and checkout always re-checks with the registrar. |
 | DS-15 | **WHOIS server discovery.** The WHOIS server for an extension is learned from IANA: one port-43 query of the extension to `whois.iana.org`, reading only the `refer:` line. It is cached in Redis for 7 days, and the last good value is kept if a query fails. A Super Admin may set a fixed server for an extension instead. Every server, learned or set, must be a DNS host name (no IP literal, port, user or path) and is always contacted on port 43. Staff cannot choose a port or an IP. |
 | DS-16 | **The port-43 client** (new `WhoisClient`). It runs only in the provider worker, never in the web tier: names are queued exactly as in DS-13 (Redis, random job ID, 2-minute TTL), so the web tier gains no new egress. The worker resolves the host with its own resolver and connects only to a public IP (the same pinning rules as `ProviderHttpClient`): 3 s connect, 5 s total, 32 KiB read cap. It sends exactly `<domain>\r\n`, where the domain is built by us from a validated label and an extension we sell (DS-4). The response is never stored, logged or shown. |
 | DS-17 | **Reading a WHOIS reply.** `available` only when the reply contains a known "no match" phrase. A built-in list holds the common ones (e.g. "No match for", "NOT FOUND", "No Data Found", "No entries found", "Status: free", "Domain not found"). Staff may add one plain-text phrase per extension (no regular expressions, so no ReDoS; 3–100 printable characters; case-insensitive substring). A known rate-limit or error phrase ("limit exceeded", "try again", "quota"), an empty reply or a timeout gives `unknown`. Any other non-empty reply gives `taken`. A wrong guess therefore errs towards "taken", never towards "available". |
@@ -81,6 +81,20 @@ test that keeps it that way.
 | DS-19 | **Limits.** All DS-6/DS-13 per-IP limits are unchanged. For each WHOIS server: at most 1 query per second and 30 per minute across all users (Redis); over that, `unknown` with no call. For `whois.iana.org`: at most 10 discovery queries per hour. At most 6 names per job (DS-5) and at most 10 jobs per worker loop. Results are cached exactly as in DS-7 (hashed keys, 10 min / 1 min). |
 | DS-20 | **Privacy (DS-8 extended).** WHOIS replies are not kept. Neither the names nor the replies are logged; logs carry only fixed codes (`whois.timeout`, `whois.no_server`, `whois.rate_limited`) and the server host. Staff see per-server counts of the last 24 h on Domain costs ("Lookup sources"). |
 | DS-21 | **Admin and audit.** The lookup mode and WHOIS phrase need `catalogue.manage`; a fixed WHOIS server needs Super Admin. Every change is audited (`extension.lookup_changed`, old and new value). The admin page shows, per extension, the source that answered last ("RDAP", "WHOIS whois.nic.net.ng", "Registrar") and when. |
+
+**Search extensions, name ideas and progressive results (CEO screenshots of WHMCS "Lookup Provider" and
+"Namespinning", 31 Oct 2026).** We keep the useful parts of the WHMCS idea: staff choose which extensions are
+checked with every search, and customers see up to about 20 suggestions. We do it our own way: there is no
+third-party suggestion service and the customer's IP is never shared. Results also appear as they arrive
+instead of after the slowest lookup.
+
+| ID | Decision |
+|---|---|
+| DS-22 | **Search extensions.** A new admin setting ("Domain search" on the Domain extensions page, `catalogue.manage`) lists every extension on sale from **all** registrars with synced costs. It has a search box, "select all", "select a category" and "select all sold by registrar X". Staff tick the extensions checked alongside the one the customer typed. The featured extensions stay as they are (the cards). The default is the featured extensions plus `com.ng` and `ng`. An extension that stops being on sale (no healthy registrar cost) is skipped silently. Per search: the requested extension plus at most **12** search extensions (setting 0–20). |
+| DS-23 | **Name ideas, built in.** No external AI or suggestion service, and the customer's IP is never sent anywhere. Ideas come from: (a) the same label in other extensions from the search set, cheapest first; (b) the label with a prefix or suffix from a staff-edited word list (default `get`, `my`, `try`, `the`, `hq`, `app`, `online`, `hub`, `ng`, `africa`; each word 2–12 characters, `a-z 0-9`), each in `.com` and the requested extension; (c) the label split into words where a hyphen reads better (`paxoficloud` → `paxofi-cloud` only when both parts are dictionary words from a fixed built-in list). Every idea passes the DS-4 label rule and is in an extension we sell. "Maximum ideas" is a setting: 0–30, default 20, 0 turning ideas off. **Only ideas confirmed available are shown**; taken or unknown ideas are dropped. A registrar suggestion API (e.g. Dynadot or Namecheap) or an AI idea source may be added later as one more source behind the same rules. Each would be a separate decision with its own privacy review, off by default and sending only the label. |
+| DS-24 | **Progressive results.** `GET /api/v1/domains/search` answers at once with the exact name (its RDAP result when cached or fast) and the list of names being checked (search extensions and ideas, at most 1 + 20 + 30 = 51 names), each marked `checking`, plus one job ID. The provider worker checks them by the DS-14 order and writes each answer as it gets it. The page polls `GET /api/v1/domains/search/results?id=` every second for up to 20 s, then marks anything still pending as "couldn't check". Every name, idea or not, is priced by the same quote engine (DS-9). The order shown is the exact name, then search extensions in staff order, then available ideas. |
+| DS-25 | **Limits for the bigger search.** The per-IP limits now count **lookups**, not searches: 300 per minute and 3,000 per hour per IP. A search costs its number of names that are not cached. Over the limit, the exact name is still checked and the rest is skipped. Global: the job queue is capped at 500 and the per-server limits of DS-19 still apply, with ideas checked last, so customers' own names never wait behind ideas. The cache (DS-7) makes repeated popular names cheap. |
+| DS-26 | **Staff tools.** (a) **Test a lookup** (`catalogue.manage`): staff type a full name and see the answer from each source (RDAP, WHOIS and server used, registrar), the time taken and, for WHOIS, the raw reply. The reply is limited to 32 KiB, shown as escaped text and not stored. It is audited as `domain.lookup_tested` with the extension and sources only, never the name. (b) **Lookup health**: for each source and WHOIS server, the answers, unknowns and time-outs over 24 h, and the last error code. (c) The staff WHOIS record view (the WHMCS `DomainWhois` equivalent, used for a customer's domain) reuses (a) and needs `domains.view`. |
 
 | ID | STRIDE | Threat | L | I | Mitigation | Test |
 |---|---|---|---|---|---|---|
@@ -91,17 +105,34 @@ test that keeps it that way.
 | DS-T17 | I | Searched names leak through WHOIS logs or our own logs | 2 | 2 | DS-20: no names or replies logged or stored. Residual: the registry sees the query, as it already does through RDAP and the registrar (R-4). | `WhoisClientTest` (log context) |
 | DS-T18 | E | Command injection into the WHOIS query (CRLF, extra arguments) | 1 | 2 | DS-16: the query is built from a validated label and extension, and any CR, LF or space in the name is refused | `WhoisClientTest` |
 | DS-T19 | T | A staff phrase such as "a" marks every name available | 2 | 2 | DS-17 minimum length, audit (DS-21); checkout re-check | `ExtensionLookupSettingsTest` |
+| DS-T20 | D | One search fans out to 50 lookups and is used to amplify load on registries | 3 | 2 | DS-25 per-IP lookup budget, ideas last, per-server caps, cache; ideas stop at the setting | `DomainSearchTest`, `NameIdeasTest` |
+| DS-T21 | I | Name ideas leak the customer's search to a third party | 1 | 2 | DS-23: generated in-house; no external call except the lookups themselves (R-4) | `NameIdeasTest` (no transport) |
+| DS-T22 | T | A staff word list injects odd labels (homograph, offensive or overlong) | 2 | 1 | DS-23 word rule `a-z 0-9` 2–12 characters; every idea passes DS-4; changes audited | `NameIdeasTest` |
+| DS-T23 | I | The staff WHOIS view shows registrant personal data to the wrong staff | 2 | 2 | DS-26 permission checks, nothing stored, audit without the name | `DomainLookupAdminTest` |
+
+**Why this order (research, 31 Oct 2026).**
+- **gTLDs:** since 28 January 2025, ICANN no longer requires gTLD registries to run port-43 WHOIS (.com, .name and .post excepted), and RDAP is mandatory for every gTLD. RDAP is therefore the primary source for gTLDs, and WHOIS is often switched off for them.
+- **ccTLDs:** country-code registries are outside ICANN contracts, and most still run port-43 WHOIS. Fewer have RDAP, and fewer still are listed in IANA's RDAP bootstrap file. WHOIS is therefore the main fallback for ccTLDs.
+- **`.ng`:** IANA's root record lists both `whois.nic.net.ng` and `https://rdap.nic.net.ng`. NiRA has redacted registrant details since June 2025, which does not affect availability.
+- **DNS first:** open-source availability checkers use DNS, then RDAP, then WHOIS, returning on the first conclusive answer. That is the order of DS-14.
+- **Registrar last:** the registrar check works for every extension the registrar sells, so it is the last fallback.
+
+| ID | Decision |
+|---|---|
+| DS-27 | **Nobody left out: coverage report.** Admin "Lookup coverage" lists every extension on sale from all registrars. For each one it shows the working sources: DNS (always), RDAP server (from IANA bootstrap, else from the IANA root record learned with the WHOIS referral), WHOIS server, and registrar check (the selling registrar supports it). It also shows the source that answered last and when. An extension whose only source is DNS is flagged red: it can show "taken" but never "available", so it is sold only after the registrar check at checkout. A daily worker job checks one known-registered name per extension (the registry's own `nic.<tld>` where it exists) through each source and records which ones work, so the report stays true without staff action. |
 
 **Infrastructure.** The provider worker needs outbound TCP 43. Its egress is currently HTTPS only
 (Hetzner firewall and container network), so this adds one firewall rule through IaC: port 43, any
 destination, provider worker host only. The web tier and the payments containers are unchanged.
 
-**Build order** (after CEO approval of this section):
-1. `WhoisClient`, the reply parser and IANA discovery, with tests.
-2. Worker job: WHOIS step plus per-registrar routing (DS-18).
-3. Admin: lookup mode, WHOIS phrase and fixed server, plus the "last source" column; migration for the
-   per-extension settings.
-4. Firewall rule, then staging test on `.ng`, `.com.ng` and `.com`.
+**Build order:**
+1. `WhoisClient`, the reply parser and IANA discovery, with tests (library only, not wired).
+2. Worker job: the lookup chain (RDAP, WHOIS, registrar) with per-registrar routing (DS-18), progressive
+   results (DS-24) and the lookup budget (DS-25). Firewall rule for TCP 43.
+3. Name ideas (DS-23) and the search-extensions setting (DS-22).
+4. Admin: lookup mode, WHOIS phrase and fixed server, search extensions, idea settings, "Test a lookup"
+   and lookup health (DS-21, DS-26); migration for the settings.
+5. Customer search page: progressive list and ideas. Then a staging test on `.ng`, `.com.ng` and `.com`.
 
 ## 5. Residual risks
 
@@ -116,6 +147,8 @@ destination, provider worker host only. The web tier and the payments containers
 
 | Date | Change |
 |---|---|
+| 31 Oct 2026 | §7: DNS first in the lookup order (taken only), DS-27 coverage report and daily self-test; research notes on the 2025 gTLD WHOIS sunset and ccTLD WHOIS. Build step 1 (WHOIS client, reply reader, IANA discovery) added, not wired. |
+| 31 Oct 2026 | §7 DS-22 to DS-26, DS-T20 to DS-T23: search extensions chosen from all registrars, built-in name ideas (up to 20, available only), progressive results, lookup budget, staff test and health tools (CEO screenshots of WHMCS lookup provider and namespinning; "not a must we follow WHMCS"). |
 | 31 Oct 2026 | §7 DS-14 to DS-21, DS-T13 to DS-T19, R-4: multi-source lookup (RDAP, port-43 WHOIS, registrar per extension), proposed before code at the CEO's request. Notes that the extension list is already the union of all synced registrars. |
 | 25 Oct 2026 | DS-11: the price list was `public, max-age=300`, so a browser kept an old featured list for up to 5 minutes after staff changed it (CEO: .xyz replaced .org at position 4 but customers still saw .org). Now `no-cache` + ETag. |
 | 25 Oct 2026 | DS-13: `.ng` names stayed "Couldn't check" on staging. The official client reads the answer list from `infos`, which the parser did not look in. Added `infos`, status `1`/`true`, `malformed` for a reply naming none of the asked domains, and the "Last availability check" line for staff. |
