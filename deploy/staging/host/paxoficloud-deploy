@@ -9,7 +9,9 @@
 #                      threat model E-6); only allow-listed names and formats
 #   web-secrets        stdin: NAME=value lines for the PHP web tier only
 #                      (Turnstile keys, identity threat model §6.12)
-#   release <sha>      migrate, start <sha>, health-check; roll back on failure
+#   release <sha>      take <sha>'s compose file out of its php image and
+#                      check it (P-14), migrate, start <sha>, health-check;
+#                      roll back to the previous version and ITS compose file
 #   staff-bootstrap    stdin: EMAIL= and NAME= lines; invites the first staff
 #                      Security Admin (identity threat model §6.19). Refused by
 #                      the app once an active staff manager exists, except
@@ -24,7 +26,8 @@ set -euo pipefail
 umask 077
 
 ROOT="${PAXOFICLOUD_ROOT:-}"                      # test harness only; sshd passes no env
-COMPOSE_FILE="$ROOT/opt/paxoficloud/compose.yaml"
+COMPOSE_DIR="$ROOT/var/lib/paxoficloud/compose"   # one checked file per release (P-14)
+MAX_COMPOSE_BYTES=65536
 ENV_DIR="$ROOT/etc/paxoficloud"
 STATE_DIR="$ROOT/var/lib/paxoficloud"
 LOG_FILE="$ROOT/var/log/paxoficloud/deploy.log"
@@ -41,7 +44,60 @@ mail_profile() {
   if grep -Eqs '^(POSTMARK_SERVER_TOKEN|RESEND_API_KEY)=.' "$f" \
      || { grep -Eqs '^SMTP_HOST=.' "$f" && grep -Eqs '^SMTP_PASSWORD_B64=.' "$f"; }; then echo mail; fi
 }
-compose() { APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" COMPOSE_PROFILES="$(mail_profile)" docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "${@:2}"; }
+compose_file() { printf '%s/%s.yaml' "$COMPOSE_DIR" "$1"; }
+compose() {
+  local file; file="$(compose_file "$1")"
+  [ -f "$file" ] || die "no checked compose file for $1"
+  APP_VERSION="$1" PAXOFICLOUD_ENV_DIR="$ENV_DIR" COMPOSE_PROFILES="$(mail_profile)" docker compose -p "$PROJECT" -f "$file" "${@:2}"
+}
+
+# P-14: the release's own compose file, copied out of its php image without
+# running it, and refused if it could give a container host-level access. It
+# is checked against empty placeholder env files, so no secret is read and the
+# check runs before anything uses the file.
+extract_compose() {
+  local version="$1" file tmp id normalized scratch name
+  file="$(compose_file "$version")"
+  install -d -m 0700 "$COMPOSE_DIR"
+  tmp="$(mktemp "$COMPOSE_DIR/.incoming.XXXXXX")"
+  id="$(docker create "paxoficloud-php:$version" true)" || { rm -f "$tmp"; die "release: cannot open the $version image"; }
+  if ! docker cp "$id:/app/deploy/compose.yaml" - 2>/dev/null | tar -xO > "$tmp"; then
+    docker rm "$id" >/dev/null 2>&1 || true; rm -f "$tmp"; die "release: $version carries no compose file"
+  fi
+  docker rm "$id" >/dev/null 2>&1 || true
+  [ -s "$tmp" ] && [ "$(wc -c < "$tmp")" -le "$MAX_COMPOSE_BYTES" ] || { rm -f "$tmp"; die "release: compose file of $version is empty or too large"; }
+  scratch="$(mktemp -d)"
+  for name in $(grep -oE '/[a-z0-9-]{1,40}\.env"' "$tmp" | tr -d '/"' | sort -u); do : > "$scratch/$name"; done
+  if ! normalized="$(APP_VERSION="$version" PAXOFICLOUD_ENV_DIR="$scratch" COMPOSE_PROFILES=mail docker compose -p "$PROJECT" -f "$tmp" config 2>/dev/null)"; then
+    rm -rf "$scratch"; rm -f "$tmp"; die "release: compose file of $version is not valid"
+  fi
+  rm -rf "$scratch"
+  if ! compose_is_contained <<<"$normalized"; then
+    rm -f "$tmp"; die "release: compose file of $version asks for host-level access; refused"
+  fi
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$file"
+  log "compose file for $version checked"
+}
+
+# Reads `docker compose config` output: refuses privileged containers, host
+# network/PID/IPC/user namespaces, the Docker socket, bind mounts (named
+# volumes, tmpfs and inline configs only) and dangerous added capabilities.
+compose_is_contained() {
+  awk '
+    /^[[:space:]]+(- )?privileged: true[[:space:]]*$/ { bad = 1 }
+    /^[[:space:]]+(- )?(network_mode|pid|ipc|userns_mode): "?host"?[[:space:]]*$/ { bad = 1 }
+    /docker\.sock/ { bad = 1 }
+    /^[[:space:]]+(- )?type: "?bind"?[[:space:]]*$/ { bad = 1 }
+    /^[[:space:]]+cap_add:/ { incap = 1; match($0, /^[[:space:]]*/); capindent = RLENGTH; next }
+    incap {
+      match($0, /^[[:space:]]*/)
+      if (RLENGTH <= capindent && $0 !~ /^[[:space:]]*-/) { incap = 0 }
+      else if ($0 ~ /-[[:space:]]*"?(ALL|SYS_ADMIN|SYS_PTRACE|SYS_MODULE|SYS_RAWIO|NET_ADMIN|DAC_READ_SEARCH|SYS_BOOT|MKNOD)"?[[:space:]]*$/) { bad = 1 }
+    }
+    END { exit bad ? 1 : 0 }
+  '
+}
 
 RUNTIME_DB_USER=paxoficloud_app
 
@@ -246,6 +302,7 @@ cmd_release() {
   local version="$1" current=""
   [[ "$version" =~ ^[0-9a-f]{40}$ ]] || die "release: version must be a 40-character git SHA"
   image_exists "paxoficloud-php:$version" && image_exists "paxoficloud-nginx:$version" || die "release: images for $version are not loaded"
+  extract_compose "$version"
   ensure_secrets "$version"
   [ -f "$STATE_DIR/current" ] && current="$(cat "$STATE_DIR/current")"
 
@@ -285,6 +342,10 @@ prune_images() {
     docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | while read -r ref; do
       case "${ref#*:}" in "$keep1"|"$keep2") ;; *) docker image rm "$ref" >/dev/null 2>&1 || true ;; esac
     done
+  done
+  for ref in "$COMPOSE_DIR"/*.yaml; do
+    [ -e "$ref" ] || continue
+    case "$(basename "$ref" .yaml)" in "$keep1"|"$keep2") ;; *) rm -f "$ref" ;; esac
   done
 }
 

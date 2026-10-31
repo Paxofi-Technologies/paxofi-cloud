@@ -93,6 +93,7 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | P-11 | Logs print step names and results only: no env files, no `docker inspect`, no IPs. The repository is public, so its Actions logs are public too. |
 | P-12 | The Vultr firewall drops all inbound traffic. Break-glass access is the Vultr web console. |
 | P-13 | CI reaches the host by SSH through the tunnel (`cloudflared access ssh` as `ProxyCommand`). The host key is accepted on first use into a per-run `known_hosts`: only the holder of the tunnel token can serve the SSH hostname, and Access admits only our service token, so the tunnel authenticates the endpoint. Residual risk in §7. |
+| P-14 | **The compose file ships inside the release** (added 31 Oct 2026). `deploy/staging/compose.yaml` is copied into the php image at `/app/deploy/compose.yaml` (root-owned), so it is built from `main` after CI exactly like the code (P-1) and arrives with `load`; no new SSH verb or input channel is added. On `release <sha>` the agent copies it out of `paxoficloud-php:<sha>` with `docker create`/`docker cp` (never runs the image for this), refuses it if it is larger than 64 KiB, fails `docker compose config`, or contains `privileged: true`, host network or PID mode, a Docker socket mount or a bind mount (named volumes and tmpfs only), and keeps it as `/var/lib/paxoficloud/compose/<sha>.yaml`. Every compose command for a version uses that version's file, so a rollback starts the previous release with **its own** container set. Files are pruned with their images. cloud-init no longer writes a compose file; it installs only the agent, so a new or changed container is an ordinary Staging Deploy and **no longer replaces the server or empties the database**. Changing the agent itself still needs an infra apply. |
 
 ## 6. Threats (STRIDE)
 
@@ -110,6 +111,7 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | D-10 | **E**: container escape to the host | Host | P-9, Docker `no-new-privileges`, unattended security upgrades. | `docker inspect` shows a non-root user, read-only filesystem and dropped capabilities (checked by the deploy script). |
 | D-11 | **R**: nobody can tell who deployed what | Pipeline | The environment approval records the approver. The image label carries the SHA, and the host keeps a deploy log (SHA, time, result). | The deploy log entry exists after every run. |
 | D-12 | **S**: a stolen service token or deploy key | B2 | Both are scoped to staging only, with a 90-day expiry. Rotate on suspicion. Production uses separate credentials. | Expiry date recorded at creation; reviewed as an operations task. |
+| D-13 | **E/T**: a tampered or careless compose file gives a container host-level access (privileged, host network, Docker socket, host path) | Host | P-14: built only from `main` after CI and reviewed like code; the agent refuses privileged, host network or PID, Docker socket and bind mounts before anything starts; the per-version file means a rollback cannot inherit a newer, broken container set. | `test-deploy-agent.sh`: a release whose image carries a privileged service is refused and the current version keeps serving; a rollback uses the previous version's file. |
 
 ## 7. Residual risks
 
@@ -134,3 +136,4 @@ The cost is that the existing Cloudflare API token needs three more account-leve
 | 2026-10-10 | DP-1 decided by the CEO: option B (Cloudflare Tunnel). |
 | 2026-10-10 | DP-4 added: the production config cache stores resolved secrets on disk. |
 | 2026-10-10 | Implementation: P-5 changed (secrets generated on host), P-13 and its residual risk added. Worker container and KEK delivery (P-6) arrive with the provisioning worker in Sprint 4. |
+| 2026-10-31 | P-14 and D-13: the compose file ships inside the php image and is checked and kept per version by the agent; cloud-init carries only the agent, so container changes no longer replace the staging server. The change itself needs one last infra apply. |

@@ -88,9 +88,20 @@ CI runs the same script in the "Production images smoke test" job.
 
 Installed by cloud-init as `/usr/local/sbin/paxoficloud-deploy` and bound to the
 `deploy` user's key as a forced command. Because cloud-init installs it, a
-change to this script (or to `compose.yaml`) reaches the host only when the
-infrastructure workflow replaces the instance (plan, then apply); a deploy alone
-keeps the old copy. It accepts exactly these verbs:
+change to this script reaches the host only when the infrastructure workflow
+replaces the instance (plan, then apply); a deploy alone keeps the old copy.
+
+`compose.yaml` is **not** installed by cloud-init (deploy threat model P-14).
+It is copied into the php image at `/app/deploy/compose.yaml`, so it ships with
+every release. On `release <sha>` the agent copies it out of that image without
+running it, checks it (at most 64 KiB, valid for `docker compose config`, and
+no privileged container, host network/PID/IPC/user namespace, Docker socket,
+bind mount or dangerous added capability), and keeps it as
+`/var/lib/paxoficloud/compose/<sha>.yaml`. Every compose command for a version
+uses that version's file, so a rollback starts the previous release with its
+own container set; files are pruned with their images. **Adding or changing a
+container is therefore an ordinary Staging Deploy**: no infra apply, and the
+database is kept. It accepts exactly these verbs:
 
 | Verb | Does |
 |---|---|
