@@ -35,6 +35,22 @@ final class InMemoryStaffPasskeyStore implements StaffPasskeyStore
         return false;
     }
 
+    public function invitedMemberWithEmailForUpdate(string $emailLookup): ?array
+    {
+        foreach ($this->profiles as $staffId => $profile) {
+            if ($profile['lookup'] === $emailLookup && ($this->directory->members[$staffId] ?? null) === 'invited') {
+                return ['staff_id' => $staffId, 'email' => $profile['email']];
+            }
+        }
+
+        return null;
+    }
+
+    public function cancelOpenInvitations(string $staffId): void
+    {
+        $this->invitations = array_filter($this->invitations, static fn (array $i): bool => $i['staff_id'] !== $staffId || $i['used']);
+    }
+
     public function createInvitedMember(string $staffId, string $email, string $emailLookup, string $fullName, string $userHandle, \DateTimeImmutable $now): void
     {
         $this->profiles[$staffId] = ['email' => $email, 'lookup' => $emailLookup, 'name' => $fullName, 'handle' => $userHandle];

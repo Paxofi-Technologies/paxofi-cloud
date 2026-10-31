@@ -47,6 +47,45 @@ final class StaffInvitationsTest extends TestCase
         self::assertStringNotContainsString($token, (string) json_encode($this->f->audit->events[0]->details));
     }
 
+    public function testBootstrapAgainSendsAFreshLinkWhileTheFirstAdminHasNotFinishedSetup(): void
+    {
+        // The first invitation email was lost (mail relay down): bootstrap again re-issues, it does not refuse.
+        $staffId = $this->f->invitations->bootstrap('ada@example.test', 'Ada Lovelace', AuditFixtures::client());
+        $first = $this->f->lastToken();
+
+        self::assertSame($staffId, $this->f->invitations->bootstrap('ADA@example.test', 'Ada Lovelace', AuditFixtures::client()));
+        $second = $this->f->lastToken();
+
+        self::assertNotSame($first, $second);
+        self::assertCount(1, $this->f->store->profiles, 'no second member');
+        self::assertArrayNotHasKey(hash('sha256', $first), $this->f->store->invitations, 'the lost link no longer works');
+        self::assertArrayHasKey(hash('sha256', $second), $this->f->store->invitations);
+        self::assertCount(2, $this->f->outbox->queued);
+        self::assertSame('ada@example.test', $this->f->outbox->queued[1]['to']);
+        self::assertSame('reissue', $this->f->audit->events[1]->details['via'] ?? null);
+    }
+
+    public function testBootstrapNeverReissuesForAnActiveMemberOrOnceAManagerExists(): void
+    {
+        $staffId = $this->f->invitations->bootstrap('ada@example.test', 'Ada Lovelace', AuditFixtures::client());
+        $this->f->activate($this->f->lastToken());
+        $this->f->outbox->queued = [];
+
+        // Ada is now an active Security Admin: managers exist, so bootstrap is refused outright.
+        $this->expectRefused(StaffInvitationRefused::MANAGERS_EXIST, fn () => $this->f->invitations->bootstrap('ada@example.test', 'Ada Lovelace', AuditFixtures::client()));
+        self::assertSame('active', $this->f->directory->members[$staffId]);
+        self::assertSame([], $this->f->outbox->queued);
+    }
+
+    public function testAManagerInvitingAnAlreadyInvitedAddressIsStillRefused(): void
+    {
+        $this->f->directory->add(self::ADMIN, 'active', StaffRole::SecurityAdmin);
+        $this->f->invitations->invite(self::ADMIN, 'carol@example.test', 'Carol', StaffRole::Support, AuditFixtures::client());
+
+        $this->expectRefused(StaffInvitationRefused::ALREADY_STAFF, fn () => $this->f->invitations->invite(self::ADMIN, 'carol@example.test', 'Carol', StaffRole::Support, AuditFixtures::client()));
+        self::assertCount(1, $this->f->outbox->queued);
+    }
+
     public function testBootstrapRefusesOnceAStaffManagerIsActive(): void
     {
         $this->f->directory->add(self::ADMIN, 'active', StaffRole::SecurityAdmin);

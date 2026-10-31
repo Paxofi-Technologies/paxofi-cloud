@@ -118,9 +118,12 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         $streams = new ConsoleStreams();
         $command = new StaffBootstrapCommand(fn (): StaffInvitations => $this->invitations, $streams->console(), fn (): FounderBootstrap => $this->founder);
         self::assertSame(0, $command->execute(['ada@example.test', 'Ada Lovelace']));
+        $lost = $this->invitationToken();
+        // Running it again before the first admin has finished setting up re-issues the link (lost email) and kills the old one.
+        self::assertSame(0, $command->execute(['ada@example.test', 'Ada Lovelace']));
         $token = $this->invitationToken();
+        self::assertNotSame($lost, $token);
         self::assertStringNotContainsString($token, $streams->output(), 'the link is never printed');
-        self::assertSame(2, $command->execute(['ada@example.test', 'Ada Lovelace']), 'an open invitation for the same address is refused');
 
         $staffId = $this->scalar('SELECT id FROM staff_members', []);
         self::assertSame('invited', $this->scalar('SELECT status FROM staff_members WHERE id = ?', [$staffId]));
@@ -161,7 +164,7 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
         self::assertInstanceOf(\PDOStatement::class, $types);
         self::assertSame([
             AuditEventType::STAFF_BOOTSTRAP_INVITED,
-            AuditEventType::STAFF_INVITATION_REFUSED,
+            AuditEventType::STAFF_BOOTSTRAP_INVITED,
             AuditEventType::STAFF_SIGN_IN_SET_UP,
             AuditEventType::STAFF_ACTIVATED,
             AuditEventType::STAFF_INVITATION_REFUSED,
@@ -180,6 +183,21 @@ final class StaffPasskeysIntegrationTest extends IntegrationTestCase
     }
 
     /** §6.20: Redis tickets work once; a recovery code works once; wrong codes end the ticket. */
+    public function testBootstrapAgainReissuesTheLostInvitationOnMysql(): void
+    {
+        $staffId = $this->invitations->bootstrap('ada@example.test', 'Ada', $this->client);
+        $first = $this->invitationToken();
+
+        self::assertSame($staffId, $this->invitations->bootstrap('ada@example.test', 'Ada', $this->client));
+        $second = $this->invitationToken();
+
+        self::assertNotSame($first, $second);
+        self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM staff_members', []));
+        self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM staff_invitations WHERE used_at IS NULL', []), 'only the newest link is open');
+        self::assertSame(hash('sha256', $second), $this->scalar('SELECT token_hash FROM staff_invitations WHERE staff_id = ?', [$staffId]));
+        $this->activate($second, $staffId);
+    }
+
     public function testRedisTicketsAndRecoveryCodesWorkOnce(): void
     {
         $this->invitations->bootstrap('ada@example.test', 'Ada', $this->client);

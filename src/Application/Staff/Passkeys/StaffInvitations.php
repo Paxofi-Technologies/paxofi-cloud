@@ -65,8 +65,13 @@ final readonly class StaffInvitations
      */
     public function bootstrap(string $email, string $fullName, ClientContext $client): string
     {
-        $staffId = $this->create($email, $fullName, StaffRole::SecurityAdmin, null, ['role' => StaffRole::SecurityAdmin->value], $client, true);
-        $this->audit->record(AuditEventType::STAFF_BOOTSTRAP_INVITED, AuditEvent::SUCCESS, $client, details: ['subject' => $staffId, 'role' => StaffRole::SecurityAdmin->value]);
+        $reissued = false;
+        $staffId = $this->create($email, $fullName, StaffRole::SecurityAdmin, null, ['role' => StaffRole::SecurityAdmin->value], $client, true, $reissued);
+        $details = ['subject' => $staffId, 'role' => StaffRole::SecurityAdmin->value];
+        if ($reissued) {
+            $details['via'] = 'reissue';
+        }
+        $this->audit->record(AuditEventType::STAFF_BOOTSTRAP_INVITED, AuditEvent::SUCCESS, $client, details: $details);
 
         return $staffId;
     }
@@ -75,7 +80,7 @@ final readonly class StaffInvitations
      * @param array<string, string> $details
      * @throws StaffInvitationRefused
      */
-    private function create(string $email, string $fullName, StaffRole $role, ?string $actorId, array $details, ClientContext $client, bool $bootstrap): string
+    private function create(string $email, string $fullName, StaffRole $role, ?string $actorId, array $details, ClientContext $client, bool $bootstrap, bool &$reissued = false): string
     {
         try {
             $address = new EmailAddress($email);
@@ -90,12 +95,27 @@ final readonly class StaffInvitations
         $staffId = bin2hex(random_bytes(16));
         $token = PasskeyTokens::newToken();
         try {
-            $this->transactions->transaction(function () use ($address, $name, $role, $actorId, $bootstrap, $staffId, $token): void {
+            $this->transactions->transaction(function () use ($address, $name, $role, $actorId, $bootstrap, &$staffId, $token, &$reissued): void {
                 if ($bootstrap && $this->directory->countActiveHoldersForUpdate(self::managerRoles()) > 0) {
                     throw new StaffInvitationRefused(StaffInvitationRefused::MANAGERS_EXIST);
                 }
                 if ($this->store->staffExistsWithEmail($address->hash())) {
-                    throw new StaffInvitationRefused(StaffInvitationRefused::ALREADY_STAFF);
+                    // Bootstrap only, and only while nobody can manage staff: the first admin's invitation
+                    // email was lost (e.g. the mail relay failed), so issue a fresh link to the same
+                    // address and cancel the old ones (identity threat model §6.19). Anyone else is refused.
+                    $invited = $bootstrap ? $this->store->invitedMemberWithEmailForUpdate($address->hash()) : null;
+                    if ($invited === null) {
+                        throw new StaffInvitationRefused(StaffInvitationRefused::ALREADY_STAFF);
+                    }
+                    $now = $this->clock->now();
+                    $this->store->cancelOpenInvitations($invited['staff_id']);
+                    $this->store->addInvitation(hash('sha256', $token), $invited['staff_id'], null, $now, $now->modify('+' . self::TTL_SECONDS . ' seconds'));
+                    // Always to the address on the account, never the one typed this time.
+                    $this->outbox->enqueue(new EmailAddress($invited['email']), EmailTemplates::STAFF_INVITATION, ['name' => $name, 'token' => $token]);
+                    $staffId = $invited['staff_id'];
+                    $reissued = true;
+
+                    return;
                 }
                 $now = $this->clock->now();
                 $this->store->createInvitedMember($staffId, $address->value, $address->hash(), $name, random_bytes(32), $now);
