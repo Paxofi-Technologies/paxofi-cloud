@@ -961,6 +961,7 @@ describe('Admin navigation', () => {
       '/api-providers/server-providers',
       '/api-providers/payment-gateways',
       '/domain-extensions',
+      '/domain-search',
       '/domain-costs',
       '/tax-rates',
     ]);

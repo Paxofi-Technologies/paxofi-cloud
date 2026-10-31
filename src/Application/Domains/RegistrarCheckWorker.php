@@ -8,6 +8,7 @@ use Paxofi\Core\Contracts\RedisClient;
 use PaxofiCloud\Application\Contracts\Clock;
 use PaxofiCloud\Application\Contracts\AvailabilityChecker;
 use PaxofiCloud\Application\Contracts\DnsProbe;
+use PaxofiCloud\Application\Contracts\DomainSearchSettingsStore;
 use PaxofiCloud\Application\Contracts\ExtensionSettingsStore;
 use PaxofiCloud\Application\Contracts\FxRateStore;
 use PaxofiCloud\Application\Extensions\ExtensionPrices;
@@ -24,6 +25,8 @@ use PaxofiCloud\Domain\Registrar\TldName;
  *     authoritative, and the only source of premium and reserved;
  *  3. RDAP, then port-43 WHOIS, for names still unknown, searched names
  *     before name ideas.
+ * Staff may limit an extension to one source (DS-14); DNS still runs for
+ * every name because it can only ever say taken.
  * Each job has a 14 s budget (the page waits 20 s) and a run stops taking
  * jobs after 15 s, so other worker tasks never wait long. Name ideas are
  * never sent to the registrar; checkout confirms a chosen idea (premium
@@ -53,6 +56,7 @@ final readonly class RegistrarCheckWorker
         private ?DnsProbe $dns = null,
         private ?WhoisAvailability $whois = null,
         private ?RdapAvailability $rdap = null,
+        private ?DomainSearchSettingsStore $lookups = null,
     ) {
     }
 
@@ -79,6 +83,13 @@ final readonly class RegistrarCheckWorker
             }
             $deadline = hrtime(true) + self::JOB_BUDGET_MS * 1_000_000;
             $all = [...$domains, ...$ideas];
+            // DS-14: each extension's lookup mode, fixed WHOIS server and phrase (auto when none is set).
+            $settings = $this->lookups?->lookups() ?? [];
+            $lookup = static function (string $domain) use ($settings): LookupSettings {
+                $tld = explode('.', $domain, 2)[1] ?? '';
+
+                return $settings[$tld] ?? new LookupSettings($tld === '' ? 'invalid' : $tld);
+            };
             if (!$loaded) {
                 $loaded = true;
                 $checker = ($this->checker)();
@@ -89,7 +100,7 @@ final readonly class RegistrarCheckWorker
                     $answers[$domain] = new AvailabilityAnswer('taken');
                 }
             }
-            $toRegistrar = array_values(array_diff($domains, array_keys($answers)));
+            $toRegistrar = array_values(array_filter(array_diff($domains, array_keys($answers)), static fn (string $d): bool => $lookup($d)->uses('registrar')));
             if ($checker !== null && $toRegistrar !== []) {
                 $outcome = 'answered';
                 $answered = [];
@@ -114,16 +125,17 @@ final readonly class RegistrarCheckWorker
             } elseif ($this->health !== null && $this->clock !== null && $toRegistrar !== []) {
                 $this->health->record('not_connected', count($toRegistrar), 0, $this->clock->now());
             }
-            foreach ([$this->rdap, $this->whois] as $source) {
-                if ($source === null) {
-                    continue;
-                }
+            foreach (['rdap', 'whois'] as $source) {
                 foreach ($all as $domain) {
                     $current = $answers[$domain] ?? null;
-                    if (($current !== null && $current->status !== 'unknown') || hrtime(true) >= $deadline) {
+                    $settingsFor = $lookup($domain);
+                    if (($current !== null && $current->status !== 'unknown') || hrtime(true) >= $deadline || !$settingsFor->uses($source)) {
                         continue;
                     }
-                    $status = $source->check($domain);
+                    $status = match ($source) {
+                        'rdap' => $this->rdap?->check($domain) ?? 'unknown',
+                        'whois' => $this->whois?->check($domain, $settingsFor->whoisServer, $settingsFor->whoisPhrase) ?? 'unknown',
+                    };
                     if ($status !== 'unknown') {
                         $answers[$domain] = new AvailabilityAnswer($status);
                     }

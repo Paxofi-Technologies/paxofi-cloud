@@ -55,6 +55,7 @@ use PaxofiCloud\Application\Domains\DomainPriceList;
 use PaxofiCloud\Application\Domains\RegistrarCheck;
 use PaxofiCloud\Application\Domains\DomainSearch;
 use PaxofiCloud\Application\Domains\RdapAvailability;
+use PaxofiCloud\Infrastructure\Domains\MysqlDomainSearchSettingsStore;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 use PaxofiCloud\Infrastructure\Domains\CachedRdapDirectory;
 use PaxofiCloud\Infrastructure\Extensions\MysqlExtensionSettingsStore;
@@ -104,6 +105,7 @@ final class CommerceProvider implements Provider
                 Resolve::get($c, ExtensionQuotes::class),
                 self::rdapAvailability($redis),
                 new RedisRateLimiter($redis),
+                new MysqlDomainSearchSettingsStore(Resolve::get($c, Connection::class), Resolve::get($c, Repository::class)),
             ));
         });
         // Registrar availability check (DS-13): the web tier only queues names; the provider worker answers.

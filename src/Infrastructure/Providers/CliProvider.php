@@ -14,6 +14,7 @@ use PaxofiCloud\Application\Domains\WhoisServerDirectory;
 use PaxofiCloud\Infrastructure\RateLimit\RedisRateLimiter;
 use PaxofiCloud\Integration\Dns\SystemDnsProbe;
 use PaxofiCloud\Integration\Whois\WhoisClient;
+use PaxofiCloud\Infrastructure\Domains\MysqlDomainSearchSettingsStore;
 use Paxofi\Core\Application;
 use Paxofi\Core\CLI\CommandRegistry;
 use Paxofi\Core\Contracts\Connection;
@@ -286,6 +287,7 @@ final readonly class CliProvider implements Provider
                     new SystemDnsProbe(),
                     self::whoisAvailability($c),
                     CommerceProvider::rdapAvailability(Resolve::get($c, RedisClient::class)),
+                    new MysqlDomainSearchSettingsStore($connection, $repository),
                 );
             };
             $registry->register(new PricesSyncCommand($syncFor, $console));

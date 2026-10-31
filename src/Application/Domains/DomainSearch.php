@@ -4,15 +4,17 @@ declare(strict_types=1);
 
 namespace PaxofiCloud\Application\Domains;
 
+use PaxofiCloud\Application\Contracts\DomainSearchSettingsStore;
 use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Extensions\ExtensionQuotes;
 
 /**
  * The customer domain search (THREAT-MODEL-DOMAIN-SEARCH.md DS-1 to DS-10,
  * DS-22 to DS-24): one label, checked in the requested extension and the
- * search extensions (the featured ones plus `ng` and `com.ng` until staff
- * choose, at most 12), each with our selling price, plus up to 30 priced
- * name ideas (DS-23) for the page to confirm. The first 6 names get the RDAP
+ * search extensions staff chose (until they do, the featured ones plus `ng`
+ * and `com.ng`; at most 12 per search), each with our selling price, plus
+ * up to 30 priced name ideas (DS-23) for the page to confirm; the page shows
+ * at most the staff's "ideas shown" number. The first 6 names get the RDAP
  * pre-check now; the rest come from the cache or show as being checked, and
  * the page asks the provider worker to confirm everything that is not taken
  * (DS-13, DS-14). Searched names are never stored or logged; the cache key
@@ -35,13 +37,15 @@ final readonly class DomainSearch
         private ExtensionQuotes $quotes,
         private RdapAvailability $rdap,
         private RateLimiter $limiter,
+        private ?DomainSearchSettingsStore $settings = null,
     ) {
     }
 
     /**
      * @return array{name: string, results: list<array{domain: string, tld: string, status: string, featured: bool, label: string,
      *     register: array{usd: int, ngn: int}, renew: ?array{usd: int, ngn: ?int}}>,
-     *     ideas: list<array{domain: string, tld: string, label: string, register: array{usd: int, ngn: int}, renew: ?array{usd: int, ngn: ?int}}>}
+     *     ideas: list<array{domain: string, tld: string, label: string, register: array{usd: int, ngn: int}, renew: ?array{usd: int, ngn: ?int}}>,
+     *     ideas_shown: int}
      * @throws DomainSearchRefused
      */
     public function search(string $clientIp, string $name, ?string $tld): array
@@ -68,7 +72,8 @@ final readonly class DomainSearch
         }
 
         $featured = $this->quotes->featured();
-        $searchSet = array_slice(array_values(array_unique([...$featured, ...self::DEFAULT_SEARCH_EXTENSIONS])), 0, self::MAX_EXTENSIONS);
+        $settings = $this->settings?->settings() ?? DomainSearchSettings::defaults();
+        $searchSet = array_slice(DomainSearchAdmin::searchSet($settings, $this->quotes), 0, self::MAX_EXTENSIONS);
         $tlds = array_values(array_unique([$requested, ...$searchSet]));
         $results = [];
         foreach ($tlds as $candidate) {
@@ -90,7 +95,9 @@ final readonly class DomainSearch
         }
 
         $ideas = [];
-        foreach (NameIdeas::generate($name, $requested, $this->quotes->extensions(), array_column($results, 'domain'), self::MAX_IDEAS) as $idea) {
+        // A few more candidates than shown: only the ones confirmed available are shown.
+        $candidates = $settings->maxIdeas === 0 ? 0 : min(self::MAX_IDEAS, $settings->maxIdeas + 10);
+        foreach (NameIdeas::generate($name, $requested, $this->quotes->extensions(), array_column($results, 'domain'), $candidates, $settings->prefixes, $settings->suffixes) as $idea) {
             [, $ideaTld] = explode('.', $idea, 2);
             $prices = $this->quotes->quote($ideaTld);
             if ($prices === null || $prices->usd['register'] === null || $prices->ngn['register'] === null) {
@@ -105,6 +112,6 @@ final readonly class DomainSearch
             ];
         }
 
-        return ['name' => $name, 'results' => $results, 'ideas' => $ideas];
+        return ['name' => $name, 'results' => $results, 'ideas' => $ideas, 'ideas_shown' => $settings->maxIdeas];
     }
 }
