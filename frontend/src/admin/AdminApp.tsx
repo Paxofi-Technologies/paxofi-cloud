@@ -1282,6 +1282,12 @@ const CREDENTIAL_ERRORS: Record<string, string> = {
   code_invalid: CODE_WRONG,
   unknown_provider: 'This provider is not supported.',
   intake_unavailable: 'Credentials cannot be saved on this server yet. Ask the engineering team to finish the provider worker setup.',
+  // The admin gate's own refusals: without these the form showed only "could not be saved".
+  not_signed_in: 'Your session has ended (15 minutes without activity signs you out). Sign in again, then enter the values again.',
+  csrf_token_invalid: 'Your session has ended. Sign in again, then enter the values again.',
+  permission_denied: 'Your role cannot change provider credentials. Ask a security admin.',
+  origin_not_allowed: 'This page is out of date. Reload it and try again.',
+  malformed_request: 'This page is out of date. Reload it and try again.',
 };
 
 function CredentialForm({
