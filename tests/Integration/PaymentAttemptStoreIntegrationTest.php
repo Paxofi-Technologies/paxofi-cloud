@@ -14,6 +14,7 @@ use PaxofiCloud\Application\Contracts\DuplicateIdempotencyKey;
 use PaxofiCloud\Application\Payments\GatewayVerification;
 use PaxofiCloud\Application\Payments\NewPaymentAttempt;
 use PaxofiCloud\Application\Payments\PaymentOutcome;
+use PaxofiCloud\Application\Payments\WebhookHint;
 use PaxofiCloud\Bootstrap\AppFactory;
 use PaxofiCloud\Domain\Billing\TaxRate;
 use PaxofiCloud\Domain\Money\BasisPoints;
@@ -31,6 +32,7 @@ use PaxofiCloud\Infrastructure\Migrations\MigrationLoader;
 use PaxofiCloud\Infrastructure\Migrations\Migrator;
 use PaxofiCloud\Infrastructure\Migrations\MysqlAdvisoryLock;
 use PaxofiCloud\Infrastructure\Orders\MysqlOrderStore;
+use PaxofiCloud\Infrastructure\Payments\MysqlGatewayEventStore;
 use PaxofiCloud\Infrastructure\Payments\MysqlPaymentAttemptStore;
 use PDOException;
 
@@ -43,6 +45,7 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
 
     private MysqlPaymentAttemptStore $attempts;
     private MysqlLedger $ledger;
+    private MysqlGatewayEventStore $events;
     private string $orderId;
     private string $invoiceId;
     private \DateTimeImmutable $now;
@@ -91,6 +94,7 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         $this->invoiceId = $invoiceId;
         $this->ledger = new MysqlLedger($connection, $repository, $transactions);
         $this->attempts = new MysqlPaymentAttemptStore($connection, $repository, $transactions, $this->ledger);
+        $this->events = new MysqlGatewayEventStore($connection, $transactions);
     }
 
     private function attempt(string $key = 'pay-key-00000000001', ?\DateTimeImmutable $at = null): NewPaymentAttempt
@@ -325,6 +329,36 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         self::assertTrue($this->attempts->checkNow(self::ALICE, $attempt->id, $at));
         self::assertCount(1, $this->attempts->dueForCheck($at, 10));
         self::assertFalse($this->attempts->checkNow(self::ALICE, $attempt->id, $at->modify('+1 second')), 'already due: never pushed later');
+    }
+
+    public function testAWebhookIsRecordedOnceAndMakesTheAttemptDueNow(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000020');
+        $hint = new WebhookHint(Gateway::Paystack, $attempt->reference, 'charge.success');
+        $payload = hash('sha256', '{"event":"charge.success"}');
+        $at = $this->now->modify('+30 seconds');
+
+        self::assertSame([], $this->attempts->dueForCheck($at, 10), 'first scheduled check is at 2 minutes');
+        self::assertTrue($this->events->record($hint, $payload, $at));
+        self::assertCount(1, $this->attempts->dueForCheck($at, 10), 'PY-7: the webhook brings the check forward');
+
+        self::assertFalse($this->events->record($hint, $payload, $at->modify('+5 seconds')), 'a retry is a no-op');
+        self::assertEquals(1, self::column('SELECT COUNT(*) FROM gateway_events'));
+        self::assertSame($payload, self::column('SELECT payload_sha256 FROM gateway_events'));
+        self::assertSame('pending', $this->attempts->find(self::ALICE, $attempt->id)['state'] ?? null, 'PY-8: a webhook never settles anything');
+    }
+
+    public function testAWebhookForAnotherGatewayOrASettledAttemptChangesNoSchedule(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000021');
+        $at = $this->now->modify('+30 seconds');
+
+        self::assertTrue($this->events->record(new WebhookHint(Gateway::Flutterwave, $attempt->reference, 'charge.completed'), hash('sha256', 'a'), $at));
+        self::assertSame([], $this->attempts->dueForCheck($at, 10), 'the reference belongs to a Paystack attempt');
+
+        $this->attempts->recordSuccess($attempt->id, self::success($attempt, 1_773_750), $this->now);
+        self::assertTrue($this->events->record(new WebhookHint(Gateway::Paystack, $attempt->reference, 'charge.success'), hash('sha256', 'b'), $at));
+        self::assertSame([], $this->attempts->dueForCheck($at, 10));
     }
 
     private static function column(string $sql): mixed

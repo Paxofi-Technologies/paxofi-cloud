@@ -15,7 +15,7 @@ use PaxofiCloud\Domain\Payments\Gateway;
 use PaxofiCloud\Domain\Payments\PaymentReference;
 
 /**
- * Gateways whose initialise() and verify() answer from a script: a result to
+ * Gateways whose initialise(), verify() and webhookHint() answer from a script: a result to
  * return, or a Throwable to throw. Every call is recorded so tests can check
  * what was sent.
  */
@@ -29,6 +29,8 @@ final class ScriptedPaymentGateways implements PaymentGateways
     public array $verified = [];
     /** @var \Closure(PaymentReference): (GatewayVerification|\Throwable)|null */
     public ?\Closure $verifyAnswer = null;
+    /** @var \Closure(string, array<string, string>): (WebhookHint|\Throwable|null)|null */
+    public ?\Closure $webhookAnswer = null;
 
     public function for(Gateway $gateway): PaymentGateway
     {
@@ -70,7 +72,12 @@ final class ScriptedPaymentGateways implements PaymentGateways
 
             public function webhookHint(string $rawBody, array $headers): ?WebhookHint
             {
-                throw new \LogicException('Not used by these tests.');
+                $answer = $this->script->webhookAnswer !== null ? ($this->script->webhookAnswer)($rawBody, $headers) : null;
+                if ($answer instanceof \Throwable) {
+                    throw $answer;
+                }
+
+                return $answer;
             }
         };
     }

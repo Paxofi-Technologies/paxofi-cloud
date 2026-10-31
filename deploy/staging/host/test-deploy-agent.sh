@@ -70,6 +70,7 @@ for f in credential-intake-secret.env provider-credential-keys.env payments-inta
 done
 docker ps --format '{{.Names}}' | grep -q provider-worker || fail "provider worker did not start"
 docker ps --format '{{.Names}}' | grep -q payments-worker || fail "payments worker did not start"
+docker ps --format '{{.Names}}' | grep -q payments-web || fail "payments-web did not start"
 grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/outbox-public.env" || fail "outbox public key not generated"
 grep -qE '^MFA_SECRET_KEYS=k1:[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA key ring not generated"
 grep -qE '^MFA_RECOVERY_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA recovery key not generated"

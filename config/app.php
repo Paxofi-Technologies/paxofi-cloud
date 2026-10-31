@@ -14,4 +14,6 @@ return static fn (Environment $env): array => [
     // The staff admin origin (WebAuthn relying party, §6.17). Empty = staff sign-in off.
     'admin_url' => $env->get('ADMIN_URL', ''),
     'max_body_bytes' => $env->integer('APP_MAX_BODY_BYTES', 1_048_576),
+    // 'payments-web' serves only the gateway webhooks (payments threat model PY-7); anything else is the web tier.
+    'role' => $env->get('APP_ROLE', 'web'),
 ];

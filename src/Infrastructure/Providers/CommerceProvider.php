@@ -30,6 +30,15 @@ use PaxofiCloud\Application\Checkout\Checkout;
 use PaxofiCloud\Http\Controllers\CheckoutController;
 use PaxofiCloud\Http\Controllers\OrdersController;
 use PaxofiCloud\Http\Controllers\PaymentsController;
+use PaxofiCloud\Http\Controllers\WebhookController;
+use PaxofiCloud\Application\Payments\WebhookReceiver;
+use PaxofiCloud\Domain\Payments\GatewayMode;
+use PaxofiCloud\Infrastructure\Payments\ConfiguredPaymentGateways;
+use PaxofiCloud\Infrastructure\Payments\MysqlGatewayEventStore;
+use PaxofiCloud\Infrastructure\Secrets\CredentialTable;
+use PaxofiCloud\Infrastructure\Secrets\KeyRing;
+use PaxofiCloud\Infrastructure\Secrets\MysqlProviderCredentialStore;
+use PaxofiCloud\Infrastructure\Secrets\SecretCipher;
 use PaxofiCloud\Application\Payments\InvoicePayments;
 use PaxofiCloud\Domain\Providers\ProviderConnection;
 use PaxofiCloud\Infrastructure\Payments\MysqlPaymentAttemptStore;
@@ -174,6 +183,28 @@ final class CommerceProvider implements Provider
                 new SystemClock(),
                 ProviderConnection::environmentFor(is_string($env) ? $env : ''),
             ), Resolve::get($c, Sessions::class));
+        });
+        // Gateway webhooks (payments PY-3, PY-7): built only in payments-web, the one web process with the payments key ring.
+        $container->singleton(WebhookController::class, static function (Container $c): WebhookController {
+            $ring = KeyRing::fromNamedProcessEnvironment('PAYMENTS_CREDENTIAL_KEYS', 'PAYMENTS_CREDENTIAL_ACTIVE_KEY', '(payments-web and payments worker only)')
+                ?? throw new \InvalidArgumentException('PAYMENTS_CREDENTIAL_KEYS and PAYMENTS_CREDENTIAL_ACTIVE_KEY must be set.');
+            $env = Resolve::get($c, Configuration::class)->get('app.env');
+            $env = is_string($env) ? $env : '';
+            $connection = Resolve::get($c, Connection::class);
+            $repository = Resolve::get($c, Repository::class);
+
+            return new WebhookController(new WebhookReceiver(
+                new ConfiguredPaymentGateways(
+                    new MysqlProviderCredentialStore($connection, $repository, new SecretCipher($ring), CredentialTable::PaymentGateways),
+                    ProviderConnection::environmentFor($env),
+                    GatewayMode::forEnvironment($env),
+                ),
+                new MysqlGatewayEventStore($connection, Resolve::get($c, TransactionManager::class)),
+                new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
+                Resolve::get($c, AuditTrail::class),
+                new SystemClock(),
+                Resolve::get($c, Logger::class),
+            ));
         });
         // Public price list (DS-11): selling prices only, cacheable.
         $container->singleton(DomainPricesController::class, static fn (Container $c): DomainPricesController => new DomainPricesController(new DomainPriceList(

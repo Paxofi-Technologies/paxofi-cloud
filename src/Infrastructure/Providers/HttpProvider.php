@@ -20,6 +20,7 @@ use PaxofiCloud\Http\Controllers\CartController;
 use PaxofiCloud\Http\Controllers\CheckoutController;
 use PaxofiCloud\Http\Controllers\OrdersController;
 use PaxofiCloud\Http\Controllers\PaymentsController;
+use PaxofiCloud\Http\Controllers\WebhookController;
 use PaxofiCloud\Http\Controllers\CatalogueController;
 use PaxofiCloud\Http\Controllers\DomainCheckController;
 use PaxofiCloud\Http\Controllers\DomainPricesController;
@@ -68,6 +69,14 @@ final class HttpProvider implements Provider
 
         $container->singleton(Router::class, static function (Container $c): Router {
             $router = new Router();
+            if (Resolve::get($c, Configuration::class)->get('app.role') === 'payments-web') {
+                // PY-7: payments-web answers exactly two paths; everything else is 404.
+                $webhooks = static fn (): WebhookController => Resolve::get($c, WebhookController::class);
+                $router->post('/webhooks/paystack', static fn (HttpRequest $r): HttpResponse => $webhooks()->paystack($r));
+                $router->post('/webhooks/flutterwave', static fn (HttpRequest $r): HttpResponse => $webhooks()->flutterwave($r));
+
+                return $router;
+            }
             $dispatcher = new ControllerDispatcher($c);
             $router->controller('GET', '/health/live', LivenessController::class, $dispatcher);
             $router->controller('GET', '/health/ready', ReadinessController::class, $dispatcher);
