@@ -14,6 +14,10 @@ export PAXOFICLOUD_ROOT="$root"
 A=$(printf 'a%.0s' {1..40}); B=$(printf 'b%.0s' {1..40}); C=$(printf 'c%.0s' {1..40})
 run() { SSH_ORIGINAL_COMMAND="$1" "$agent"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
+# Reads all of stdin before matching, so the writer never gets SIGPIPE when grep -q
+# stops at the first match; with pipefail that race failed good checks and could
+# hide a forbidden match behind "&& fail".
+has() { local input; input="$(cat)"; grep -q "$@" <<<"$input"; }
 current() { cat "$root/var/lib/paxoficloud/current" 2>/dev/null || echo none; }
 health() { curl -s --max-time 3 http://127.0.0.1:8080/health/ready || true; }
 
@@ -69,9 +73,9 @@ for f in credential-intake-secret.env provider-credential-keys.env payments-inta
   value="$(head -n1 "$root/etc/paxoficloud/$f" | cut -d= -f2-)"
   grep -qF -- "${value#k1:}" "$root/var/log/paxoficloud/deploy.log" && fail "a value from $f reached the deploy log"
 done
-docker ps --format '{{.Names}}' | grep -q provider-worker || fail "provider worker did not start"
-docker ps --format '{{.Names}}' | grep -q payments-worker || fail "payments worker did not start"
-docker ps --format '{{.Names}}' | grep -q payments-web || fail "payments-web did not start"
+docker ps --format '{{.Names}}' | has provider-worker || fail "provider worker did not start"
+docker ps --format '{{.Names}}' | has payments-worker || fail "payments worker did not start"
+docker ps --format '{{.Names}}' | has payments-web || fail "payments-web did not start"
 grep -qE '^EMAIL_OUTBOX_PUBLIC_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/outbox-public.env" || fail "outbox public key not generated"
 grep -qE '^MFA_SECRET_KEYS=k1:[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA key ring not generated"
 grep -qE '^MFA_RECOVERY_KEY=[A-Za-z0-9+/]{43}=$' "$root/etc/paxoficloud/identity-keys.env" || fail "MFA recovery key not generated"
@@ -79,7 +83,7 @@ mfa_key="$(sed -n 's/^MFA_RECOVERY_KEY=//p' "$root/etc/paxoficloud/identity-keys
 grep -qF -- "$mfa_key" "$root/var/log/paxoficloud/deploy.log" && fail "an MFA key reached the deploy log"
 secret_key="$(cut -d= -f2- "$root/etc/paxoficloud/outbox-secret.env")"
 grep -qF -- "$secret_key" "$root/var/log/paxoficloud/deploy.log" && fail "the outbox secret key reached the deploy log"
-docker ps --format '{{.Names}}' | grep -q mail-worker && fail "mail worker started without a provider token"
+docker ps --format '{{.Names}}' | has mail-worker && fail "mail worker started without a provider token"
 status_out="$(run status 2>/dev/null)" || fail "status failed"
 grep -qx 'mail worker=disabled provider=default allowlist_entries=0' <<<"$status_out" || fail "status did not report the disabled mail worker"
 grep -q '^outbox pending=0 sending=0 sent=0 dead=0$' <<<"$status_out" || fail "status did not report the outbox"
