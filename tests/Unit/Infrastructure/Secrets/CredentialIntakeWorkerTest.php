@@ -20,7 +20,7 @@ use PaxofiCloud\Tests\Support\RecordingLogger;
 use PaxofiCloud\Tests\Support\RecordingOutbox;
 use PHPUnit\Framework\TestCase;
 
-/** PC-1, PC-5, PC-7, PC-T8: the worker re-checks every box, stores under the KEK, deletes, announces. */
+/** PC-1, PC-5, PC-7, PC-T8: the worker re-checks every box, stores under the KEK, deletes, announces. PY-3: two lanes. */
 final class CredentialIntakeWorkerTest extends TestCase
 {
     private const string STAFF = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1';
@@ -35,6 +35,8 @@ final class CredentialIntakeWorkerTest extends TestCase
     /** @var array{public: string, secret: string} */
     private array $keys;
     private CredentialIntakeWorker $worker;
+    private ProviderCredentialWriter $vault;
+    private InMemoryStaffDirectory $directory;
 
     protected function setUp(): void
     {
@@ -67,17 +69,50 @@ final class CredentialIntakeWorkerTest extends TestCase
                 $this->saved[] = [$credential, $secret, $reviewDueOn->format('Y-m-d')];
             }
         };
-        $this->worker = new CredentialIntakeWorker(
+        $this->vault = $vault;
+        $this->directory = $directory;
+        $this->worker = $this->worker(false);
+    }
+
+    private function worker(bool $paymentGateways): CredentialIntakeWorker
+    {
+        return new CredentialIntakeWorker(
             'staging',
             $this->intake,
             SealedBox::forOpening($this->keys['public'], $this->keys['secret']),
-            $vault,
-            $directory,
+            $this->vault,
+            $this->directory,
             $this->outbox,
             AuditFixtures::trail($this->audit),
             new MutableClock(new \DateTimeImmutable('2026-10-20T10:00:00Z')),
             $this->logger,
+            $paymentGateways,
         );
+    }
+
+    public function testTheProviderWorkerNeverTouchesGatewayRowsAndThePaymentsWorkerNeverTouchesOthers(): void
+    {
+        $gateway = ['credential_id' => 'paystack-staging', 'provider' => 'paystack', 'secret' => '{"secret_key":"x"}'] + $this->payload();
+        $this->queue($gateway, 'paystack-staging', 'paystack');
+        $this->queue($this->payload());
+
+        self::assertSame(1, $this->worker->runOnce(), 'provider lane: hetzner only');
+        self::assertSame(['hetzner-staging'], array_map(static fn (array $s): string => $s[0]->id, $this->saved));
+        self::assertArrayHasKey('paystack-staging', $this->intake->rows, 'gateway row left for the payments worker');
+
+        self::assertSame(1, $this->worker(true)->runOnce(), 'payments lane: paystack only');
+        self::assertSame(['hetzner-staging', 'paystack-staging'], array_map(static fn (array $s): string => $s[0]->id, $this->saved));
+        self::assertSame([], $this->intake->rows);
+    }
+
+    public function testThePaymentsWorkerRefusesAPayloadForAnotherProvider(): void
+    {
+        // A row filed under paystack whose sealed payload names hetzner (PC-T8): never stored under the payments key ring.
+        $this->queue($this->payload(), 'paystack-staging', 'paystack');
+
+        self::assertSame(1, $this->worker(true)->runOnce());
+        self::assertSame([], $this->saved);
+        self::assertSame('provider_mismatch', $this->audit->events[0]->details['reason'] ?? null);
     }
 
     public function testAValidSubmissionIsStoredRemovedAuditedAndAnnounced(): void
@@ -156,9 +191,9 @@ final class CredentialIntakeWorkerTest extends TestCase
     }
 
     /** @param array<string, mixed> $payload */
-    private function queue(array $payload): void
+    private function queue(array $payload, string $credentialId = 'hetzner-staging', string $provider = 'hetzner'): void
     {
         $sealed = SealedBox::forSealing($this->keys['public'])->seal((string) json_encode($payload));
-        $this->intake->replace('hetzner-staging', 'hetzner', $sealed, self::STAFF, new \DateTimeImmutable());
+        $this->intake->replace($credentialId, $provider, $sealed, self::STAFF, new \DateTimeImmutable());
     }
 }

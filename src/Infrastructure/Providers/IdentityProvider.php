@@ -410,6 +410,8 @@ final class IdentityProvider implements Provider
         $container->singleton(ProviderConnections::class, static function (Container $c): ProviderConnections {
             $publicKey = getenv('CREDENTIAL_INTAKE_PUBLIC_KEY');
             $env = Resolve::get($c, Configuration::class)->get('app.env');
+            // PY-3: gateway keys are sealed to the payments intake key, which only the payments worker opens.
+            $paymentsKey = getenv('PAYMENTS_INTAKE_PUBLIC_KEY');
 
             return new ProviderConnections(
                 ProviderConnection::environmentFor(is_string($env) ? $env : ''),
@@ -421,6 +423,7 @@ final class IdentityProvider implements Provider
                 new RedisRateLimiter(Resolve::get($c, RedisClient::class)),
                 new SystemClock(),
                 Resolve::get($c, AuditTrail::class),
+                is_string($paymentsKey) && $paymentsKey !== '' ? SealedBox::forSealing($paymentsKey, 'PAYMENTS_INTAKE') : null,
             );
         });
         $container->singleton(AdminProviderConnectionsController::class, static fn (Container $c): AdminProviderConnectionsController => new AdminProviderConnectionsController(

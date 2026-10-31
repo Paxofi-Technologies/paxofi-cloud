@@ -15,6 +15,8 @@ use PaxofiCloud\Application\Contracts\ProviderCredentialStatus;
 use PaxofiCloud\Application\Contracts\RateLimiter;
 use PaxofiCloud\Application\Staff\SignIn\StaffSecondFactor;
 use PaxofiCloud\Application\Staff\StaffAuthorizer;
+use PaxofiCloud\Domain\Payments\GatewayKeyGuard;
+use PaxofiCloud\Domain\Payments\GatewayMode;
 use PaxofiCloud\Domain\Providers\ConnectionField;
 use PaxofiCloud\Domain\Providers\InvalidConnectionFields;
 use PaxofiCloud\Domain\Providers\ProviderConnection;
@@ -27,6 +29,10 @@ use PaxofiCloud\Domain\Staff\Permission;
  * submission needs `provider_credentials.manage` and a fresh authenticator
  * code (PC-3); the secret is sealed to the provider worker before it is
  * stored (PC-1), and the worker does the KEK encryption.
+ *
+ * Payment gateway keys are sealed to a different key, the payments intake key,
+ * which only the payments worker can open (THREAT-MODEL-PAYMENTS.md PY-3),
+ * and their test/live mode must match this environment (PY-4).
  */
 final readonly class ProviderConnections
 {
@@ -44,6 +50,7 @@ final readonly class ProviderConnections
         private RateLimiter $limiter,
         private Clock $clock,
         private AuditTrail $audit,
+        private ?CredentialSealer $paymentsSealer = null,
     ) {
     }
 
@@ -99,7 +106,17 @@ final readonly class ProviderConnections
         } catch (InvalidConnectionFields $e) {
             $this->refuse(ProviderConnectionRefused::INVALID_FIELDS, $client, $staffId, $provider->value, field: $e->getMessage());
         }
-        if ($this->sealer === null) {
+        $gateway = $provider->gateway();
+        if ($gateway !== null) {
+            $mode = $this->environment === 'prod' ? GatewayMode::Live : GatewayMode::Test;
+            $key = $fields['secret_key'] ?? null;
+            if (!is_string($key) || !GatewayKeyGuard::allows($gateway, $key, $mode)) {
+                sodium_memzero($secret);
+                $this->refuse(ProviderConnectionRefused::WRONG_KEY_MODE, $client, $staffId, $provider->value, field: 'secret_key');
+            }
+        }
+        $sealer = $gateway !== null ? $this->paymentsSealer : $this->sealer;
+        if ($sealer === null) {
             $this->refuse(ProviderConnectionRefused::UNAVAILABLE, $client, $staffId, $provider->value);
         }
 
@@ -113,7 +130,7 @@ final readonly class ProviderConnections
             'secret' => $secret,
             'submitted_by' => $staffId,
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $sealed = $this->sealer->seal($payload);
+        $sealed = $sealer->seal($payload);
         sodium_memzero($payload);
         sodium_memzero($secret);
 

@@ -599,7 +599,7 @@ function Console({ path, fetchImpl, credentials }: { path: string; fetchImpl?: t
   return <Dashboard path={path} session={state.session} fetchImpl={fetchImpl} credentials={credentials} onSignedOut={reload} onChanged={reload} />;
 }
 
-type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'domain-extensions' | 'domain-costs' | 'tax-rates' | 'audit-log';
+type AdminPage = 'overview' | 'account' | 'staff' | 'providers-domains' | 'providers-servers' | 'providers-payments' | 'domain-extensions' | 'domain-costs' | 'tax-rates' | 'audit-log';
 
 interface AdminPageSpec {
   id: AdminPage;
@@ -643,6 +643,14 @@ const ADMIN_PAGES: readonly AdminPageSpec[] = [
     path: '/api-providers/server-providers',
     label: 'Server providers',
     icon: <ServerIcon />,
+    permission: 'provider_credentials.manage',
+    group: 'api-providers',
+  },
+  {
+    id: 'providers-payments',
+    path: '/api-providers/payment-gateways',
+    label: 'Payment gateways',
+    icon: <ReceiptIcon />,
     permission: 'provider_credentials.manage',
     group: 'api-providers',
   },
@@ -746,6 +754,7 @@ function Dashboard({
         {page === 'staff' && <StaffManagement session={session} fetchImpl={fetchImpl} />}
         {page === 'providers-domains' && <ProviderConnections category="domains" session={session} fetchImpl={fetchImpl} />}
         {page === 'providers-servers' && <ProviderConnections category="servers" session={session} fetchImpl={fetchImpl} />}
+        {page === 'providers-payments' && <ProviderConnections category="payments" session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-extensions' && <DomainExtensionsPage session={session} fetchImpl={fetchImpl} />}
         {page === 'domain-costs' && <DomainCostsCard session={session} fetchImpl={fetchImpl} />}
         {page === 'tax-rates' && <TaxRatesPage session={session} fetchImpl={fetchImpl} />}
@@ -1250,12 +1259,16 @@ function ProviderConnections({ category, session, fetchImpl }: { category: Provi
   );
 }
 
-type ProviderCategory = 'domains' | 'servers';
+type ProviderCategory = 'domains' | 'servers' | 'payments';
 
 /** The two pages under "API providers" (CEO decision 24 Oct 2026). */
 const PROVIDER_PAGES: Record<ProviderCategory, { title: string; intro: string }> = {
   domains: { title: 'Domain registrars', intro: 'API credentials PaxofiCloud uses to read prices from, and later register domains with, each registrar.' },
   servers: { title: 'Server providers', intro: 'API credentials PaxofiCloud uses to create and manage servers.' },
+  payments: {
+    title: 'Payment gateways',
+    intro: 'Secret keys PaxofiCloud uses to take card and transfer payments. They are locked away for the payments service only; staging accepts test keys only, production live keys only.',
+  },
 };
 
 function connectionStatus(provider: ProviderConnectionStatus): string {
@@ -1312,6 +1325,10 @@ function CredentialForm({
       return;
     }
     if (result.kind === 'invalid') {
+      if (result.errors.secret_key === 'wrong_key_mode') {
+        setProblem('That key is for the wrong mode. Staging takes TEST secret keys only; production takes LIVE secret keys only.');
+        return;
+      }
       const field = Object.keys(result.errors)[0] ?? '';
       const label = provider.fields.find((f) => f.name === field)?.label;
       setProblem(label ? `Check the ${label.toLowerCase()}: it must not be empty, too long, or contain line breaks.` : 'Check the values and try again.');

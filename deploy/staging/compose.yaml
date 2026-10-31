@@ -15,6 +15,10 @@
 #   and the credential-intake secret key; the web tier gets the intake PUBLIC
 #   key only, so it can seal a credential but never read one (provider
 #   connections threat model PC-1, PC-6).
+# - The payments worker is the only service with the payments key ring and
+#   the payments intake secret key; the web tier gets the payments intake
+#   PUBLIC key only, and the provider worker gets nothing payment-related, so
+#   no other process can read a gateway key (payments threat model PY-3).
 
 name: paxoficloud
 
@@ -35,6 +39,7 @@ services:
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/web.env"
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/identity-keys.env"
       - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/credential-intake-public.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/payments-intake-public.env"
     environment: &app-environment
       APP_ENV: staging
       APP_URL: https://cloud-staging.paxofi.com
@@ -87,6 +92,24 @@ services:
     environment: *app-environment
     tmpfs: [/tmp]
     # data: MySQL; egress: HTTPS to allow-listed provider APIs (provider sync, next).
+    networks: [data, egress]
+    depends_on:
+      mysql: {condition: service_healthy}
+
+  payments-worker:
+    <<: *hardening
+    image: paxoficloud-php:${APP_VERSION:?APP_VERSION is required}
+    command: ["php", "bin/paxoficloud", "payments:work"]
+    env_file:
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/app.env"
+      # Public outbox key only: the worker queues the managers' alert (PC-7).
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/outbox-public.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/payments-intake-public.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/payments-intake-secret.env"
+      - "${PAXOFICLOUD_ENV_DIR:-/etc/paxoficloud}/payments-credential-keys.env"
+    environment: *app-environment
+    tmpfs: [/tmp]
+    # data: MySQL; egress: HTTPS to the allow-listed gateway APIs (next step).
     networks: [data, egress]
     depends_on:
       mysql: {condition: service_healthy}
