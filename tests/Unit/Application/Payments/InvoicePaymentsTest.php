@@ -232,4 +232,32 @@ final class InvoicePaymentsTest extends TestCase
         self::assertNull($this->payments()->status(self::ALICE, $id)['checkout_url']);
         self::assertSame(PaymentRefused::ATTEMPT_NOT_FOUND, $this->refusal(fn () => $this->payments()->status(self::BOB, $id)));
     }
+    public function testComingBackFromTheGatewayAsksForACheckNowAtMostEvery30Seconds(): void
+    {
+        $id = $this->start()['payment_id'];
+        $this->attempts->markCheckoutReady($id, 'https://checkout.paystack.com/x', $this->clock->now(), $this->clock->now()->modify('+2 minutes'));
+
+        self::assertSame('pending', $this->payments()->checkNow(self::ALICE, $id)['state']);
+        self::assertEquals($this->clock->now(), $this->attempts->attempts[$id]['next'], 'PY-10: due now');
+
+        $this->attempts->attempts[$id]['next'] = $this->clock->now()->modify('+10 minutes');
+        $this->payments()->checkNow(self::ALICE, $id);
+        self::assertEquals($this->clock->now()->modify('+10 minutes'), $this->attempts->attempts[$id]['next'], 'a second ask within 30 s changes nothing');
+    }
+
+    public function testAnotherAccountCannotAskForACheck(): void
+    {
+        $id = $this->start()['payment_id'];
+
+        self::assertSame(PaymentRefused::ATTEMPT_NOT_FOUND, $this->refusal(fn () => $this->payments()->checkNow(self::BOB, $id)));
+    }
+
+    public function testASettledAttemptIsNotCheckedAgain(): void
+    {
+        $id = $this->start()['payment_id'];
+        $this->attempts->markFailed($id, 'transport', $this->clock->now());
+
+        self::assertSame('failed', $this->payments()->checkNow(self::ALICE, $id)['state']);
+        self::assertSame([], array_filter(array_keys($this->limiter->hits), static fn (string $k): bool => str_starts_with($k, 'payments:check:')));
+    }
 }

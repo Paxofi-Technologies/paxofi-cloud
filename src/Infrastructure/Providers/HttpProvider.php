@@ -116,6 +116,7 @@ final class HttpProvider implements Provider
             $router->get('/api/v1/payments/options', static fn (HttpRequest $r): HttpResponse => $payments()->options($r));
             $router->post('/api/v1/payments', static fn (HttpRequest $r): HttpResponse => $payments()->start($r));
             $router->get('/api/v1/payments/detail', static fn (HttpRequest $r): HttpResponse => $payments()->detail($r));
+            $router->post('/api/v1/payments/check', static fn (HttpRequest $r): HttpResponse => $payments()->check($r));
             $router->controller('GET', '/api/v1/auth/session', SessionController::class, $dispatcher);
             $router->controller('GET', '/api/v1/catalogue', CatalogueController::class, $dispatcher);
             $router->controller('GET', '/api/v1/domains/search', DomainSearchController::class, $dispatcher);

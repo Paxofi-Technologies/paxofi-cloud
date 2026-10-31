@@ -30,6 +30,7 @@ final readonly class InvoicePayments
 {
     public const int ATTEMPTS_PER_HOUR = 10;
     public const int MAX_OPEN_ATTEMPTS = 5;
+    public const int CHECK_EVERY_SECONDS = 30;
     private const string KEY = '/^[A-Za-z0-9_-]{16,64}$/';
 
     /** @param 'dev'|'staging'|'prod' $environment */
@@ -150,6 +151,26 @@ final readonly class InvoicePayments
     public function status(string $accountId, string $attemptId): array
     {
         return $this->attempts->find($accountId, $attemptId) ?? throw new PaymentRefused(PaymentRefused::ATTEMPT_NOT_FOUND);
+    }
+
+    /**
+     * The customer is back from the gateway (PY-10): ask the gateway now
+     * instead of waiting for the schedule, at most once per attempt every 30
+     * seconds. The gateway's query parameters on the return URL are never
+     * read; the answer comes from status() once the worker has checked.
+     *
+     * @return AttemptRow
+     * @throws PaymentRefused
+     */
+    public function checkNow(string $accountId, string $attemptId): array
+    {
+        $row = $this->status($accountId, $attemptId);
+        if (in_array($row['state'], ['pending', 'unknown'], true)
+            && $this->limiter->hit('payments:check:' . $attemptId, 1, self::CHECK_EVERY_SECONDS) === 0) {
+            $this->attempts->checkNow($accountId, $attemptId, $this->clock->now());
+        }
+
+        return $row;
     }
 
     /** @return list<Gateway> */

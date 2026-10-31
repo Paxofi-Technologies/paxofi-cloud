@@ -319,6 +319,18 @@ final class PaymentAttemptStoreIntegrationTest extends IntegrationTestCase
         self::assertSame([], $this->attempts->dueForCheck($this->now->modify('+2 days'), 10));
     }
 
+    public function testCheckNowIsScopedToTheAccountAndOnlyBringsTheCheckForward(): void
+    {
+        $attempt = $this->pendingAttempt('pay-key-00000000030');
+        $at = $this->now->modify('+30 seconds');
+
+        self::assertFalse($this->attempts->checkNow(self::BOB, $attempt->id, $at), 'another account');
+        self::assertSame([], $this->attempts->dueForCheck($at, 10));
+        self::assertTrue($this->attempts->checkNow(self::ALICE, $attempt->id, $at));
+        self::assertCount(1, $this->attempts->dueForCheck($at, 10));
+        self::assertFalse($this->attempts->checkNow(self::ALICE, $attempt->id, $at->modify('+1 second')), 'already due: never pushed later');
+    }
+
     public function testAWebhookIsRecordedOnceAndMakesTheAttemptDueNow(): void
     {
         $attempt = $this->pendingAttempt('pay-key-00000000020');

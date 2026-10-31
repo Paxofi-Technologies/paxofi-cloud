@@ -5,11 +5,13 @@ import { BillingScreen } from './screens/BillingScreen';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DomainSearchScreen } from './screens/DomainSearchScreen';
+import { PaymentReturnScreen } from './screens/PaymentReturnScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { SecurityScreen } from './screens/SecurityScreen';
 import { SignInScreen } from './screens/SignInScreen';
 import { VerifyEmailScreen } from './screens/VerifyEmailScreen';
 import { fetchMfaStatus } from './lib/mfa';
+import { paymentIdForPath } from './lib/payments';
 import { fetchSession, signOut, type SessionState } from './lib/session';
 
 const NAV: readonly NavItem[] = [
@@ -37,7 +39,11 @@ export function screenForPath(path: string): Screen | null {
  * crafted `?next=` can never send anyone off-site (open redirect).
  */
 export function returnPath(search: string): string {
-  const screen = screenForPath(new URLSearchParams(search).get('next') ?? '');
+  const next = new URLSearchParams(search).get('next') ?? '';
+  // A payment return page (PY-10): rebuilt from the 32 hex characters only.
+  const paymentId = paymentIdForPath(next);
+  if (paymentId !== null) return `/billing/payments/${paymentId}`;
+  const screen = screenForPath(next);
   // Return our own constant, never the query value itself.
   return screen !== null ? SCREEN_PATHS[screen] : '/';
 }
@@ -67,7 +73,9 @@ export function App({ path = window.location.pathname, search = window.location.
 
 function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeof fetch | undefined; navigate: (path: string) => void }) {
   const [state, setState] = useState<SessionState | 'loading'>('loading');
-  const [screen, setScreen] = useState<Screen>(() => screenForPath(path) ?? 'dashboard');
+  // The gateway sends the customer back to /billing/payments/{id} (PY-10): the Billing page, showing that payment.
+  const [paymentId, setPaymentId] = useState<string | null>(() => paymentIdForPath(path));
+  const [screen, setScreen] = useState<Screen>(() => (paymentIdForPath(path) !== null ? 'billing' : (screenForPath(path) ?? 'dashboard')));
   const [attempt, setAttempt] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
   const [mfaEnabled, setMfaEnabled] = useState<boolean | null>(null);
@@ -76,8 +84,13 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
 
   // Unknown addresses show the dashboard under its own address; back/forward follow the address bar.
   useEffect(() => {
-    if (screenForPath(window.location.pathname) === null && window.location.pathname === path) window.history.replaceState(null, '', '/');
-    const onPop = () => setScreen(screenForPath(window.location.pathname) ?? 'dashboard');
+    const known = (p: string) => screenForPath(p) !== null || paymentIdForPath(p) !== null;
+    if (!known(window.location.pathname) && window.location.pathname === path) window.history.replaceState(null, '', '/');
+    const onPop = () => {
+      const id = paymentIdForPath(window.location.pathname);
+      setPaymentId(id);
+      setScreen(id !== null ? 'billing' : (screenForPath(window.location.pathname) ?? 'dashboard'));
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, [path]);
@@ -88,7 +101,9 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
       if (!active) return;
       if (next.kind === 'signed_out') {
         const wanted = screenForPath(path);
-        navigate(wanted !== null && wanted !== 'dashboard' ? `/sign-in?next=${encodeURIComponent(SCREEN_PATHS[wanted])}` : '/sign-in');
+        const payment = paymentIdForPath(path);
+        if (payment !== null) navigate(`/sign-in?next=${encodeURIComponent(`/billing/payments/${payment}`)}`);
+        else navigate(wanted !== null && wanted !== 'dashboard' ? `/sign-in?next=${encodeURIComponent(SCREEN_PATHS[wanted])}` : '/sign-in');
       }
       setState(next);
       if (next.kind === 'signed_in') {
@@ -123,6 +138,7 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
   const { session } = state;
 
   function go(next: Screen) {
+    setPaymentId(null);
     setScreen(next);
     if (window.location.pathname !== SCREEN_PATHS[next]) window.history.pushState(null, '', SCREEN_PATHS[next]);
   }
@@ -176,7 +192,10 @@ function Portal({ path, fetchImpl, navigate }: { path: string; fetchImpl?: typeo
           onCartChange={() => setCartVersion((v) => v + 1)}
         />
       )}
-      {screen === 'billing' && <BillingScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
+      {screen === 'billing' && paymentId !== null && (
+        <PaymentReturnScreen key={paymentId} paymentId={paymentId} csrfToken={session.csrfToken} fetchImpl={fetchImpl} onBilling={() => go('billing')} />
+      )}
+      {screen === 'billing' && paymentId === null && <BillingScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} />}
       {screen === 'security' && <SecurityScreen csrfToken={session.csrfToken} fetchImpl={fetchImpl} onStatusChange={(status) => setMfaEnabled(status.totpEnabled)} />}
     </AppShell>
   );
