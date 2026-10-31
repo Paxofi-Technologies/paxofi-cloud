@@ -72,6 +72,12 @@ export function DomainSearchPage({ session, fetchImpl }: { session: StaffSession
           </p>
         </div>
       </div>
+      {data.onSale === 0 && (
+        <Alert tone="warning">
+          No extension has a selling price yet, so customers see no prices and nothing can be chosen here. Enter the pricing settings on Domain
+          extensions, and check that Domain costs shows a recent price list and accepted exchange rates.
+        </Alert>
+      )}
       <SettingsCard key={`s-${version}`} data={data} session={session} fetchImpl={fetchImpl} onSaved={() => setVersion((v) => v + 1)} />
       <Card title="How each extension is checked">
         <p className="pc-muted pc-small">
@@ -163,7 +169,10 @@ function SettingsCard({
   const [busy, setBusy] = useState(false);
   const readOnly = !data.canManage;
   const needle = filter.trim().toLowerCase().replace(/^\./, '');
-  const shown = data.extensions.filter((e) => needle === '' || e.tld.includes(needle));
+  // Extensions with a selling price first; the rest are listed but cannot be chosen.
+  const shown = data.extensions
+    .filter((e) => needle === '' || e.tld.includes(needle))
+    .sort((a, b) => Number(b.onSale) - Number(a.onSale) || a.tld.localeCompare(b.tld));
 
   function toggle(tld: string) {
     setSaved(false);
@@ -204,7 +213,7 @@ function SettingsCard({
           used). {data.chosen ? '' : 'Nothing has been chosen yet, so the featured extensions plus .ng and .com.ng are used.'}
         </p>
         <p>
-          <strong>{chosen.length}</strong> of {data.limits.searchTlds} chosen
+          {data.onSale} of {data.extensions.length} extensions have a selling price. <strong>{chosen.length}</strong> of {data.limits.searchTlds} chosen
           {chosen.length > 0 ? `: ${chosen.map((t) => `.${t}`).join(', ')}` : ''}
         </p>
         {!readOnly && (
@@ -232,7 +241,13 @@ function SettingsCard({
         )}
         <div className="pc-check-grid" role="group" aria-label="Search extensions">
           {shown.slice(0, 200).map((e) => (
-            <Checkbox key={e.tld} label={`.${e.tld}`} checked={chosen.includes(e.tld)} disabled={readOnly} onChange={() => toggle(e.tld)} />
+            <Checkbox
+              key={e.tld}
+              label={e.onSale ? `.${e.tld}` : `.${e.tld} (not priced)`}
+              checked={chosen.includes(e.tld)}
+              disabled={readOnly || (!e.onSale && !chosen.includes(e.tld))}
+              onChange={() => toggle(e.tld)}
+            />
           ))}
         </div>
         {shown.length > 200 && <p className="pc-muted pc-small">Showing 200 of {shown.length}. Type to narrow the list.</p>}

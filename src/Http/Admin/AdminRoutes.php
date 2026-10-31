@@ -10,6 +10,7 @@ use PaxofiCloud\Domain\Staff\Permission;
 use PaxofiCloud\Http\Controllers\Admin\AdminAccountController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuditLogController;
 use PaxofiCloud\Http\Controllers\Admin\AdminAuthController;
+use PaxofiCloud\Http\Controllers\Admin\AdminCatalogueSettingsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminCodeSignInController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainCostsController;
 use PaxofiCloud\Http\Controllers\Admin\AdminDomainExtensionsController;
@@ -42,9 +43,10 @@ final class AdminRoutes
      * @param \Closure(): AdminDomainExtensionsController $extensions
      * @param \Closure(): AdminTaxRatesController $taxRates
      * @param \Closure(): AdminDomainSearchController $domainSearch
+     * @param \Closure(): AdminCatalogueSettingsController $catalogueSettings
      * @return list<AdminRoute>
      */
-    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog, \Closure $sessions, \Closure $spaceship, \Closure $extensions, \Closure $taxRates, \Closure $domainSearch): array
+    public static function all(\Closure $auth, \Closure $enrolment, \Closure $staff, \Closure $codes, \Closure $account, \Closure $providers, \Closure $domainCosts, \Closure $auditLog, \Closure $sessions, \Closure $spaceship, \Closure $extensions, \Closure $taxRates, \Closure $domainSearch, \Closure $catalogueSettings): array
     {
         $credentials = AdminAccess::permission(Permission::ProviderCredentialsManage);
         $public = AdminAccess::public();
@@ -102,6 +104,10 @@ final class AdminRoutes
             new AdminRoute('GET', '/admin-api/v1/domain-search', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainSearch()->overview($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/domain-search/settings', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainSearch()->saveSettings($r, $c)),
             new AdminRoute('POST', '/admin-api/v1/domain-search/lookup', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $domainSearch()->saveLookup($r, $c)),
+
+            // Catalogue settings file: both need catalogue.manage (the file holds margins); import also a fresh code (DX-15).
+            new AdminRoute('GET', '/admin-api/v1/catalogue-settings/export', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $catalogueSettings()->export($r, $c)),
+            new AdminRoute('POST', '/admin-api/v1/catalogue-settings/import', $catalogueManage, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $catalogueSettings()->import($r, $c)),
 
             // Tax rates: a change adds a row from now or a future date and also needs a fresh code (CD-28).
             new AdminRoute('GET', '/admin-api/v1/tax-rates', $catalogueView, static fn (HttpRequest $r, AdminContext $c): HttpResponse => $taxRates()->overview($r, $c)),

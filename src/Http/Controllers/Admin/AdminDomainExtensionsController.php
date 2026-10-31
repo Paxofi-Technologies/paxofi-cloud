@@ -22,6 +22,12 @@ final readonly class AdminDomainExtensionsController
     {
     }
 
+    /** The page's service, shared with the catalogue settings import so an imported extension follows the same rules. */
+    public function admin(): ExtensionsAdmin
+    {
+        return $this->extensions;
+    }
+
     public function overview(HttpRequest $request, AdminContext $context): HttpResponse
     {
         $query = $request->query();
