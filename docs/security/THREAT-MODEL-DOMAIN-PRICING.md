@@ -98,7 +98,7 @@ Boundaries:
 |---|---|
 | DX-1 | **Two currencies, never mixed.** Costs stay in the currency the registrar bills (USD for both registrars today). The **base currency for domains and servers is USD** (CEO decision). Comparisons between registrars convert each cost to USD with the current accepted FX set (CD-16), using bcmath and rounding up. No float ever touches money (PRC-001). |
 | DX-2 | **Registrar offers.** An *offer* is one registrar's latest **accepted** cost snapshot entry for an extension. An offer is *healthy* when its registrar's latest accepted snapshot is under 72 hours old and its connection is not in a refused state. Quarantined or stale snapshots produce no healthy offers. |
-| DX-3 | **Registrar choice.** For new registrations, the chosen registrar is the healthy offer with the lowest one-year `register` cost in USD; ties go to the registrar ranked first (CEO ranking, 24 Oct 2026: DomainNameAPI, Namecheap, Dynadot, Spaceship; registrars whose costs are entered by hand rank last). Staff with `catalogue.manage` may **pin** a registrar per extension (audited). If a pinned registrar is not healthy, the choice falls back to the cheapest healthy offer and the extension is flagged "pin not available". A choice change affects **new registrations only**: every registered domain records its holding registrar, and renewal, restore and transfer-out always go to the holder. |
+| DX-3 | **Registrar choice.** For new registrations, the chosen registrar is the healthy offer with the lowest one-year `register` cost in USD; ties go to the registrar ranked first (CEO ranking, 24 Oct 2026: DomainNameAPI, Namecheap, Dynadot, Spaceship; updated 31 Oct 2026 in §9: DomainNameAPI, Namecheap, Dynadot, go54, Spaceship). Staff with `catalogue.manage` may **pin** a registrar per extension (audited). If a pinned registrar is not healthy, the choice falls back to the cheapest healthy offer and the extension is flagged "pin not available". A choice change affects **new registrations only**: every registered domain records its holding registrar, and renewal, restore and transfer-out always go to the holder. |
 | DX-4 | **Failover and the floor.** The failover order is the chosen registrar, then the other healthy offers by cost. A registrar may be used for an order (first choice or failover) only if its cost keeps the locked selling price above the margin floor (CD-14); otherwise it is skipped for that extension and the extension is flagged. The floor therefore holds whichever registrar ends up doing the work. |
 | DX-5 | **One selling price per extension, action, term and currency.** The USD price is derived from the chosen registrar's cost (markup, rounding, floor: CD-14) and repriced under CD-15. The NGN price is derived from the USD price with the current FX set (CD-16) and rounded **up** to the NGN step. Staff may override any single price (audited, future-dated, PRC-005). An override below the floor is refused when saved. If a later cost or rate change pushes a live price (derived or overridden) below the floor, **that action stops being sold online** for the extension until staff fix it or the next derivation clears it, and staff are alerted. It fails closed. |
 | DX-6 | **Price lock.** An order line stores the price, its currency, the FX set id, the registrar chosen and the cost basis (registrar cost in its own currency) at the moment the customer sees the checkout total. Payment never re-converts: the customer pays exactly the locked amount in their account currency. A quote is valid for 30 minutes; after that checkout re-quotes and shows the new total before payment. |
@@ -233,7 +233,65 @@ These facts come from https://docs.spaceship.dev, read on 24 Oct 2026.
 | R-7 | Dynadot's RESTful price response has no restore price or grace days. | Staff set them per extension (DX-9). Restore through Dynadot is not sold online until then. |
 | R-8 | Spaceship may never expose ordinary prices through its API. | SP-5 fallback list. CEO: ask Spaceship support for a reseller price list or feed. |
 
-## 9. Review log
+## 9. go54, formerly Whogohost (added 31 Oct 2026, before its code)
+
+CEO decisions, 31 Oct 2026:
+
+- Paxofi is now a **go54 domain reseller**. go54 (formerly Whogohost) is the **default registrar for Nigerian extensions** (`.ng`, `.com.ng`, `.org.ng`, `.net.ng`, `.edu.ng`, `.gov.ng`, `.name.ng`, `.mobi.ng`, `.sch.ng`, `.i.ng` and any other `.ng` second level on sale), because it is cheaper there than DomainNameAPI. It can also sell other extensions.
+- **Ranking for ties (DX-3) becomes:** DomainNameAPI, Namecheap, Dynadot, go54, Spaceship. For Nigerian extensions go54 is chosen by **pin** (GO-4), not by rank.
+
+### 9.1 What we know about the go54 domain API
+
+**Source:** https://api-docs.go54.com (Domain section: API structure, error codes, authentication, and 15 endpoint pages), read 31 Oct 2026. The pages document requests only; **no page documents a response body**. Everything below is from the pages; "not stated" means the pages are silent.
+
+| Topic | Fact |
+|---|---|
+| Base URL | Live: `https://www.whogohost.com/host/modules/addons/DomainsReseller/api/index.php`, with the action appended (for example `/order/domains/register`). Staging: not public ("contact support for dev details"). No version in the URL. |
+| Authentication | Two request headers: `username` = the reseller account email, and `token` = `base64(HMAC-SHA256(key = API key, message = "<email>:" + UTC date and hour formatted "y-m-d H"))`. The token changes every UTC hour; clock-skew tolerance is not stated. The API key is issued by go54, not self-service. IP allow-listing: not stated. |
+| Request format | The samples send form-encoded bodies (`http_build_query`); nested contacts and nameservers use bracketed keys. The error table also mentions "JSON Parse Error". |
+| Responses | Not documented: no envelope, no field names, no example. Only HTTP status codes are listed. |
+| Errors | 200 OK; 400 bad request / JSON parse; 401 key missing or invalid; **403 forbidden or "You do not have enough money in your wallet"** (same code, told apart only by message); 404; 405; 429 rate limited (limits not stated); 5xx server errors. |
+| Writes | `POST /order/domains/register` (domain, regperiod, nameservers ns1–ns5 with ns1 and ns2 required, contacts registrant/tech/billing/admin, optional addons dnsmanagement/emailforwarding/idprotection), `POST /order/domains/renew` (domain, regperiod), `POST /order/domains/transfer` (domain, eppcode, regperiod, nameservers, contacts). Idempotency, duplicate-order behaviour and synchronous versus asynchronous completion: not stated. |
+| Domain management | `GET /domains/{domain}/eppcode`, `GET`/`POST /domains/{domain}/contact`, `GET`/`POST /domains/{domain}/nameservers`, `GET`/`POST /domains/{domain}/lock`, `POST /domains/{domain}/sync`, `POST /domains/{domain}/transfersync`. The samples use POST even for the documented GETs. |
+| Availability | `POST /domains/lookup`. The parameter table and the sample disagree (`domain` versus `searchTerm`; `tldsToInclude` as text versus array). Response not documented. |
+| Prices, TLD list, balance | **No endpoint.** Charges appear to come from a prepaid **wallet** (the 403 wallet message); the currency is not stated (expected NGN). |
+| Data sent on | Register and transfer send full contact details "to the registrar"; which registry or registrar and the data-protection terms are not stated. |
+
+### 9.2 go54 design decisions
+
+| ID | Decision |
+|---|---|
+| GO-1 | **Own adapter, our HTTP client.** go54 is reached only through `ProviderHttpClient`: allow-listed host `www.whogohost.com`, TLS verified, no redirects, timeouts and response caps (as DR-1). No vendor or WHMCS library is installed. |
+| GO-2 | **Credential.** A go54 connection type stores JSON `{username, api_key}` through API providers → Domain registrars, sealed to the intake key and opened only in the provider worker (PC-1…PC-8). The token is computed per request from the current UTC hour and never stored or logged. The API key itself is never sent: only the HMAC digest is (the test vector is computed independently, like DY-T2). If go54 offers a key without write rights, that one is entered until registration goes live (as SP-1). |
+| GO-3 | **Costs are entered by hand until go54 provides a feed** (the SP-5 rule, now shared by Spaceship and go54). Staff with `catalogue.manage` enter, per extension, the 1-year register and renew cost (and transfer and restore when known) **in the currency go54 bills** (NGN unless go54 confirms otherwise), from go54's reseller price sheet. Each entry records the source ("go54 reseller price sheet, dated …"), is audited with before and after values, and **expires after 30 days**; every Catalogue member is emailed 3 days before expiry. An expired or missing entry means go54 has no healthy offer for that extension (DX-2), so it is never chosen and a pin falls back (DX-3). Comparison with other registrars converts NGN to USD with the accepted FX set (DX-1). No scraping of go54's website (SP-6). |
+| GO-4 | **Default for Nigerian extensions by pin.** When go54 costs are first entered, staff pin go54 for every Nigerian extension (audited, DX-3). The admin extension list shows "pin not available" whenever the go54 cost has expired, and the extension then falls back to the cheapest healthy registrar (today DomainNameAPI), so `.ng` stays on sale. |
+| GO-5 | **Availability.** Customer availability checks for extensions where go54 is chosen use `POST /domains/lookup` through the provider worker (DS-13 path), once the response format is confirmed (GO-9). Until then the existing registrar check stays in place; its answer is advisory, because registration itself confirms availability. |
+| GO-6 | **Writes only through the provisioning engine.** Register, renew, transfer, lock, nameserver and contact updates are built with the Sprint 4 provisioning engine, behind the write guard (DR-4: staging never spends on the live account) and the loss guard (DX-7, comparing the hand-entered cost with the amount paid). A write that comes back with a timeout or 5xx is **not retried blindly**: the job is held and reconciled with `GET`/`sync` for that domain first, because idempotency is not documented (GO-9). The 403 wallet message holds the job (`provisioning.wallet_empty`), alerts Finance, and is never retried in a loop. |
+| GO-7 | **Contact data minimisation (NDPA 2023).** Only the fields go54 requires are sent, from the customer's own registrant details; tech, billing and admin contacts are the same person unless the customer sets others. Requests and responses are never logged; logs carry the domain, action and a fixed outcome code only. ID protection is ordered when go54 supports it for the extension. |
+| GO-8 | **Responses are parsed strictly.** Because no response is documented, the adapter accepts only the fields confirmed by go54 or by recorded staging answers, rejects anything else as `malformed`, and never treats an unknown answer as success. |
+| GO-9 | **Open questions go to go54 before the adapter is merged:** (1) staging URL and test account; (2) the response format of every endpoint, with examples, for success and error; (3) form or JSON body, and the method for the documented GETs; (4) whether the URL keeps `index.php`; (5) token clock-skew tolerance and IP allow-listing; (6) `regperiod` ranges per action and required contact fields for `.ng`; (7) whether register, renew and transfer are idempotent or synchronous, and how to read an order's status; (8) the availability request keys and response; (9) a price, TLD-list or balance endpoint, or a price sheet in a fixed format; (10) the charge currency, the wallet top-up, and which endpoints return the wallet 403; (11) rate limits; (12) which registry or registrar receives contact data, and the data-processing terms. |
+
+### 9.3 Threats (go54)
+
+| ID | STRIDE | Threat | L | I | Mitigation | Test evidence |
+|---|---|---|---|---|---|---|
+| GO-T1 | I | The go54 API key leaks through a header dump, log or error | 2 | 3 | GO-2: only an hourly HMAC digest is sent; the key stays in the provider worker; GO-7 no request or response logging | `Go54TokenTest`, `Go54ClientTest` (key absent from logs and exceptions) |
+| GO-T2 | S | A wrong token (clock drift, wrong date format) makes every call fail | 2 | 2 | GO-2 test vector computed independently; host clock is NTP-synced; failure is a fixed `unauthorised` code and the offer becomes unhealthy | `Go54TokenTest` |
+| GO-T3 | T | A stale hand-entered go54 cost makes us sell `.ng` below cost | 3 | 3 | GO-3 30-day expiry and reminder; DX-2 healthy only when unexpired; DX-7 guard before every spend | `ManualCostTest` |
+| GO-T4 | R | Nobody can show who entered or changed a go54 cost | 2 | 2 | GO-3 audited with before and after and the source | `ManualCostTest` |
+| GO-T5 | T | An undocumented response is misread as success, so a domain is marked registered when it is not (or charged twice) | 2 | 3 | GO-8 strict parsing; GO-6 no blind retry, reconcile with `sync` first | `Go54ResponseParsingTest` (recorded staging answers) |
+| GO-T6 | D | An empty go54 wallet stops `.ng` registrations | 3 | 2 | GO-6 hold, Finance alert, no retry loop; customer is told registration is in progress | `ProvisioningWalletTest` |
+| GO-T7 | E | A staging bug spends money at go54 with the live key | 2 | 3 | DR-4 write guard covers every go54 write; GO-2 read-only key if offered | `RegistrarWriteCoverageTest` extended |
+| GO-T8 | I | Customer contact details sent to go54 beyond what registration needs | 2 | 2 | GO-7 minimisation; data-processing terms confirmed (GO-9 item 12) | Review of the request builder |
+
+### 9.4 Residual risks (go54)
+
+| ID | Risk | Owner / action |
+|---|---|---|
+| R-9 | No response format is documented; the adapter cannot be finished from the public pages alone. | CEO: send go54 the GO-9 questions and ask for staging access. Claude: build the manual-cost entry and the connection type first, which need no responses. |
+| R-10 | Hand-entered costs depend on staff keeping go54's price sheet current. | GO-3 expiry and reminders; ask go54 for a price feed (GO-9 item 9). |
+
+## 10. Review log
 
 | Date | Change |
 |---|---|
@@ -245,3 +303,4 @@ These facts come from https://docs.spaceship.dev, read on 24 Oct 2026.
 | 25 Oct 2026 | SP-3 amended and SP-7, SP-T4, SP-T5 added before the Spaceship code: the price check is started from the admin console and run by the provider worker (the CEO has no shell on staging); what a check stores. API facts re-read from docs.spaceship.dev: request `{"domains": [1..20 names]}`, response `domains[].{domain, result, premiumPricing[].{operation, price, currency}}`; whether ordinary names carry a price is not stated, which is what the check finds out. |
 | 24 Oct 2026 | Built with the Dynadot price sync: paging follows the server's own `page`/`page_size` and stops on a short page, no paging data, or a page that names no new extension (guards against a wrong page index); thousands separators are accepted; the signature test vector is computed with OpenSSL outside PHP. |
 | 25 Oct 2026 | DX-13: PROMO label added (CEO request); HOT and PROMO show red, SALE orange, NEW green. Migration 0022 widens the label CHECK. |
+| 31 Oct 2026 | Section 9 (go54, formerly Whogohost) before any code: facts from the public API pages, GO-1 to GO-9, GO-T1 to GO-T8, R-9 and R-10. CEO decision: go54 is the default registrar for Nigerian extensions (by pin); ranking for ties now DomainNameAPI, Namecheap, Dynadot, go54, Spaceship. SP-5 manual costs now cover go54 as well. |
