@@ -1,3 +1,4 @@
+import { CatalogueBackupCard } from './CatalogueBackup';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Card, Modal, PROMO_LABELS, PromoLabel, TextField } from '../components';
 import { describeWait, type ApiResult } from '../lib/api';
@@ -179,6 +180,7 @@ export function DomainExtensionsPage({ session, fetchImpl }: { session: StaffSes
           </nav>
         )}
       </Card>
+      {data.canManage && <CatalogueBackupCard session={session} fetchImpl={fetchImpl} onImported={() => reload('Settings loaded. Prices below are recalculated.')} />}
     </>
   );
 }

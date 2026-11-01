@@ -9,13 +9,14 @@ const session = { id: 's1', csrfToken: 'csrf' } as unknown as StaffSession;
 const view = (overrides: Record<string, unknown> = {}) => ({
   can_manage: true,
   chosen: false,
+  on_sale: 3,
   settings: { search_tlds: ['ng', 'com.ng'], max_ideas: 20, prefixes: ['get'], suffixes: ['hq'] },
   limits: { search_tlds: 20, per_search: 12, max_ideas: 30, words: 12 },
   modes: ['auto', 'rdap', 'whois', 'registrar'],
   extensions: [
-    { tld: 'com', in_search: false, featured: true, mode: 'auto', whois_server: null, whois_phrase: null },
-    { tld: 'com.ng', in_search: true, featured: false, mode: 'auto', whois_server: null, whois_phrase: null },
-    { tld: 'ng', in_search: true, featured: true, mode: 'whois', whois_server: 'whois.nic.net.ng', whois_phrase: '<b>free</b>' },
+    { tld: 'com', on_sale: true, in_search: false, featured: true, mode: 'auto', whois_server: null, whois_phrase: null },
+    { tld: 'com.ng', on_sale: true, in_search: true, featured: false, mode: 'auto', whois_server: null, whois_phrase: null },
+    { tld: 'ng', on_sale: true, in_search: true, featured: true, mode: 'whois', whois_server: 'whois.nic.net.ng', whois_phrase: '<b>free</b>' },
   ],
   ...overrides,
 });
@@ -93,6 +94,19 @@ describe('DomainSearchPage', () => {
     expect(calls).toEqual([
       { path: '/admin-api/v1/domain-search/lookup', body: { tld: 'com', mode: 'auto', whois_server: 'whois.verisign-grs.com', whois_phrase: null, code: '123456' } },
     ]);
+  });
+
+  it('warns when nothing is priced and marks unpriced extensions that cannot be chosen', async () => {
+    const body = view({
+      on_sale: 0,
+      settings: { search_tlds: [], max_ideas: 20, prefixes: [], suffixes: [] },
+      extensions: [{ tld: 'xyz', on_sale: false, in_search: false, featured: false, mode: 'auto', whois_server: null, whois_phrase: null }],
+    });
+    render(<DomainSearchPage session={session} fetchImpl={api({ 'GET /admin-api/v1/domain-search': () => ({ status: 200, body }) })} />);
+
+    expect(await screen.findByText(/No extension has a selling price yet/)).toBeTruthy();
+    const box = screen.getByLabelText('.xyz (not priced)') as HTMLInputElement;
+    expect(box.disabled).toBe(true);
   });
 
   it('is read-only without catalogue.manage', async () => {

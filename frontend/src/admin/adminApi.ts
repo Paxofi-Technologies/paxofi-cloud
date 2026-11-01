@@ -804,6 +804,7 @@ export const saveTaxRate = (
 /** The Domain search page (THREAT-MODEL-DOMAIN-SEARCH.md DS-21 to DS-23). */
 export interface DomainSearchLookup {
   tld: string;
+  onSale: boolean;
   inSearch: boolean;
   featured: boolean;
   mode: string;
@@ -814,6 +815,7 @@ export interface DomainSearchLookup {
 export interface DomainSearchAdminView {
   canManage: boolean;
   chosen: boolean;
+  onSale: number;
   settings: { searchTlds: string[]; maxIdeas: number; prefixes: string[]; suffixes: string[] };
   limits: { searchTlds: number; perSearch: number; maxIdeas: number; words: number };
   modes: string[];
@@ -832,6 +834,7 @@ export async function fetchDomainSearchAdmin(fetchImpl: typeof fetch = fetch): P
     if (!e || typeof e.tld !== 'string' || typeof e.mode !== 'string') continue;
     extensions.push({
       tld: e.tld,
+      onSale: e.on_sale === true,
       inSearch: e.in_search === true,
       featured: e.featured === true,
       mode: e.mode,
@@ -845,6 +848,7 @@ export async function fetchDomainSearchAdmin(fetchImpl: typeof fetch = fetch): P
     data: {
       canManage: body.can_manage === true,
       chosen: body.chosen === true,
+      onSale: num(body.on_sale, 0),
       settings: { searchTlds: strings(settings.search_tlds), maxIdeas: num(settings.max_ideas, 20), prefixes: strings(settings.prefixes), suffixes: strings(settings.suffixes) },
       limits: { searchTlds: num(limits.search_tlds, 20), perSearch: num(limits.per_search, 12), maxIdeas: num(limits.max_ideas, 30), words: num(limits.words, 12) },
       modes: strings(body.modes),
@@ -864,3 +868,38 @@ export const saveDomainLookup = (
   body: { tld: string; mode: string; whois_server: string | null; whois_phrase: string | null; code?: string },
   fetchImpl: typeof fetch = fetch,
 ) => postJson(`${ADMIN_API}/domain-search/lookup`, body, fetchImpl, { 'X-CSRF-Token': csrfToken });
+
+/** Catalogue settings file (THREAT-MODEL-DOMAIN-PRICING.md DX-15): the export as JSON text, or null when it failed. */
+export async function exportCatalogueSettings(fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  const result = await getJson(`${ADMIN_API}/catalogue-settings/export`, fetchImpl);
+  if (result === null || result.status !== 200 || !obj(result.data)) return null;
+  return JSON.stringify(result.data, null, 2);
+}
+
+export interface CatalogueImportSummary {
+  pricing: boolean;
+  extensionsSaved: number;
+  extensionsSkipped: { tld: string; reason: string }[];
+  search: boolean;
+  lookupsSaved: number;
+}
+
+export function readImportSummary(data: unknown): CatalogueImportSummary | null {
+  const d = obj(data);
+  if (!d) return null;
+  const skipped: CatalogueImportSummary['extensionsSkipped'] = [];
+  for (const raw of Array.isArray(d.extensions_skipped) ? d.extensions_skipped : []) {
+    const r = obj(raw);
+    if (r && typeof r.tld === 'string' && typeof r.reason === 'string') skipped.push({ tld: r.tld, reason: r.reason });
+  }
+  return {
+    pricing: d.pricing === true,
+    extensionsSaved: minor(d.extensions_saved) ?? 0,
+    extensionsSkipped: skipped,
+    search: d.search === true,
+    lookupsSaved: minor(d.lookups_saved) ?? 0,
+  };
+}
+
+export const importCatalogueSettings = (csrfToken: string, settings: unknown, code: string, fetchImpl: typeof fetch = fetch) =>
+  postJson(`${ADMIN_API}/catalogue-settings/import`, { settings, code }, fetchImpl, { 'X-CSRF-Token': csrfToken });

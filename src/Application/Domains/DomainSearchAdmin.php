@@ -42,12 +42,15 @@ final readonly class DomainSearchAdmin
     }
 
     /**
+     * Every extension a registrar offers, each marked on sale or not.
+     *
      * @return array{
      *     can_manage: bool, chosen: bool,
      *     settings: array{search_tlds: list<string>, max_ideas: int, prefixes: list<string>, suffixes: list<string>},
      *     limits: array{search_tlds: int, per_search: int, max_ideas: int, words: int},
      *     modes: list<string>,
-     *     extensions: list<array{tld: string, in_search: bool, featured: bool, mode: string, whois_server: ?string, whois_phrase: ?string}>
+     *     on_sale: int,
+     *     extensions: list<array{tld: string, on_sale: bool, in_search: bool, featured: bool, mode: string, whois_server: ?string, whois_phrase: ?string}>
      * }
      * @throws \PaxofiCloud\Application\Staff\StaffPermissionDenied
      */
@@ -59,10 +62,15 @@ final readonly class DomainSearchAdmin
         $featured = $this->quotes->featured();
         $lookups = $this->store->lookups();
         $extensions = [];
+        $onSale = 0;
         foreach ($this->quotes->extensions() as $tld) {
             $lookup = $lookups[$tld] ?? new LookupSettings($tld);
+            // Offered by a registrar but only on sale once it has a selling price (pricing settings, rates, a healthy cost).
+            $sold = $this->quotes->quote($tld) !== null;
+            $onSale += $sold ? 1 : 0;
             $extensions[] = [
                 'tld' => $tld,
+                'on_sale' => $sold,
                 'in_search' => in_array($tld, $effective, true),
                 'featured' => in_array($tld, $featured, true),
                 'mode' => $lookup->mode,
@@ -77,6 +85,7 @@ final readonly class DomainSearchAdmin
             'settings' => ['search_tlds' => $effective, 'max_ideas' => $settings->maxIdeas, 'prefixes' => $settings->prefixes, 'suffixes' => $settings->suffixes],
             'limits' => ['search_tlds' => DomainSearchSettings::MAX_SEARCH_TLDS, 'per_search' => DomainSearch::MAX_EXTENSIONS, 'max_ideas' => DomainSearchSettings::MAX_IDEAS, 'words' => DomainSearchSettings::MAX_WORDS],
             'modes' => LookupSettings::MODES,
+            'on_sale' => $onSale,
             'extensions' => $extensions,
         ];
     }

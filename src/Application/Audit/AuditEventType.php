@@ -85,6 +85,9 @@ final class AuditEventType
     public const string DOMAIN_SEARCH_SETTINGS_CHANGED = 'domain_search.settings_changed';
     public const string EXTENSION_LOOKUP_CHANGED = 'domain_search.lookup_changed';
     public const string DOMAIN_SEARCH_CHANGE_REFUSED = 'domain_search.change_refused';
+    public const string CATALOGUE_SETTINGS_EXPORTED = 'catalogue_settings.exported';
+    public const string CATALOGUE_SETTINGS_IMPORTED = 'catalogue_settings.imported';
+    public const string CATALOGUE_SETTINGS_IMPORT_REFUSED = 'catalogue_settings.import_refused';
     public const string TAX_RATE_CHANGE_REFUSED = 'tax_rate.change_refused';
 
     private function __construct()
